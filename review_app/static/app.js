@@ -22,6 +22,7 @@
     const response = await fetch(url, {cache: "no-cache", ...options});
     let data;
     try { data = await response.json(); } catch { throw new Error("服务器返回了无法读取的内容"); }
+    if (response.status === 401) { location.replace(new URL("./login", document.baseURI)); throw new Error("登录已过期"); }
     if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
     return data;
   }
@@ -208,11 +209,8 @@
     if (!selectedCard) return;
     const verdict = document.querySelector('input[name="verdict"]:checked')?.value;
     const rationale = $("rationale").value.trim();
-    const reviewer = $("reviewer").value.trim();
-    if (!reviewer) { $("save-message").textContent = "请先填写审核人姓名"; $("reviewer").focus(); return; }
     if (!verdict) { $("save-message").textContent = "请选择一个结论"; return; }
     if (verdict !== "aligned" && !rationale) { $("save-message").textContent = "请填写判断依据"; $("rationale").focus(); return; }
-    localStorage.setItem("kip126-reviewer", reviewer);
     const requestId = pendingRequest || crypto.randomUUID();
     pendingRequest = requestId;
     $("save").disabled = true;
@@ -220,7 +218,7 @@
     try {
       await json("./api/judgments", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({
         request_id: requestId, card_id: selectedCard.id, fingerprint: selectedCard.fingerprint,
-        reviewer, verdict, rationale,
+        verdict, rationale,
       })});
       pendingRequest = null;
       const id = selectedCard.id;
@@ -248,7 +246,16 @@
   $("save").addEventListener("click", save);
   $("next").addEventListener("click", nextCard);
   $("rationale").addEventListener("input", () => { pendingRequest = null; });
-  $("reviewer").addEventListener("input", () => { pendingRequest = null; });
+  $("logout").addEventListener("click", async () => {
+    $("logout").disabled = true;
+    try {
+      await json("./api/auth/logout", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+      location.replace(new URL("./login", document.baseURI));
+    } catch (error) {
+      $("logout").disabled = false;
+      alert(error.message);
+    }
+  });
   $("verdicts").addEventListener("change", () => { pendingRequest = null; });
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key === "Enter") { event.preventDefault(); save(); return; }
@@ -263,8 +270,8 @@
     }
   });
 
-  $("reviewer").value = localStorage.getItem("kip126-reviewer") || "";
-  loadCatalog({includeInitial: true}).then(() => {
+  Promise.all([json("./api/auth/me"), loadCatalog({includeInitial: true})]).then(([identity]) => {
+    $("reviewer-email").textContent = identity.email;
     const fromHash = decodeURIComponent(location.hash.slice(1));
     const start = catalog.find((item) => item.id === fromHash) || visible()[0] || catalog[0];
     if (start) openCard(start.id);

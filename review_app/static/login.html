@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>登录 · KIP126 对应关系审核台</title>
+  <link rel="stylesheet" href="./login.css">
+  <script src="./login.js" defer></script>
+</head>
+<body>
+  <main class="login-card">
+    <div class="mark">K</div>
+    <p class="eyebrow">KIP126 · REVIEW</p>
+    <h1>登录对应关系审核台</h1>
+    <p class="hint">输入你的邮箱，获取一次性验证码。审核结论会记录在已验证的邮箱名下。</p>
+    <form id="email-form">
+      <label for="email">邮箱地址</label>
+      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com">
+      <button id="send" type="submit">发送验证码</button>
+    </form>
+    <form id="code-form" hidden>
+      <label for="code">8 位验证码</label>
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required
+             minlength="8" maxlength="8" pattern="[0-9]{8}" placeholder="请输入邮件中的验证码">
+      <button id="verify" type="submit">登录审核台</button>
+      <button id="resend" type="button" class="quiet">重新发送验证码</button>
+    </form>
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

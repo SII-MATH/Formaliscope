@@ -17,6 +17,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from review_app import server as service
+from review_app.auth import AuthSettings, AuthStore
 
 ROOT = Path(__file__).resolve().parents[1]
 ReviewHTTPServer = getattr(service, "ReviewHTTPServer", ThreadingHTTPServer)
@@ -29,9 +30,11 @@ def percentile(values, q):
     return round(values[min(len(values) - 1, max(0, int((len(values) - 1) * q + .5)))] * 1000, 2)
 
 
-def request(base, path, *, payload=None):
+def request(base, path, *, payload=None, session=None):
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json", "Origin": base} if data else {}
+    if session:
+        headers["Cookie"] = f"kip126_review_session={session}"
     req = Request(base + path, data=data, headers=headers)
     with urlopen(req, timeout=15) as response:
         body = response.read()
@@ -44,7 +47,12 @@ def run(snapshot, clients, cards_per_client):
     with tempfile.TemporaryDirectory() as directory:
         db = Path(directory) / "judgments.sqlite3"
         initialize(db)
-        handler = make_handler(snapshot, db, ROOT / "review_app/static")
+        issued = {}
+        auth = AuthStore(db, AuthSettings(mailer="agently", allow_any_email=True),
+                         sender=lambda email, code: issued.setdefault(email, code))
+        auth.request_code("benchmark@example.org", "127.0.0.1")
+        session = auth.verify_code("benchmark@example.org", issued["benchmark@example.org"])
+        handler = make_handler(snapshot, db, ROOT / "review_app/static", auth)
         handler.log_message = lambda *args: None
         server = ReviewHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -58,7 +66,7 @@ def run(snapshot, clients, cards_per_client):
             local_submit = []
             errors = []
             try:
-                catalog = request(base, "/api/catalog")
+                catalog = request(base, "/api/catalog", session=session)
                 if len(catalog["cards"]) != len(snapshot["cards"]):
                     raise RuntimeError("incomplete catalog")
                 barrier.wait(timeout=15)
@@ -67,8 +75,8 @@ def run(snapshot, clients, cards_per_client):
                         card_id = card_ids[(number * 7 + iteration) % len(card_ids)]
                         encoded = quote(card_id, safe="")
                         start = time.perf_counter()
-                        evidence = pair.submit(request, base, f"/api/evidence?id={encoded}")
-                        history = pair.submit(request, base, f"/api/history?id={encoded}")
+                        evidence = pair.submit(request, base, f"/api/evidence?id={encoded}", session=session)
+                        history = pair.submit(request, base, f"/api/history?id={encoded}", session=session)
                         card = evidence.result(timeout=15)
                         history.result(timeout=15)
                         local_load.append(time.perf_counter() - start)
@@ -77,7 +85,7 @@ def run(snapshot, clients, cards_per_client):
                                        "fingerprint": card["fingerprint"],
                                        "reviewer": f"load-{number}", "verdict": "aligned", "rationale": ""}
                             start = time.perf_counter()
-                            request(base, "/api/judgments", payload=payload)
+                            request(base, "/api/judgments", payload=payload, session=session)
                             local_submit.append(time.perf_counter() - start)
             except Exception as exc:
                 errors.append(f"{type(exc).__name__}: {exc}")

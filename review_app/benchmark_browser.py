@@ -14,6 +14,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 from review_app import server as service
+from review_app.auth import AuthSettings, AuthStore
 
 ROOT = Path(__file__).resolve().parents[1]
 ReviewHTTPServer = getattr(service, 'ReviewHTTPServer', ThreadingHTTPServer)
@@ -30,7 +31,12 @@ snapshot = json.loads((ROOT / '.review/snapshot.json').read_text())
 with tempfile.TemporaryDirectory() as directory:
     db = Path(directory) / 'judgments.sqlite3'
     initialize(db)
-    handler = make_handler(snapshot, db, ROOT / 'review_app/static')
+    issued = {}
+    auth = AuthStore(db, AuthSettings(mailer='agently', allow_any_email=True),
+                     sender=lambda email, code: issued.setdefault(email, code))
+    auth.request_code('benchmark@example.org', '127.0.0.1')
+    session = auth.verify_code('benchmark@example.org', issued['benchmark@example.org'])
+    handler = make_handler(snapshot, db, ROOT / 'review_app/static', auth)
     handler.log_message = lambda *args: None
     server = ReviewHTTPServer(('127.0.0.1', 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -38,7 +44,10 @@ with tempfile.TemporaryDirectory() as directory:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
-            page = browser.new_page(viewport={'width': 1440, 'height': 900})
+            context = browser.new_context(viewport={'width': 1440, 'height': 900})
+            context.add_cookies([{'name':'kip126_review_session', 'value':session,
+                                  'url':f'http://127.0.0.1:{server.server_port}/'}])
+            page = context.new_page()
             start = time.perf_counter()
             page.goto(f'http://127.0.0.1:{server.server_port}/', wait_until='domcontentloaded')
             page.locator('#review-card:not([hidden])').wait_for(timeout=15000)

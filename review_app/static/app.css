@@ -13,9 +13,11 @@ a{color:inherit;text-decoration:none}
 .top-actions{display:flex;align-items:center;gap:22px}
 .revision{font:11px 'IBM Plex Mono',monospace;color:#83928c}
 .reviewer-label{display:flex;align-items:center;gap:9px;color:#687971;font-size:12px;white-space:nowrap}
-.reviewer-label input{width:140px;padding:8px 10px;border:1px solid #d6dfd8;border-radius:7px;color:#21372d;background:#fafbf8}
+.reviewer-label strong{font-weight:600;color:#2b5540;max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .export{border:1px solid #cadad0;border-radius:7px;color:#205d48;font-size:12px;font-weight:700;padding:10px 13px;white-space:nowrap}
 .export:hover{background:#f0f7f1}
+.logout{border:0;background:transparent;color:#687971;font-size:12px;white-space:nowrap}
+.logout:hover{color:#205d48}
 .workspace{display:grid;grid-template-columns:330px minmax(0,1fr);height:calc(100vh - 72px)}
 .sidebar{background:#fbfcf9;border-right:1px solid #e1e7df;display:flex;flex-direction:column;min-height:0}
 .sidebar-head{padding:27px 24px 15px}
@@ -31,7 +33,7 @@ a{color:inherit;text-decoration:none}
 .progress-panel .muted{font-size:11px}
 .list-controls{padding:0 16px 12px}
 .list-controls input{width:100%;background:#fff;border:1px solid #dfe6df;border-radius:8px;padding:11px 12px;font-size:12px;outline:none}
-.list-controls input:focus,.reviewer-label input:focus,textarea:focus{border-color:#68a985;box-shadow:0 0 0 3px #ddefe2}
+.list-controls input:focus,textarea:focus{border-color:#68a985;box-shadow:0 0 0 3px #ddefe2}
 .filters{display:flex;gap:5px;margin-top:11px}
 .filters button{flex:1;border:0;background:transparent;border-radius:6px;padding:7px 2px;color:#819087;font-size:11px}
 .filters button.active{background:#dbece0;color:#185a3e;font-weight:700}
