@@ -130,6 +130,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
              "/app.js": ("app.js", "text/javascript; charset=utf-8"),
              "/app.css": ("app.css", "text/css; charset=utf-8"),
              "/latex-renderer.js": ("latex-renderer.js", "text/javascript; charset=utf-8"),
+             "/lean-renderer.js": ("lean-renderer.js", "text/javascript; charset=utf-8"),
              "/mathjax-tex-svg.js": ("mathjax-tex-svg.js", "text/javascript; charset=utf-8")}
     static_payloads = {}
     for path, (filename, media) in files.items():

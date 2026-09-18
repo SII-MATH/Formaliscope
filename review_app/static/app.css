@@ -74,6 +74,13 @@ kbd{background:#eef2ed;border:1px solid #dfe6df;border-radius:3px;padding:1px 4p
 .formal-info strong{display:block;font:600 14px 'IBM Plex Mono',monospace;overflow-wrap:anywhere;color:#244b39}
 .formal-info p{font-size:12px;color:#81918a;line-height:1.55;margin:8px 0}
 .lean-code{font:12px/1.65 'IBM Plex Mono',monospace;color:#263b33;background:#f7faf6;border:1px solid #edf2ed;border-radius:6px;margin:10px 18px 18px;padding:18px;white-space:pre;overflow:auto;max-height:540px;min-height:185px}
+.lean-code .k{color:#205bb0;font-weight:600}
+.lean-code .c{color:#76877d;font-style:italic}
+.lean-code .s{color:#a4482d}
+.lean-code .n{color:#975711}
+.lean-code .t{color:#8050b4}
+.lean-code .bad{color:#bb3535;font-weight:700}
+.lean-code .mk{color:#8655a5;font-weight:600}
 .source-location{padding:11px 20px;border-top:1px solid #edf1ec;color:#96a49a;font:10px 'IBM Plex Mono',monospace;overflow-wrap:anywhere}
 .dependencies,.history{margin-top:18px;background:white;border:1px solid #e2e9e0;border-radius:9px;color:#53665a;font-size:12px}
 .dependencies summary,.history summary{padding:13px 17px;cursor:pointer;font-weight:700}
@@ -131,4 +138,3 @@ textarea{width:100%;resize:vertical;border:1px solid #dce6dc;border-radius:7px;p
 .verdicts{gap:6px}
 .verdicts span{padding:10px}
 }
-

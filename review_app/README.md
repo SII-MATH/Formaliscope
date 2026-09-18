@@ -27,3 +27,4 @@ python3 -m unittest review_app.test_review
 ```
 
 数学公式渲染使用从本机 FormaliScope 前端复用的 MathJax 浏览器包（Apache 2.0，许可证在 `static/MATHJAX-LICENSE.txt`）和该项目的 LaTeX 渲染辅助脚本。前端资源均由本地服务提供，无需 CDN。
+Lean 源码高亮复用 FormaliScope 的 `lean-renderer.js`，在浏览器内对关键字、注释、字符串、类型和 `sorry` 等着色；源码中的 HTML 特殊字符在生成高亮标记前转义。

@@ -133,7 +133,9 @@
       card.source_status === "external" ? "这是外部库声明；当前快照没有它的源码。请结合 Mathlib 文档或源码核对。" :
       "尚未在 KIP126 源码中定位到此名称。请先核实映射是否仍然有效。"
     }</p>`;
-    $("lean-code").textContent = card.lean?.source || `-- 当前仓库未定位到 ${card.declaration} 的源码`;
+    const leanSource = card.lean?.source || `-- 当前仓库未定位到 ${card.declaration} 的源码`;
+    if (window.Stage3Lean?.toHtml) $("lean-code").innerHTML = window.Stage3Lean.toHtml(leanSource);
+    else $("lean-code").textContent = leanSource;
     $("lean-location").textContent = card.lean ? `${card.lean.file}:${card.lean.line}${card.lean.truncated ? " · 仅显示前 100 行" : ""}` : "源码未定位 · 不应仅凭名称判定对齐";
     $("dependencies").innerHTML = card.dependencies.length ? card.dependencies.map((value) => `<span class="chip">${escape(value)}</span>`).join("") : "此节点未列出依赖。";
     $("history-count").textContent = "";
