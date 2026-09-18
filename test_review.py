@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .build import compile_snapshot
@@ -63,6 +64,21 @@ class JudgmentTests(unittest.TestCase):
         result = submit(self.snapshot, self.db, {**self.payload, "rationale": ""})
         self.assertEqual(result[0], 400)
         self.assertEqual(history(self.db, self.card["id"]), [])
+
+    def test_catalog_can_include_initial_evidence(self):
+        value = catalog(self.snapshot, self.db, initial_id="auto")
+        self.assertEqual(value["initial_evidence"]["id"], self.card["id"])
+        self.assertEqual(catalog(self.snapshot, self.db)["cards"][0]["id"], self.card["id"])
+
+    def test_concurrent_writes_are_all_durable(self):
+        payloads = [
+            {**self.payload, "request_id": str(uuid.uuid4()), "reviewer": f"Reviewer {number}"}
+            for number in range(16)
+        ]
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            results = list(pool.map(lambda item: submit(self.snapshot, self.db, item), payloads))
+        self.assertTrue(all(code == 201 for code, _ in results))
+        self.assertEqual(len(history(self.db, self.card["id"])), 16)
 
 
 if __name__ == "__main__":

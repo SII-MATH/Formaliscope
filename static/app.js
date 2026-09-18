@@ -11,6 +11,8 @@
   let pendingRequest = null;
   const evidenceCache = new Map();
   const evidenceInflight = new Map();
+  let mathjaxLoading = false;
+  let mathjaxTimer = null;
 
   const escape = (value) => String(value ?? "")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -46,9 +48,12 @@
     $("progress-fill").style.width = catalog.length ? `${100 * done / catalog.length}%` : "0%";
   }
 
-  async function loadCatalog() {
-    const data = await json("./api/catalog");
+  async function loadCatalog({includeInitial = false} = {}) {
+    const initial = includeInitial ? (decodeURIComponent(location.hash.slice(1)) || "auto") : null;
+    const path = initial ? `./api/catalog?initial=${encodeURIComponent(initial)}` : "./api/catalog";
+    const data = await json(path);
     catalog = data.cards;
+    if (data.initial_evidence) evidenceCache.set(data.initial_evidence.id, data.initial_evidence);
     $("revision").textContent = `SOURCE ${data.source_commit.slice(0, 9)} · SNAPSHOT ${data.digest.slice(0, 9)}`;
     $("unlinked").textContent = `${data.unlinked_nodes} 个 Blueprint 节点尚未指定 Lean 对象`;
     renderList();
@@ -87,20 +92,41 @@
       </div>`).join("") : `<span class="muted">还没有审核记录。</span>`;
   }
 
-  function renderCard(card, historyRows) {
+  function queueMathTypesetting() {
+    if (window.MathJax?.typesetPromise) {
+      window.Stage3Latex?.typeset([$("statement")]);
+      return;
+    }
+    if (mathjaxLoading) return;
+    clearTimeout(mathjaxTimer);
+    // A large formula renderer must not interrupt a reviewer rapidly moving
+    // through cards. Load it once browsing has paused for a short interval.
+    mathjaxTimer = setTimeout(() => {
+      mathjaxLoading = true;
+      const script = document.createElement("script");
+      script.src = new URL("./mathjax-tex-svg.js", document.baseURI).toString();
+      script.onload = () => {
+        Promise.resolve(window.MathJax?.startup?.promise).then(() => {
+          if (selectedCard) window.Stage3Latex?.typeset([$("statement")]);
+        });
+      };
+      script.onerror = () => { mathjaxLoading = false; };
+      document.head.appendChild(script);
+    }, 400);
+  }
+
+  function renderEvidence(card) {
     selectedCard = card;
     $("empty").hidden = true;
     $("review-card").hidden = false;
     $("breadcrumb").textContent = `${card.chapter} / ${card.kind.toUpperCase()}`;
     $("card-title").textContent = card.title;
     $("meta").innerHTML = `<span>${escape(card.label)}</span><span>${escape(card.declaration)}</span>`;
-    const latest = historyRows[0];
-    const current = latest && latest.fingerprint === card.fingerprint ? latest : null;
     const badge = $("status-badge");
-    badge.className = `status-badge ${current ? "reviewed" : latest ? "stale" : ""}`;
-    badge.textContent = current ? `✓ ${verdictNames[current.verdict]}` : latest ? "⟳ 内容已变更，需重审" : "待人工审核";
+    badge.className = "status-badge";
+    badge.textContent = "正在读取审核状态";
     $("statement").innerHTML = window.Stage3Latex?.toHtml(card.statement) || escape(card.statement);
-    window.Stage3Latex?.typeset([$("statement")]);
+    queueMathTypesetting();
     $("nl-location").textContent = `${card.blueprint_file}:${card.blueprint_line}`;
     $("formal-info").innerHTML = `<strong>${escape(card.declaration)}</strong><p>${
       card.source_status === "local" ? "已定位到 KIP126 中的源码。请人工核对陈述及条件。" :
@@ -110,9 +136,27 @@
     $("lean-code").textContent = card.lean?.source || `-- 当前仓库未定位到 ${card.declaration} 的源码`;
     $("lean-location").textContent = card.lean ? `${card.lean.file}:${card.lean.line}${card.lean.truncated ? " · 仅显示前 100 行" : ""}` : "源码未定位 · 不应仅凭名称判定对齐";
     $("dependencies").innerHTML = card.dependencies.length ? card.dependencies.map((value) => `<span class="chip">${escape(value)}</span>`).join("") : "此节点未列出依赖。";
+    $("history-count").textContent = "";
+    $("history").textContent = "正在读取审核历史…";
+    $("save").disabled = true;
+    $("rationale").disabled = true;
+    document.querySelectorAll('input[name="verdict"]').forEach((input) => { input.disabled = true; });
+    $("save-message").textContent = "审核状态读取中，原文可先浏览";
+    pendingRequest = null;
+  }
+
+  function renderReviewState(card, historyRows) {
+    const latest = historyRows[0];
+    const current = latest && latest.fingerprint === card.fingerprint ? latest : null;
+    const badge = $("status-badge");
+    badge.className = `status-badge ${current ? "reviewed" : latest ? "stale" : ""}`;
+    badge.textContent = current ? `✓ ${verdictNames[current.verdict]}` : latest ? "⟳ 内容已变更，需重审" : "待人工审核";
     displayHistory(card, historyRows);
     $("rationale").value = current?.rationale || "";
     document.querySelectorAll('input[name="verdict"]').forEach((input) => { input.checked = input.value === current?.verdict; });
+    $("rationale").disabled = false;
+    document.querySelectorAll('input[name="verdict"]').forEach((input) => { input.disabled = false; });
+    $("save").disabled = false;
     $("save-message").textContent = "";
     pendingRequest = null;
   }
@@ -121,18 +165,29 @@
     if (!id) return;
     const turn = ++sequence;
     selected = id;
+    selectedCard = null;
+    $("save").disabled = true;
     history.replaceState(null, "", `#${encodeURIComponent(id)}`);
-    renderList();
+    $("card-list").querySelector(".list-row.active")?.classList.remove("active");
+    [...$("card-list").querySelectorAll(".list-row")]
+      .find((row) => row.dataset.id === id)?.classList.add("active");
     $("empty").hidden = false;
     $("review-card").hidden = true;
     $("empty").querySelector("h2").textContent = "正在加载卡片…";
     try {
-      const [card, result] = await Promise.all([
-        evidence(id), json(`./api/history?id=${encodeURIComponent(id)}`),
-      ]);
+      const historyPromise = json(`./api/history?id=${encodeURIComponent(id)}`)
+        .then((value) => ({value}), (error) => ({error}));
+      const card = await evidence(id);
       if (turn !== sequence) return;
-      renderCard(card, result.history);
+      renderEvidence(card);
       prefetchNeighbor(id);
+      const result = await historyPromise;
+      if (turn !== sequence) return;
+      if (result.error) {
+        $("save-message").textContent = `审核状态加载失败：${result.error.message}。请重新打开卡片。`;
+        return;
+      }
+      renderReviewState(card, result.value.history);
     } catch (error) {
       if (turn !== sequence) return;
       $("empty").querySelector("h2").textContent = "卡片加载失败";
@@ -169,7 +224,7 @@
       const id = selectedCard.id;
       await loadCatalog();
       const result = await json(`./api/history?id=${encodeURIComponent(id)}`);
-      if (selectedCard?.id === id) renderCard(selectedCard, result.history);
+      if (selectedCard?.id === id) renderReviewState(selectedCard, result.history);
       $("save-message").textContent = "已保存，可继续审核或修改判断";
     } catch (error) {
       $("save-message").textContent = error.message + "。可再次点击安全重试。";
@@ -207,7 +262,7 @@
   });
 
   $("reviewer").value = localStorage.getItem("kip126-reviewer") || "";
-  loadCatalog().then(() => {
+  loadCatalog({includeInitial: true}).then(() => {
     const fromHash = decodeURIComponent(location.hash.slice(1));
     const start = catalog.find((item) => item.id === fromHash) || visible()[0] || catalog[0];
     if (start) openCard(start.id);

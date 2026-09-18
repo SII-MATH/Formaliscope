@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,19 +15,21 @@ from urllib.parse import parse_qs, urlsplit
 
 VERDICTS = frozenset({"aligned", "partial", "misaligned", "uncertain"})
 MAX_BODY = 16_384
+WRITE_LOCK = threading.Lock()
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path, timeout=5, isolation_level=None)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout=5000")
-    connection.execute("PRAGMA journal_mode=WAL")
     return connection
 
 
 def initialize(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with connect(db_path) as db:
+    with closing(connect(db_path)) as db:
+        # Journal mode is persistent. Setting it on every GET takes a database
+        # lock and makes readers compete with one another under burst load.
+        db.execute("PRAGMA journal_mode=WAL")
         db.execute("""CREATE TABLE IF NOT EXISTS judgments (
             id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL,
             card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
@@ -35,8 +39,8 @@ def initialize(db_path: Path) -> None:
         db.execute("CREATE INDEX IF NOT EXISTS judgments_card_created ON judgments(card_id, created_at)")
 
 
-def catalog(snapshot: dict, db_path: Path) -> dict:
-    with connect(db_path) as db:
+def catalog(snapshot: dict, db_path: Path, *, initial_id: str | None = None) -> dict:
+    with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT card_id, fingerprint, verdict, created_at FROM judgments
             ORDER BY created_at, rowid""").fetchall()
     latest = {row["card_id"]: dict(row) for row in rows}
@@ -51,12 +55,21 @@ def catalog(snapshot: dict, db_path: Path) -> dict:
             "verdict": current["verdict"] if current else None,
             "stale": bool(judgment and not current),
         })
-    return {"digest": snapshot["digest"], "source_commit": snapshot["source_commit"],
-            "unlinked_nodes": snapshot["unlinked_nodes"], "cards": cards}
+    payload = {"digest": snapshot["digest"], "source_commit": snapshot["source_commit"],
+               "unlinked_nodes": snapshot["unlinked_nodes"], "cards": cards}
+    if initial_id is not None:
+        if initial_id == "auto":
+            initial_id = next((row["id"] for row in cards
+                               if row["source_status"] == "local" and not row["verdict"]),
+                              cards[0]["id"] if cards else None)
+        payload["initial_evidence"] = next(
+            (card for card in snapshot["cards"] if card["id"] == initial_id), None
+        )
+    return payload
 
 
 def history(db_path: Path, card_id: str) -> list[dict]:
-    with connect(db_path) as db:
+    with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT id, fingerprint, reviewer, verdict, rationale, created_at
             FROM judgments WHERE card_id=? ORDER BY created_at DESC, rowid DESC""", (card_id,)).fetchall()
     return [dict(row) for row in rows]
@@ -86,25 +99,28 @@ def submit(snapshot: dict, db_path: Path, payload: dict) -> tuple[int, dict]:
     if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 80:
         return 400, {"error": "请填写审核人姓名（最多 80 字）"}
     canonical = (card_id, card["fingerprint"], reviewer.strip(), verdict, rationale.strip())
-    with connect(db_path) as db:
-        db.execute("BEGIN IMMEDIATE")
-        previous = db.execute("""SELECT id, card_id, fingerprint, reviewer, verdict, rationale, created_at
-            FROM judgments WHERE request_id=?""", (request_id,)).fetchone()
-        if previous:
-            old = (previous["card_id"], previous["fingerprint"], previous["reviewer"],
-                   previous["verdict"], previous["rationale"])
+    # This server has one process. Queue writes briefly in Python rather than
+    # sending a simultaneous burst into SQLite's busy wait loop.
+    with WRITE_LOCK:
+        with closing(connect(db_path)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute("""SELECT id, card_id, fingerprint, reviewer, verdict, rationale, created_at
+                FROM judgments WHERE request_id=?""", (request_id,)).fetchone()
+            if previous:
+                old = (previous["card_id"], previous["fingerprint"], previous["reviewer"],
+                       previous["verdict"], previous["rationale"])
+                db.execute("COMMIT")
+                return (200, {"judgment": dict(previous), "replayed": True}) if old == canonical else (409, {"error": "请求 ID 已用于另一条判断"})
+            record = {
+                "id": str(uuid.uuid4()), "request_id": request_id, "card_id": card_id,
+                "fingerprint": card["fingerprint"], "reviewer": reviewer.strip(),
+                "verdict": verdict, "rationale": rationale.strip(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            db.execute("""INSERT INTO judgments
+                (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at)
+                VALUES (:id, :request_id, :card_id, :fingerprint, :reviewer, :verdict, :rationale, :created_at)""", record)
             db.execute("COMMIT")
-            return (200, {"judgment": dict(previous), "replayed": True}) if old == canonical else (409, {"error": "请求 ID 已用于另一条判断"})
-        record = {
-            "id": str(uuid.uuid4()), "request_id": request_id, "card_id": card_id,
-            "fingerprint": card["fingerprint"], "reviewer": reviewer.strip(),
-            "verdict": verdict, "rationale": rationale.strip(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        db.execute("""INSERT INTO judgments
-            (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at)
-            VALUES (:id, :request_id, :card_id, :fingerprint, :reviewer, :verdict, :rationale, :created_at)""", record)
-        db.execute("COMMIT")
     return 201, {"judgment": record, "replayed": False}
 
 
@@ -115,10 +131,11 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
              "/app.css": ("app.css", "text/css; charset=utf-8"),
              "/latex-renderer.js": ("latex-renderer.js", "text/javascript; charset=utf-8"),
              "/mathjax-tex-svg.js": ("mathjax-tex-svg.js", "text/javascript; charset=utf-8")}
-    static_payloads = {
-        path: ((static_dir / filename).read_bytes(), media)
-        for path, (filename, media) in files.items()
-    }
+    static_payloads = {}
+    for path, (filename, media) in files.items():
+        data = (static_dir / filename).read_bytes()
+        etag = '"' + hashlib.sha256(data).hexdigest() + '"' if path != "/" else None
+        static_payloads[path] = (data, media, etag)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "KIP126Review/1"
@@ -152,8 +169,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
             parsed = urlsplit(self.path)
             path = parsed.path
             if path in static_payloads:
-                data, media = static_payloads[path]
-                etag = '"' + hashlib.sha256(data).hexdigest() + '"' if path != "/" else None
+                data, media, etag = static_payloads[path]
                 if etag and self.headers.get("If-None-Match") == etag:
                     self._headers(304, media, 0, etag=etag)
                     return
@@ -164,7 +180,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
                     pass
                 return
             if path == "/api/catalog":
-                self._json(200, catalog(snapshot, db_path))
+                initial = parse_qs(parsed.query).get("initial", [None])[0]
+                self._json(200, catalog(snapshot, db_path, initial_id=initial))
                 return
             if path == "/api/card":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -191,7 +208,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
                 self._json(200, card, etag='"' + card["fingerprint"] + '"')
                 return
             if path == "/api/export":
-                with connect(db_path) as db:
+                with closing(connect(db_path)) as db:
                     rows = [dict(row) for row in db.execute("SELECT * FROM judgments ORDER BY created_at, rowid")]
                 self._json(200, {"snapshot_digest": snapshot["digest"], "source_commit": snapshot["source_commit"], "judgments": rows})
                 return
@@ -217,7 +234,34 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path):
             code, result = submit(snapshot, db_path, payload)
             self._json(code, result)
 
+    Handler.review_db_path = db_path
     return Handler
+
+
+class ReviewHTTPServer(ThreadingHTTPServer):
+    # A browser opens evidence and history in parallel. With the stdlib's
+    # five-connection listen backlog, a small reviewer burst can make unlucky
+    # clients wait for the OS SYN retry timer (roughly one second here).
+    request_queue_size = 128
+    daemon_threads = True
+    block_on_close = False
+
+    def __init__(self, address, handler):
+        # Keep WAL alive across short request connections. Otherwise the last
+        # connection closing can checkpoint/delete WAL on nearly every request.
+        self._db_keeper = connect(handler.review_db_path)
+        try:
+            self._db_keeper.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+            super().__init__(address, handler)
+        except BaseException:
+            self._db_keeper.close()
+            raise
+
+    def server_close(self):
+        try:
+            super().server_close()
+        finally:
+            self._db_keeper.close()
 
 
 def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port: int) -> None:
@@ -227,6 +271,6 @@ def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port:
     if snapshot.get("schema") != "kip126-review-snapshot.v1":
         raise ValueError("unsupported snapshot schema")
     initialize(db_path)
-    server = ThreadingHTTPServer((host, port), make_handler(snapshot, db_path, static_dir))
+    server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir))
     print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)
     server.serve_forever()

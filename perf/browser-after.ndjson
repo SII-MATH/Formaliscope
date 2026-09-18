@@ -1,0 +1,5 @@
+{"first_card_ms": 473.98, "click_count": 40, "click_p50_ms": 33.15, "click_p95_ms": 47.06, "click_p99_ms": 103.71, "click_max_ms": 103.71}
+{"first_card_ms": 264.03, "click_count": 40, "click_p50_ms": 33.54, "click_p95_ms": 180.71, "click_p99_ms": 876.62, "click_max_ms": 876.62}
+{"first_card_ms": 222.58, "click_count": 40, "click_p50_ms": 33.32, "click_p95_ms": 47.03, "click_p99_ms": 68.51, "click_max_ms": 68.51}
+{"first_card_ms": 230.83, "click_count": 40, "click_p50_ms": 33.06, "click_p95_ms": 80.88, "click_p99_ms": 433.7, "click_max_ms": 433.7}
+{"first_card_ms": 238.58, "click_count": 40, "click_p50_ms": 32.46, "click_p95_ms": 47.31, "click_p99_ms": 108.03, "click_max_ms": 108.03}
