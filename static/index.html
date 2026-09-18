@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KIP126 · 对应关系审核</title>
+  <link rel="stylesheet" href="./app.css">
+  <script src="./latex-renderer.js" defer></script>
+  <script src="./mathjax-tex-svg.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">K</span><span><strong>KIP126</strong><small>对应关系审核台</small></span></div>
+    <div class="top-actions"><span id="revision" class="revision"></span><label class="reviewer-label">审核人 <input id="reviewer" autocomplete="name" placeholder="请输入姓名"></label><a class="export" href="./api/export" download="kip126-review.json">导出记录 ↗</a></div>
+  </header>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head"><p class="eyebrow">REVIEW QUEUE</p><h1>审核队列</h1><p class="muted">Blueprint 中每条 <code>\lean{...}</code> 候选对应各是一张卡片。</p></div>
+      <div class="progress-panel"><div class="progress-top"><span>已审核</span><strong id="progress-label">—</strong></div><div class="progress-track"><div id="progress-fill"></div></div><p id="unlinked" class="muted"></p></div>
+      <div class="list-controls"><input id="search" type="search" placeholder="搜索标题、标签或 Lean 名称" aria-label="搜索卡片"><div id="filters" class="filters" role="group" aria-label="筛选状态"><button data-filter="pending" class="active">待审核</button><button data-filter="all">全部</button><button data-filter="reviewed">已审核</button><button data-filter="evidence">需补证</button><button data-filter="stale">重审</button></div></div>
+      <div id="card-list" class="card-list" aria-label="审核对象列表"></div>
+      <div class="sidebar-foot">按 <kbd>J</kbd>/<kbd>K</kbd> 切换卡片 · <kbd>1</kbd>–<kbd>4</kbd> 选择结论</div>
+    </aside>
+    <section class="main-panel" aria-live="polite">
+      <div id="empty" class="empty-state"><div class="empty-icon">↔</div><h2>正在准备审核队列</h2><p>原文和 Lean 对象会并排显示。</p></div>
+      <article id="review-card" hidden>
+        <div class="card-head"><div><p id="breadcrumb" class="eyebrow"></p><h2 id="card-title"></h2><div id="meta" class="meta"></div></div><span id="status-badge" class="status-badge"></span></div>
+        <div class="comparison"><section class="comparison-pane natural"><div class="pane-head"><span class="pane-index">01</span><span>自然语言陈述</span><span class="pane-hint">Lean Blueprint</span></div><div id="statement" class="statement"></div><div id="nl-location" class="source-location"></div></section><section class="comparison-pane formal"><div class="pane-head"><span class="pane-index">02</span><span>形式化候选</span><span class="pane-hint">Lean 4</span></div><div id="formal-info" class="formal-info"></div><pre id="lean-code" class="lean-code"></pre><div id="lean-location" class="source-location"></div></section></div>
+        <details class="dependencies"><summary>查看 Blueprint 依赖</summary><div id="dependencies"></div></details>
+        <section class="decision-panel"><div class="decision-heading"><div><p class="eyebrow">HUMAN REVIEW</p><h3>这两个对象是否表达同一件事？</h3></div><p>这里只记录人的语义判断，不代表 Lean 证明已完成。</p></div><div id="verdicts" class="verdicts"><label><input type="radio" name="verdict" value="aligned"><span><b>对齐</b><small>数学含义一致</small></span></label><label><input type="radio" name="verdict" value="partial"><span><b>部分对齐</b><small>核心相关，但范围或条件不同</small></span></label><label><input type="radio" name="verdict" value="misaligned"><span><b>不对齐</b><small>对象或结论不相符</small></span></label><label><input type="radio" name="verdict" value="uncertain"><span><b>暂无法判断</b><small>需要补充背景或进一步复核</small></span></label></div><label class="rationale-label" for="rationale">判断依据 <span>除“对齐”外必填</span></label><textarea id="rationale" rows="3" maxlength="4000" placeholder="简要说明差异、缺少的前提或待核查点"></textarea><div class="decision-actions"><span id="save-message" role="status"></span><button id="save" class="primary">保存判断</button><button id="next" class="secondary">下一张 →</button></div></section>
+        <details class="history"><summary>审核历史 <span id="history-count"></span></summary><div id="history"></div></details>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
