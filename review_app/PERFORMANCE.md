@@ -1,6 +1,6 @@
 # 审核页面负载与等待时间
 
-2026-09-18，在同一台机器上比较初版提交 `7894601` 与本次改进。基准脚本和原始五轮结果保存在本目录，均使用临时 SQLite 数据库和本机临时端口，不碰真实审核记录。
+2026-09-18，在同一台机器上比较初版提交 `52a3e54` 与并发优化版 `6aa72f1`。这些是从原 KIP126 草稿 PR 提取的应用代码提交；独立仓库迁移只改变源码目录的传入方式，未改变被测服务和前端。基准脚本和原始五轮结果保存在本目录，均使用临时 SQLite 数据库和本机临时端口，不碰真实审核记录。
 
 | 指标（五轮中位数，越小越好） | 初版 | 改进后 | 变化 |
 |---|---:|---:|---:|
@@ -20,7 +20,7 @@ HTTP 工作负载：16 个客户端同时开始，各打开 24 张卡片。每�
 复测命令（在仓库根目录）：
 
 ```bash
-python3 -m review_app build
+python3 -m review_app build --source /path/to/KIP126
 python3 -m review_app.benchmark_http --clients 16 --cards 24 --repeat 5
 # 可选：安装 Playwright 和 Chromium 后
 python3 -m review_app.benchmark_browser

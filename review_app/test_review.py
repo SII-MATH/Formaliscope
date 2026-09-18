@@ -5,24 +5,37 @@ import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 from .build import compile_snapshot
 from .server import catalog, history, initialize, submit
 
 
-REPO = Path(__file__).resolve().parents[1]
-
-
 class SnapshotTests(unittest.TestCase):
-    def test_current_blueprint_links_are_unique_and_located(self):
-        snapshot = compile_snapshot(REPO)
-        cards = snapshot["cards"]
-        self.assertEqual(len(cards), 255)
-        self.assertEqual(len({card["id"] for card in cards}), len(cards))
-        self.assertTrue(any(card["source_status"] == "external" for card in cards))
-        known = next(card for card in cards if card["declaration"] == "KIP126.Core.Algebra.Filtration")
-        self.assertEqual(known["source_status"], "local")
-        self.assertIn("structure Filtration", known["lean"]["source"])
+    def test_build_reads_an_external_source_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "blueprint/src").mkdir(parents=True)
+            (source / "KIP126").mkdir()
+            (source / "blueprint/src/content.tex").write_text("\\input{chapter}\n")
+            (source / "blueprint/src/chapter.tex").write_text(
+                "\\chapter{Example}\n"
+                "\\begin{definition}[A sample]\\label{def:sample}"
+                "A natural language statement.\\lean{KIP126.Sample.foo}"
+                "\\end{definition}\n"
+            )
+            (source / "KIP126/Sample.lean").write_text(
+                "namespace KIP126.Sample\n"
+                "theorem foo : True := by trivial\n"
+                "end KIP126.Sample\n"
+            )
+            with patch("review_app.build._git_head", return_value="0" * 40):
+                snapshot = compile_snapshot(source)
+        self.assertEqual(len(snapshot["cards"]), 1)
+        card = snapshot["cards"][0]
+        self.assertEqual(card["source_status"], "local")
+        self.assertEqual(card["id"], "def:sample::KIP126.Sample.foo")
+        self.assertIn("theorem foo", card["lean"]["source"])
 
 
 class JudgmentTests(unittest.TestCase):
