@@ -4,7 +4,10 @@ Run from the repository root: python3 -m review_app.benchmark_http
 The benchmark uses a temporary database and an ephemeral loopback port.
 """
 import argparse
+import hashlib
 import json
+import secrets
+import sqlite3
 import statistics
 import tempfile
 import threading
@@ -47,11 +50,17 @@ def run(snapshot, clients, cards_per_client):
     with tempfile.TemporaryDirectory() as directory:
         db = Path(directory) / "judgments.sqlite3"
         initialize(db)
-        issued = {}
         auth = AuthStore(db, AuthSettings(mailer="agently", allow_any_email=True),
-                         sender=lambda email, code: issued.setdefault(email, code))
-        auth.request_code("benchmark@example.org", "127.0.0.1")
-        session = auth.verify_code("benchmark@example.org", issued["benchmark@example.org"])
+                         sender=lambda _email, _code: None)
+        sessions = []
+        now = int(time.time())
+        with sqlite3.connect(db) as connection:
+            for number in range(clients):
+                token = secrets.token_urlsafe(32)
+                sessions.append(token)
+                connection.execute("INSERT INTO login_sessions VALUES (?, ?, ?, ?)",
+                                   (hashlib.sha256(token.encode()).hexdigest(),
+                                    f"benchmark{number}@example.org", now, now + 3600))
         handler = make_handler(snapshot, db, ROOT / "review_app/static", auth)
         handler.log_message = lambda *args: None
         server = ReviewHTTPServer(("127.0.0.1", 0), handler)
@@ -65,6 +74,7 @@ def run(snapshot, clients, cards_per_client):
             local_load = []
             local_submit = []
             errors = []
+            session = sessions[number]
             try:
                 catalog = request(base, "/api/catalog", session=session)
                 if len(catalog["cards"]) != len(snapshot["cards"]):
@@ -83,7 +93,7 @@ def run(snapshot, clients, cards_per_client):
                         if iteration % 8 == 0:
                             payload = {"request_id": str(uuid.uuid4()), "card_id": card_id,
                                        "fingerprint": card["fingerprint"],
-                                       "reviewer": f"load-{number}", "verdict": "aligned", "rationale": ""}
+                                       "verdict": "aligned", "rationale": ""}
                             start = time.perf_counter()
                             request(base, "/api/judgments", payload=payload, session=session)
                             local_submit.append(time.perf_counter() - start)

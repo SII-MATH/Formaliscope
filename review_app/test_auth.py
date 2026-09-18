@@ -129,6 +129,13 @@ class AuthHTTPTests(unittest.TestCase):
         with response:
             return response.status, dict(response.headers), response.read()
 
+    def login(self, email):
+        self.assertEqual(self.request("/api/auth/request-code", body={"email": email})[0], 200)
+        status, headers, _ = self.request(
+            "/api/auth/verify-code", body={"email": email, "code": self.sent[email]})
+        self.assertEqual(status, 200)
+        return headers["Set-Cookie"].split(";", 1)[0]
+
     def test_login_authorizes_api_and_binds_judgment_to_email(self):
         self.assertEqual(self.request("/api/catalog")[0], 401)
         self.assertEqual(self.request("/api/export")[0], 401)
@@ -153,6 +160,40 @@ class AuthHTTPTests(unittest.TestCase):
         self.assertEqual(json.loads(content)["judgment"]["reviewer"], "alice@example.org")
         self.assertEqual(self.request("/api/auth/logout", body={}, cookie=cookie)[0], 200)
         self.assertEqual(self.request("/api/export", cookie=cookie)[0], 401)
+
+    def test_two_reviewers_have_independent_progress_history_and_exports(self):
+        alice = self.login("alice@example.org")
+        bob = self.login("bob@example.org")
+        request_id = str(uuid.uuid4())
+        payload = {"request_id": request_id, "card_id": self.card["id"],
+                   "fingerprint": self.card["fingerprint"], "reviewer": "forged@example.org",
+                   "verdict": "aligned", "rationale": ""}
+        self.assertEqual(self.request("/api/judgments", body=payload, cookie=alice)[0], 201)
+
+        def read(path, cookie):
+            status, _, body = self.request(path, cookie=cookie)
+            self.assertEqual(status, 200)
+            return json.loads(body)
+
+        card_id = self.card["id"]
+        self.assertEqual(read("/api/catalog", alice)["cards"][0]["verdict"], "aligned")
+        self.assertIsNone(read("/api/catalog", bob)["cards"][0]["verdict"])
+        self.assertEqual(len(read(f"/api/history?id={card_id}", alice)["history"]), 1)
+        self.assertEqual(read(f"/api/history?id={card_id}&reviewer=alice@example.org", bob)["history"], [])
+        self.assertEqual(read(f"/api/card?id={card_id}", bob)["history"], [])
+        self.assertEqual(read("/api/export?reviewer=alice@example.org", bob)["judgments"], [])
+
+        self.assertEqual(self.request("/api/judgments", body={**payload, "verdict": "misaligned",
+                              "rationale": "Different meaning"}, cookie=bob)[0], 201)
+        self.assertEqual(read("/api/catalog", alice)["cards"][0]["verdict"], "aligned")
+        self.assertEqual(read("/api/catalog", bob)["cards"][0]["verdict"], "misaligned")
+        for email, cookie in (("alice@example.org", alice), ("bob@example.org", bob)):
+            exported = read("/api/export", cookie)
+            self.assertEqual(exported["reviewer"], email)
+            self.assertEqual(len(exported["judgments"]), 1)
+            self.assertEqual(exported["judgments"][0]["reviewer"], email)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM judgments").fetchone()[0], 2)
 
     def test_public_origin_and_prefixed_cookie(self):
         self.server.shutdown()

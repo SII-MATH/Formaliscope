@@ -35,20 +35,41 @@ def initialize(db_path: Path) -> None:
         # Journal mode is persistent. Setting it on every GET takes a database
         # lock and makes readers compete with one another under burst load.
         db.execute("PRAGMA journal_mode=WAL")
-        db.execute("""CREATE TABLE IF NOT EXISTS judgments (
-            id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL,
-            card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-            reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
-            rationale TEXT NOT NULL, created_at TEXT NOT NULL
-        )""")
-        db.execute("CREATE INDEX IF NOT EXISTS judgments_card_created ON judgments(card_id, created_at)")
+        old_schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='judgments'").fetchone()
+        if old_schema and "request_id TEXT UNIQUE" in old_schema[0]:
+            # The first release made request IDs globally unique. Rebuild the
+            # table so retries and IDs are scoped to a reviewer's own account.
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("ALTER TABLE judgments RENAME TO judgments_legacy")
+            db.execute("""CREATE TABLE judgments (
+                id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
+                rationale TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(reviewer, request_id)
+            )""")
+            db.execute("""INSERT INTO judgments
+                (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at)
+                SELECT id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at
+                FROM judgments_legacy ORDER BY rowid""")
+            db.execute("DROP TABLE judgments_legacy")
+            db.execute("COMMIT")
+        else:
+            db.execute("""CREATE TABLE IF NOT EXISTS judgments (
+                id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
+                rationale TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(reviewer, request_id)
+            )""")
+        db.execute("CREATE INDEX IF NOT EXISTS judgments_reviewer_card_created ON judgments(reviewer, card_id, created_at)")
     db_path.chmod(0o600)
 
 
-def catalog(snapshot: dict, db_path: Path, *, initial_id: str | None = None) -> dict:
+def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | None = None) -> dict:
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT card_id, fingerprint, verdict, created_at FROM judgments
-            ORDER BY created_at, rowid""").fetchall()
+            WHERE reviewer=? ORDER BY created_at, rowid""", (reviewer,)).fetchall()
     latest = {row["card_id"]: dict(row) for row in rows}
     cards = []
     for card in snapshot["cards"]:
@@ -74,14 +95,15 @@ def catalog(snapshot: dict, db_path: Path, *, initial_id: str | None = None) -> 
     return payload
 
 
-def history(db_path: Path, card_id: str) -> list[dict]:
+def history(db_path: Path, card_id: str, reviewer: str) -> list[dict]:
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT id, fingerprint, reviewer, verdict, rationale, created_at
-            FROM judgments WHERE card_id=? ORDER BY created_at DESC, rowid DESC""", (card_id,)).fetchall()
+            FROM judgments WHERE card_id=? AND reviewer=? ORDER BY created_at DESC, rowid DESC""",
+            (card_id, reviewer)).fetchall()
     return [dict(row) for row in rows]
 
 
-def submit(snapshot: dict, db_path: Path, payload: dict) -> tuple[int, dict]:
+def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple[int, dict]:
     if not isinstance(payload, dict):
         return 400, {"error": "请求格式错误"}
     card_id = payload.get("card_id")
@@ -92,7 +114,6 @@ def submit(snapshot: dict, db_path: Path, payload: dict) -> tuple[int, dict]:
         return 409, {"error": "原文或 Lean 对象已更新，请重新打开卡片"}
     verdict = payload.get("verdict")
     rationale = payload.get("rationale", "")
-    reviewer = payload.get("reviewer", "")
     request_id = payload.get("request_id")
     try:
         uuid.UUID(request_id)
@@ -102,16 +123,16 @@ def submit(snapshot: dict, db_path: Path, payload: dict) -> tuple[int, dict]:
         return 400, {"error": "请选择审核结论"}
     if not isinstance(rationale, str) or len(rationale) > 4000 or (verdict != "aligned" and not rationale.strip()):
         return 400, {"error": "除“对齐”外，请填写理由（最多 4000 字）"}
-    if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 254:
-        return 400, {"error": "审核人标识无效（最多 254 字符）"}
-    canonical = (card_id, card["fingerprint"], reviewer.strip(), verdict, rationale.strip())
+    if normalize_email(reviewer) != reviewer:
+        return 400, {"error": "审核人邮箱无效"}
+    canonical = (card_id, card["fingerprint"], reviewer, verdict, rationale.strip())
     # This server has one process. Queue writes briefly in Python rather than
     # sending a simultaneous burst into SQLite's busy wait loop.
     with WRITE_LOCK:
         with closing(connect(db_path)) as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute("""SELECT id, card_id, fingerprint, reviewer, verdict, rationale, created_at
-                FROM judgments WHERE request_id=?""", (request_id,)).fetchone()
+                FROM judgments WHERE reviewer=? AND request_id=?""", (reviewer, request_id)).fetchone()
             if previous:
                 old = (previous["card_id"], previous["fingerprint"], previous["reviewer"],
                        previous["verdict"], previous["rationale"])
@@ -119,7 +140,7 @@ def submit(snapshot: dict, db_path: Path, payload: dict) -> tuple[int, dict]:
                 return (200, {"judgment": dict(previous), "replayed": True}) if old == canonical else (409, {"error": "请求 ID 已用于另一条判断"})
             record = {
                 "id": str(uuid.uuid4()), "request_id": request_id, "card_id": card_id,
-                "fingerprint": card["fingerprint"], "reviewer": reviewer.strip(),
+                "fingerprint": card["fingerprint"], "reviewer": reviewer,
                 "verdict": verdict, "rationale": rationale.strip(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -249,7 +270,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
-                self._json(200, catalog(snapshot, db_path, initial_id=initial))
+                self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial))
                 return
             if path == "/api/card":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -257,7 +278,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 if card is None:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                self._json(200, {"card": card, "history": history(db_path, card_id)},
+                self._json(200, {"card": card, "history": history(db_path, card_id, viewer)},
                            etag=None)  # History changes after a judgment.
                 return
             if path == "/api/history":
@@ -265,7 +286,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 if card_id not in cards_by_id:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                self._json(200, {"history": history(db_path, card_id)})
+                self._json(200, {"history": history(db_path, card_id, viewer)})
                 return
             if path == "/api/evidence":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -277,8 +298,10 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return
             if path == "/api/export":
                 with closing(connect(db_path)) as db:
-                    rows = [dict(row) for row in db.execute("SELECT * FROM judgments ORDER BY created_at, rowid")]
-                self._json(200, {"snapshot_digest": snapshot["digest"], "source_commit": snapshot["source_commit"], "judgments": rows})
+                    rows = [dict(row) for row in db.execute(
+                        "SELECT * FROM judgments WHERE reviewer=? ORDER BY created_at, rowid", (viewer,))]
+                self._json(200, {"snapshot_digest": snapshot["digest"], "source_commit": snapshot["source_commit"],
+                                 "reviewer": viewer, "judgments": rows})
                 return
             self._json(404, {"error": "页面不存在"})
 
@@ -334,7 +357,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
             if not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
                 return
-            code, result = submit(snapshot, db_path, {**payload, "reviewer": viewer})
+            code, result = submit(snapshot, db_path, viewer, payload)
             self._json(code, result)
 
     Handler.review_db_path = db_path

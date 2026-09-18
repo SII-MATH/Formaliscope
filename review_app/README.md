@@ -8,11 +8,13 @@ REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --por
 # 浏览器打开 http://127.0.0.1:8765/
 ```
 
-应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。运行数据放在本仓库 Git 忽略的 `.review/`：`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。请一起备份数据库与密钥，不要把它们提交到 Git。源文件变化后重新执行 `build --source ...`，重启服务；旧判断留在历史中，但内容指纹不再匹配时会显示“需重审”。登录后点击“导出记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。
+应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。运行数据放在本仓库 Git 忽略的 `.review/`：`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。请一起备份数据库与密钥，不要把它们提交到 Git。源文件变化后重新执行 `build --source ...`，重启服务；旧判断留在原审核人的历史中，但内容指纹不再匹配时会显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。
 
 ## 邮箱登录
 
 当前配置允许任何能收信的邮箱登录。验证码为 8 位数字，10 分钟有效且只能使用一次；每个验证码最多试 5 次。会话有效期为 12 小时，退出后立即失效。审核人邮箱由服务端写入判断记录，页面提交的同名字段不会生效。邮件发送请求按邮箱、来源 IP 和全局限速；目前本机邮箱每日最多可发送 50 封，应用限制为 40 次/日，保留 10 封余量。发送失败不会扣应用限额。邮件服务商自身仍可能拒发或限流。
+
+每个已验证邮箱拥有独立的审核进度、判断历史和导出记录。所有用户查看同一份 Blueprint/Lean 证据快照，但无法通过网页 API 读取或修改其他邮箱的判断。判断仍存储在同一个 SQLite 数据库中，以审核邮箱为键隔离；服务管理员持有数据库文件时可以查看全部记录。部署此版本时，应用会自动将旧版判断表迁移为按邮箱限定请求 ID 的表，并保留原有判断。
 
 本机已绑定 `siimath@agent.qq.com` 时，使用上面的 `REVIEW_MAILER=agently` 命令。服务进程必须能访问同一用户的 `agently-cli` 登录状态与网络。不要在网页或仓库里填写邮箱密码。若改用 SMTP，请在运行环境设置 `REVIEW_MAILER=smtp`、`REVIEW_SMTP_HOST`、`REVIEW_SMTP_PORT`、`REVIEW_SMTP_SECURITY=ssl`（或 `starttls`）、`REVIEW_SMTP_USER`、`REVIEW_SMTP_FROM`，以及 `REVIEW_SMTP_PASSWORD_FILE` 指向仅服务账号可读的密码文件；也可用 `REVIEW_SMTP_PASSWORD` 环境变量。仍需设置 `REVIEW_ALLOW_ANY_EMAIL=1`。默认发件模式为 SMTP，缺少配置时服务拒绝启动。
 
