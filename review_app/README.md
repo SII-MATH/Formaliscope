@@ -8,7 +8,7 @@ REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --por
 # 浏览器打开 http://127.0.0.1:8765/
 ```
 
-应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。运行数据放在本仓库 Git 忽略的 `.review/`：`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。请一起备份数据库与密钥，不要把它们提交到 Git。源文件变化后重新执行 `build --source ...`，重启服务；旧判断留在原审核人的历史中，但内容指纹不再匹配时会显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。
+应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。本地运行数据默认放在本仓库 Git 忽略的 `.review/`。生产环境使用 `--data-dir /var/lib/kip126-review` 或 `REVIEW_DATA_DIR`，不要把运行数据放在源码检出或容器可写层中。`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。源文件变化后以同一数据目录重新执行 `build --source ...`，重启服务；旧判断留在原审核人的历史中，但内容指纹不再匹配时会显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。生产目录、服务单元和一致性备份见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ## 邮箱登录
 
@@ -33,7 +33,7 @@ REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --por
 ## 验证
 
 ```bash
-python3 -m unittest review_app.test_review review_app.test_auth
+python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
 ```
 
 数学公式渲染使用从本机 FormaliScope 前端复用的 MathJax 浏览器包（Apache 2.0，许可证在 `static/MATHJAX-LICENSE.txt`）和该项目的 LaTeX 渲染辅助脚本。前端资源均由本地服务提供，无需 CDN。

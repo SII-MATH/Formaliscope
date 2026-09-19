@@ -145,8 +145,9 @@ def _git_head(repo: Path) -> str:
 
 def write_snapshot(repo: Path, output: Path) -> dict:
     payload = compile_snapshot(repo)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
     temporary.replace(output)
     return payload

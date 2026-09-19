@@ -1,0 +1,26 @@
+[Unit]
+Description=KIP126 correspondence review portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kip126-review
+Group=kip126-review
+WorkingDirectory=/opt/kip126-review
+Environment=REVIEW_DATA_DIR=/var/lib/kip126-review
+EnvironmentFile=/etc/kip126-review/review.env
+ExecStart=/usr/bin/python3 -m review_app serve --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+StateDirectory=kip126-review
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kip126-review
+
+[Install]
+WantedBy=multi-user.target

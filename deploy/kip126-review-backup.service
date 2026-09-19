@@ -1,0 +1,16 @@
+[Unit]
+Description=Create a consistent KIP126 review backup
+
+[Service]
+Type=oneshot
+User=kip126-review
+Group=kip126-review
+WorkingDirectory=/opt/kip126-review
+Environment=REVIEW_DATA_DIR=/var/lib/kip126-review
+ExecStart=/usr/bin/python3 -m review_app backup --output /var/backups/kip126-review
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kip126-review /var/backups/kip126-review
