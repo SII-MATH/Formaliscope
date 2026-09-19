@@ -1,14 +1,16 @@
 # 部署与持久存储
 
-生产环境将代码、运行数据和密钥分开：
+生产环境将代码、运行数据和密钥分开。当前正式命名为 `formaliscope`；文档中
+保留的 `kip126-review` 旧单元只用于已有安装的迁移参考，新 HK 部署使用
+`/opt/formaliscope`、`/var/lib/formaliscope` 和 `formaliscope-review.service`：
 
 | 路径 | 内容 | 是否持久化 |
 |---|---|---|
-| `/opt/kip126-review/releases/<commit>` | 不可变的应用源码与静态资源 | 每次发布新增目录 |
-| `/opt/kip126-review/current` | 指向当前 release 的符号链接 | 发布时原子切换 |
-| `/var/lib/kip126-review` | `snapshot.json`、`judgments.sqlite3`、`auth-pepper` | 必须使用持久磁盘 |
-| `/etc/kip126-review` | 邮件和公开入口配置、SMTP 密码文件 | 必须备份到密钥系统 |
-| `/var/backups/kip126-review` | 经过 SQLite 在线备份 API 生成的备份 | 应再复制到异机存储 |
+| `/opt/formaliscope/releases/<commit>` | 不可变的应用源码与静态资源 | 每次发布新增目录 |
+| `/opt/formaliscope/current` | 指向当前 release 的符号链接 | 发布时原子切换 |
+| `/var/lib/formaliscope` | `snapshot.json`、`judgments.sqlite3`、`auth-pepper` | 必须使用持久磁盘 |
+| `/etc/formaliscope` | 邮件和公开入口配置、SMTP 密码文件 | 必须备份到密钥系统 |
+| `/var/backups/formaliscope` | 经过 SQLite 在线备份 API 生成的备份 | 应再复制到异机存储 |
 
 代码升级不能删除或覆盖 `/var/lib/kip126-review`。数据库只由一个应用实例访问；反向代理可以有多个，但审核服务保持单实例。如果需要多个审核服务实例，应先迁移到 PostgreSQL，不能让多个容器通过共享卷直接打开同一个 SQLite 文件。
 
@@ -46,12 +48,15 @@ sudo -u kip126-review python3 -m review_app install-snapshot \
 
 首次启动会在数据目录创建数据库和 `auth-pepper`。生产机推荐 SMTP；本地 `agently-cli` 的 OAuth 状态不会自动复制到另一台机器。密码放在独立的 0640 文件中，不写入环境示例、源码或数据库。
 
-把 `deploy/*.service` 和 `deploy/*.timer` 安装到 `/etc/systemd/system/`，然后启动：
+把 `deploy/formaliscope-*.service` 和 `deploy/formaliscope-*.timer` 安装到
+`/etc/systemd/system/`，把三个可执行脚本安装到 `/usr/local/sbin/`，然后启动：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now kip126-review.service
-sudo systemctl enable --now kip126-review-backup.timer
+sudo systemctl enable --now formaliscope-review.service
+sudo systemctl enable --now formaliscope-review-backup.timer
+sudo systemctl enable --now formaliscope-app-pull.timer
+sudo systemctl enable --now formaliscope-snapshot-pull.timer
 ```
 
 更新审核应用时，先备份，在新的 `/opt/kip126-review/releases/<commit>` 目录安装代码并运行测试，然后执行下列命令。`migrate` 会读取当前已安装的快照，为旧格式判断补算稳定内容依据；因此它必须先于新快照的 `install-snapshot`：

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for Formaliscope application releases
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=15m
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

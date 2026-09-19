@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for KIP126 evidence snapshots
+
+[Timer]
+OnBootSec=12m
+OnUnitActiveSec=15m
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull the latest Formaliscope application release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/formaliscope-app-pull

@@ -1,0 +1,26 @@
+[Unit]
+Description=Formaliscope correspondence review portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=formaliscope-review
+Group=formaliscope-review
+WorkingDirectory=/opt/formaliscope/current
+Environment=REVIEW_DATA_DIR=/var/lib/formaliscope
+EnvironmentFile=/etc/formaliscope/review.env
+ExecStart=/usr/bin/python3 -m review_app serve --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+StateDirectory=formaliscope
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/formaliscope
+
+[Install]
+WantedBy=multi-user.target

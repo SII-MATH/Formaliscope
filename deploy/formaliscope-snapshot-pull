@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Pull, verify, and install the latest immutable KIP126 evidence snapshot.
+set -Eeuo pipefail
+
+REPOSITORY="${FORMALISCOPE_GITHUB_REPOSITORY:-SII-MATH/Formaliscope}"
+TOKEN_FILE="${FORMALISCOPE_GITHUB_TOKEN_FILE:-/etc/formaliscope/github-read-token}"
+ROOT="${FORMALISCOPE_ROOT:-/opt/formaliscope}"
+DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
+BACKUP_DIR="${REVIEW_BACKUP_DIR:-/var/backups/formaliscope}"
+LOCK_FILE="${FORMALISCOPE_DEPLOY_LOCK:-/run/lock/formaliscope-deploy.lock}"
+API="https://api.github.com/repos/${REPOSITORY}/releases?per_page=100"
+
+[[ -r "$TOKEN_FILE" ]] || { echo "missing GitHub token file: $TOKEN_FILE" >&2; exit 1; }
+[[ -L "$ROOT/current" ]] || { echo "application has not been installed: $ROOT/current" >&2; exit 1; }
+install -d -m 0755 "$(dirname "$LOCK_FILE")" "$DATA_DIR" "$BACKUP_DIR"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "another Formaliscope deployment is running"; exit 0; }
+
+token="$(<"$TOKEN_FILE")"
+release_json="$(curl --fail --silent --show-error --location --retry 3 \
+  -H 'Accept: application/vnd.github+json' \
+  -H "Authorization: Bearer $token" \
+  -H 'X-GitHub-Api-Version: 2022-11-28' "$API")"
+mapfile -t release_info < <(python3 -c '
+import json, re, sys
+releases = json.load(sys.stdin)
+chosen = None
+for release in releases:
+    tag = release.get("tag_name", "")
+    if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"snapshot-[0-9a-f]{40}", tag):
+        continue
+    if chosen is None or (release.get("published_at") or release.get("created_at") or "") > (chosen.get("published_at") or chosen.get("created_at") or ""):
+        chosen = release
+if chosen is None:
+    raise SystemExit("no immutable snapshot release found")
+assets = {asset["name"]: asset["browser_download_url"] for asset in chosen.get("assets", [])}
+required = ["snapshot.json", "snapshot.json.sha256", "snapshot-manifest.json"]
+missing = [name for name in required if name not in assets]
+if missing:
+    raise SystemExit("release is missing assets: " + ", ".join(missing))
+for value in (chosen["tag_name"], assets["snapshot.json"], assets["snapshot.json.sha256"], assets["snapshot-manifest.json"]):
+    print(value)
+' <<<"$release_json")
+
+tag="${release_info[0]}"
+stage="$(mktemp -d "$ROOT/.snapshot-pull.XXXXXX")"
+cleanup() { rm -rf "$stage"; }
+trap cleanup EXIT
+for item in snapshot.json snapshot.json.sha256 snapshot-manifest.json; do
+  case "$item" in
+    snapshot.json) url="${release_info[1]}";;
+    snapshot.json.sha256) url="${release_info[2]}";;
+    snapshot-manifest.json) url="${release_info[3]}";;
+  esac
+  curl --fail --silent --show-error --location --retry 3 -H "Authorization: Bearer $token" -o "$stage/$item" "$url"
+done
+(cd "$stage" && sha256sum -c snapshot.json.sha256)
+python3 - "$stage/snapshot-manifest.json" "$stage/snapshot.json" "$tag" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+snapshot = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+if manifest.get("schema") != "formaliscope-snapshot-release.v1":
+    raise SystemExit("unsupported snapshot manifest schema")
+if manifest.get("source_commit") != sys.argv[3][len("snapshot-"):]:
+    raise SystemExit("snapshot manifest source commit does not match release tag")
+if manifest.get("snapshot_digest") != snapshot.get("digest"):
+    raise SystemExit("snapshot manifest digest does not match snapshot")
+PY
+
+current_digest=""
+if [[ -f "$DATA_DIR/snapshot.json" ]]; then
+  current_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("digest", ""))' "$DATA_DIR/snapshot.json")"
+fi
+incoming_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["digest"])' "$stage/snapshot.json")"
+if [[ "$current_digest" == "$incoming_digest" ]]; then
+  echo "snapshot already active: $tag"
+  exit 0
+fi
+
+if [[ -f "$DATA_DIR/snapshot.json" && -f "$DATA_DIR/judgments.sqlite3" ]]; then
+  PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
+    python3 -m review_app backup --data-dir "$DATA_DIR" --output "$BACKUP_DIR"
+fi
+PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
+  python3 -m review_app install-snapshot --file "$stage/snapshot.json" --data-dir "$DATA_DIR"
+if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
+  systemctl restart formaliscope-review.service
+  curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8765/login >/dev/null
+fi
+echo "activated snapshot $tag; digest=$incoming_digest"

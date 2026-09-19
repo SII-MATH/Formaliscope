@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
+OUTPUT="${REVIEW_BACKUP_DIR:-/var/backups/formaliscope}"
+cd /opt/formaliscope/current
+exec /usr/bin/python3 -m review_app backup --data-dir "$DATA_DIR" --output "$OUTPUT"

@@ -1,0 +1,16 @@
+[Unit]
+Description=Create a consistent Formaliscope review backup
+
+[Service]
+Type=oneshot
+User=formaliscope-review
+Group=formaliscope-review
+WorkingDirectory=/opt/formaliscope/current
+Environment=REVIEW_DATA_DIR=/var/lib/formaliscope
+ExecStart=/usr/local/sbin/formaliscope-review-backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/formaliscope /var/backups/formaliscope
