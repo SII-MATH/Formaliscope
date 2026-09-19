@@ -1,0 +1,74 @@
+name: Publish Formaliscope application
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-app-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify before publishing
+        run: python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+
+      - name: Build immutable application archive
+        id: package
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          archive="formaliscope-app-${COMMIT}.tar.gz"
+          git archive --format=tar.gz --prefix="formaliscope-${COMMIT}/" "${COMMIT}" > "${archive}"
+          sha256sum "${archive}" > "${archive}.sha256"
+          python3 - "${archive}" "${COMMIT}" <<'PY'
+          import json
+          import hashlib
+          import pathlib
+          import sys
+
+          archive, commit = sys.argv[1:]
+          digest = hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest()
+          pathlib.Path("formaliscope-app-manifest.json").write_text(
+              json.dumps({
+                  "schema": "formaliscope-app-release.v1",
+                  "commit": commit,
+                  "archive": archive,
+                  "sha256": digest,
+              }, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish private GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: app-${{ github.sha }}
+          ARCHIVE: formaliscope-app-${{ github.sha }}.tar.gz
+        run: |
+          set -Eeuo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "${GITHUB_SHA}" \
+              --title "Formaliscope application ${GITHUB_SHA::12}" \
+              --notes "Immutable application release built from ${GITHUB_SHA}."
+          fi
+          gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" formaliscope-app-manifest.json --clobber

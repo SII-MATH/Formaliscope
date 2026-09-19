@@ -1,0 +1,84 @@
+name: Publish KIP126 evidence snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      kip_ref:
+        description: KIP126 branch, tag, or commit to review
+        required: true
+        default: main
+        type: string
+  repository_dispatch:
+    types: [kip126-updated]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-snapshot-${{ inputs.kip_ref || github.event.client_payload.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out Formaliscope builder
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check out KIP126 source
+        uses: actions/checkout@v4
+        with:
+          repository: SII-MATH/KIP126
+          ref: ${{ inputs.kip_ref || github.event.client_payload.ref || 'main' }}
+          token: ${{ secrets.KIP126_READ_TOKEN }}
+          path: kip126
+
+      - name: Build clean evidence snapshot
+        id: snapshot
+        run: |
+          set -Eeuo pipefail
+          python3 -m review_app build \
+            --source "$GITHUB_WORKSPACE/kip126" \
+            --data-dir "$RUNNER_TEMP/formaliscope-snapshot" \
+            --require-clean
+          cp "$RUNNER_TEMP/formaliscope-snapshot/snapshot.json" snapshot.json
+          source_commit="$(git -C kip126 rev-parse HEAD)"
+          sha256sum snapshot.json > snapshot.json.sha256
+          python3 - "$source_commit" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          snapshot = json.loads(pathlib.Path("snapshot.json").read_text(encoding="utf-8"))
+          manifest = {
+              "schema": "formaliscope-snapshot-release.v1",
+              "source_repository": "SII-MATH/KIP126",
+              "source_commit": sys.argv[1],
+              "snapshot_digest": snapshot["digest"],
+              "comparison": snapshot.get("comparison"),
+          }
+          pathlib.Path("snapshot-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+          echo "source_commit=${source_commit}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish private snapshot release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.snapshot.outputs.source_commit }}
+          TAG: snapshot-${{ steps.snapshot.outputs.source_commit }}
+        run: |
+          set -Eeuo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "${GITHUB_SHA}" \
+              --title "KIP126 snapshot ${SOURCE_COMMIT::12}" \
+              --notes "Immutable evidence snapshot built from KIP126 ${SOURCE_COMMIT}."
+          fi
+          gh release upload "$TAG" snapshot.json snapshot.json.sha256 snapshot-manifest.json --clobber

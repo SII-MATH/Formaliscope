@@ -1,0 +1,38 @@
+name: Formaliscope CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run application tests
+        run: python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+
+      - name: Check Python and JavaScript syntax
+        run: |
+          python3 -m py_compile review_app/*.py
+          node --check review_app/static/app.js
+          node --check review_app/static/login.js
+
+      - name: Check systemd units
+        run: systemd-analyze verify deploy/kip126-review.service deploy/kip126-review-backup.service deploy/kip126-review-backup.timer

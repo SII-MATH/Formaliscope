@@ -84,4 +84,4 @@ sudo -u kip126-review python3 -m review_app backup \
 
 当前证据快照约 0.5 MB，只有 255 张审核卡。即使 1,000 人全部审核，也只有约 25.5 万条判断。生产初期给数据和备份各预留数 GB 已很宽裕；更有意义的告警是磁盘使用率、备份是否按时生成、`PRAGMA integrity_check` 结果以及写入延迟。数据库接近单盘容量、需要多个写服务实例或持续出现锁等待时，再迁移到 PostgreSQL。
 
-被审代码更新、应用发布和数据库迁移的兼容性契约见 [VERSIONING_AND_RELEASE.md](VERSIONING_AND_RELEASE.md)。
+被审代码更新、应用发布和数据库迁移的兼容性契约见 [VERSIONING_AND_RELEASE.md](VERSIONING_AND_RELEASE.md)。GitHub Actions 制品发布和 VPS 主动拉取流程见 [GITHUB_ACTIONS_DEPLOYMENT.md](GITHUB_ACTIONS_DEPLOYMENT.md)。
