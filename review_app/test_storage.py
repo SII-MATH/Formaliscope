@@ -10,7 +10,7 @@ from pathlib import Path
 from .auth import AuthSettings, AuthStore
 from .build import (CURRENT_FINGERPRINT_SCHEME, SNAPSHOT_SCHEMA,
                     _content_fingerprint, calculate_snapshot_digest)
-from .server import DB_SCHEMA_VERSION, initialize
+from .server import DB_SCHEMA_VERSION, catalog, initialize, history
 from .storage import create_backup, install_snapshot
 
 
@@ -115,6 +115,57 @@ class StorageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "digest"):
                 install_snapshot(artifact, data)
             self.assertEqual((data / "snapshot.json").read_bytes(), before)
+
+    def test_snapshot_install_backfills_before_replacing_a_legacy_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            old_card = {
+                "id": "def:x::KIP126.X", "label": "def:x", "kind": "definition",
+                "title": "X", "chapter": "Test", "statement": "An X.",
+                "declaration": "KIP126.X", "source_status": "local",
+                "blueprint_file": "chapter.tex", "blueprint_line": 4,
+                "lean": {"file": "KIP126/X.lean", "line": 10,
+                         "source": "theorem X : True := by trivial", "truncated": False},
+                "dependencies": [], "fingerprint": "l" * 64,
+            }
+            old = {"schema": "kip126-review-snapshot.v1", "source_commit": "0" * 40,
+                   "unlinked_nodes": 0, "cards": [old_card]}
+            old["digest"] = calculate_snapshot_digest(old)
+            (data / "snapshot.json").write_text(json.dumps(old), encoding="utf-8")
+            with sqlite3.connect(data / "judgments.sqlite3") as db:
+                db.execute("""CREATE TABLE judgments (
+                    id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+                    card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                    reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
+                    rationale TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(reviewer, request_id))""")
+                db.execute("INSERT INTO judgments VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           ("j1", "r1", old_card["id"], old_card["fingerprint"],
+                            "alice@example.org", "aligned", "", "2026-09-19T00:00:00Z"))
+
+            new_card = dict(old_card)
+            new_card["lean"] = {**old_card["lean"], "line": 20}
+            nl_digest, lean_digest, fingerprint = _content_fingerprint(new_card, None)
+            new_card.update({
+                "nl_digest": nl_digest, "lean_digest": lean_digest,
+                "fingerprint_scheme": CURRENT_FINGERPRINT_SCHEME,
+                "fingerprint": fingerprint,
+                "fingerprints": {CURRENT_FINGERPRINT_SCHEME: fingerprint},
+            })
+            new = {"schema": SNAPSHOT_SCHEMA, "fingerprint_scheme": CURRENT_FINGERPRINT_SCHEME,
+                   "source_commit": "1" * 40, "source_dirty": False,
+                   "dependency_lock_digest": None, "unlinked_nodes": 0,
+                   "cards": [new_card]}
+            new["digest"] = calculate_snapshot_digest(new)
+            artifact = root / "new.json"
+            artifact.write_text(json.dumps(new), encoding="utf-8")
+            _, comparison = install_snapshot(artifact, data)
+            self.assertEqual(comparison["unchanged"], 1)
+            normalized = json.loads((data / "snapshot.json").read_text())
+            self.assertEqual(catalog(normalized, data / "judgments.sqlite3", "alice@example.org")["cards"][0]["verdict"], "aligned")
+            self.assertEqual(history(data / "judgments.sqlite3", old_card["id"], "alice@example.org")[0]["review_basis_scheme"], CURRENT_FINGERPRINT_SCHEME)
 
 
 if __name__ == "__main__":

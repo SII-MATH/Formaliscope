@@ -22,6 +22,15 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
     if destination.is_file():
         previous = normalize_snapshot(json.loads(destination.read_text(encoding="utf-8")))
     comparison = compare_snapshots(previous, normalize_snapshot(payload))
+    # Preserve v1 judgments before replacing the only copy of the old
+    # snapshot. This makes install-snapshot safe even if an operator omitted
+    # the explicit migrate step; the old snapshot still supplies the mapping
+    # from positional fingerprints to stable content fingerprints.
+    database = data_dir / "judgments.sqlite3"
+    if previous is not None and database.is_file():
+        from .server import backfill_review_basis, initialize
+        initialize(database)
+        backfill_review_basis(database, previous)
     payload["comparison"] = comparison
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     data_dir.chmod(0o700)
