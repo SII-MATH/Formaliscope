@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .auth import AuthSettings, AuthStore, DeliveryError
+from .build import CURRENT_FINGERPRINT_SCHEME, SNAPSHOT_SCHEMA
 from .server import ReviewHTTPServer, initialize, make_handler
 
 
@@ -91,12 +92,16 @@ class AuthHTTPTests(unittest.TestCase):
         )
         self.card = {
             "id": "def:x::KIP126.X", "fingerprint": "a" * 64,
+            "fingerprint_scheme": CURRENT_FINGERPRINT_SCHEME,
+            "fingerprints": {CURRENT_FINGERPRINT_SCHEME: "a" * 64},
             "label": "def:x", "title": "Example", "chapter": "Test",
             "kind": "definition", "declaration": "KIP126.X", "source_status": "local",
             "statement": "Example", "blueprint_file": "content.tex", "blueprint_line": 1,
             "lean": None, "dependencies": [],
         }
-        snapshot = {"digest": "b" * 64, "source_commit": "c" * 40,
+        snapshot = {"schema": SNAPSHOT_SCHEMA, "digest": "b" * 64,
+                    "fingerprint_scheme": CURRENT_FINGERPRINT_SCHEME,
+                    "source_dirty": False, "source_commit": "c" * 40,
                     "unlinked_nodes": 0, "cards": [self.card]}
         static = Path(__file__).parent / "static"
         handler = make_handler(snapshot, self.db, static, self.auth)

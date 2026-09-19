@@ -8,6 +8,29 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .build import compare_snapshots, normalize_snapshot, validate_snapshot
+
+
+def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool = False) -> tuple[dict, dict[str, int]]:
+    """Validate and atomically install an immutable reviewed-source artifact."""
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    validate_snapshot(payload)
+    if payload.get("source_dirty") and not allow_dirty_source:
+        raise ValueError("refusing a snapshot built from a dirty reviewed-source checkout")
+    destination = data_dir / "snapshot.json"
+    previous = None
+    if destination.is_file():
+        previous = normalize_snapshot(json.loads(destination.read_text(encoding="utf-8")))
+    comparison = compare_snapshots(previous, normalize_snapshot(payload))
+    payload["comparison"] = comparison
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data_dir.chmod(0o700)
+    temporary = data_dir / ".snapshot.json.tmp"
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(destination)
+    return payload, comparison
+
 
 def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = None) -> Path:
     """Create an internally consistent SQLite backup plus recovery metadata."""
@@ -49,6 +72,12 @@ def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = N
             (Path(str(staged_db) + suffix)).unlink(missing_ok=True)
         with sqlite3.connect(f"file:{backup_db}?mode=ro", uri=True) as check:
             integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            has_migrations = check.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+            ).fetchone()
+            schema_row = (check.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+                          if has_migrations else None)
+            database_schema_version = int(schema_row[0] or 0) if schema_row else 0
         if integrity != "ok":
             raise ValueError(f"backup integrity check failed: {integrity}")
         backup_db.chmod(0o600)
@@ -62,6 +91,7 @@ def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = N
             "snapshot_digest": snapshot_payload.get("digest"),
             "source_commit": snapshot_payload.get("source_commit"),
             "sqlite_integrity_check": integrity,
+            "database_schema_version": database_schema_version,
             "auth_state": "excluded; restored users must sign in again",
         }
         manifest_path = temporary / "manifest.json"

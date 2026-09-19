@@ -8,7 +8,7 @@ REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --por
 # 浏览器打开 http://127.0.0.1:8765/
 ```
 
-应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。本地运行数据默认放在本仓库 Git 忽略的 `.review/`。生产环境使用 `--data-dir /var/lib/kip126-review` 或 `REVIEW_DATA_DIR`，不要把运行数据放在源码检出或容器可写层中。`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。源文件变化后以同一数据目录重新执行 `build --source ...`，重启服务；旧判断留在原审核人的历史中，但内容指纹不再匹配时会显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。生产目录、服务单元和一致性备份见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。本地运行数据默认放在本仓库 Git 忽略的 `.review/`。生产环境使用 `--data-dir /var/lib/kip126-review` 或 `REVIEW_DATA_DIR`，不要把运行数据放在源码检出或容器可写层中。`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。源文件变化后生成并安装新快照；稳定键与内容指纹均未变化的判断自动沿用，其余旧判断留在历史中并显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。生产目录和备份见 [DEPLOYMENT.md](DEPLOYMENT.md)，三条版本线及兼容规则见 [VERSIONING_AND_RELEASE.md](VERSIONING_AND_RELEASE.md)。
 
 ## 邮箱登录
 

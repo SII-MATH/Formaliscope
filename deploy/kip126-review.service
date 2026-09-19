@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=kip126-review
 Group=kip126-review
-WorkingDirectory=/opt/kip126-review
+WorkingDirectory=/opt/kip126-review/current
 Environment=REVIEW_DATA_DIR=/var/lib/kip126-review
 EnvironmentFile=/etc/kip126-review/review.env
 ExecStart=/usr/bin/python3 -m review_app serve --host 127.0.0.1 --port 8765

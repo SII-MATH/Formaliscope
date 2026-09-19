@@ -87,10 +87,18 @@
   function displayHistory(card, rows) {
     $("history-count").textContent = `(${rows.length})`;
     $("history").innerHTML = rows.length ? rows.map((row) => `
-      <div class="history-item ${row.fingerprint === card.fingerprint ? "" : "stale"}">
-        <b>${escape(verdictNames[row.verdict] || row.verdict)}</b><small>${escape(row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${row.fingerprint === card.fingerprint ? "" : " · 旧版本"}</small>
+      <div class="history-item ${matchesCard(card, row) ? "" : "stale"}">
+        <b>${escape(verdictNames[row.verdict] || row.verdict)}</b><small>${escape(row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matchesCard(card, row) ? "" : " · 旧版本"}</small>
         ${row.rationale ? `<p>${escape(row.rationale)}</p>` : ""}
       </div>`).join("") : `<span class="muted">还没有审核记录。</span>`;
+  }
+
+  function matchesCard(card, row) {
+    const scheme = row.fingerprint_scheme || "kip126-review-legacy.v1";
+    const fingerprints = card.fingerprints || {[card.fingerprint_scheme || "kip126-review-legacy.v1"]: card.fingerprint};
+    if (row.review_basis_fingerprint &&
+        fingerprints[row.review_basis_scheme] === row.review_basis_fingerprint) return true;
+    return fingerprints[scheme] === row.fingerprint;
   }
 
   function queueMathTypesetting() {
@@ -149,11 +157,10 @@
   }
 
   function renderReviewState(card, historyRows) {
-    const latest = historyRows[0];
-    const current = latest && latest.fingerprint === card.fingerprint ? latest : null;
+    const current = historyRows.find((row) => matchesCard(card, row)) || null;
     const badge = $("status-badge");
-    badge.className = `status-badge ${current ? "reviewed" : latest ? "stale" : ""}`;
-    badge.textContent = current ? `✓ ${verdictNames[current.verdict]}` : latest ? "⟳ 内容已变更，需重审" : "待人工审核";
+    badge.className = `status-badge ${current ? "reviewed" : historyRows.length ? "stale" : ""}`;
+    badge.textContent = current ? `✓ ${verdictNames[current.verdict]}` : historyRows.length ? "⟳ 内容已变更，需重审" : "待人工审核";
     displayHistory(card, historyRows);
     $("rationale").value = current?.rationale || "";
     document.querySelectorAll('input[name="verdict"]').forEach((input) => { input.checked = input.value === current?.verdict; });
