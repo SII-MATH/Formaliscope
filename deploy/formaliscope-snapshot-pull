@@ -33,7 +33,7 @@ for release in releases:
         chosen = release
 if chosen is None:
     raise SystemExit("no immutable snapshot release found")
-assets = {asset["name"]: asset["browser_download_url"] for asset in chosen.get("assets", [])}
+assets = {asset["name"]: asset["url"] for asset in chosen.get("assets", [])}
 required = ["snapshot.json", "snapshot.json.sha256", "snapshot-manifest.json"]
 missing = [name for name in required if name not in assets]
 if missing:
@@ -52,7 +52,7 @@ for item in snapshot.json snapshot.json.sha256 snapshot-manifest.json; do
     snapshot.json.sha256) url="${release_info[2]}";;
     snapshot-manifest.json) url="${release_info[3]}";;
   esac
-  curl --fail --silent --show-error --location --retry 3 -H "Authorization: Bearer $token" -o "$stage/$item" "$url"
+  curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/$item" "$url"
 done
 (cd "$stage" && sha256sum -c snapshot.json.sha256)
 python3 - "$stage/snapshot-manifest.json" "$stage/snapshot.json" "$tag" <<'PY'

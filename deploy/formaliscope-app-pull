@@ -35,7 +35,7 @@ for release in releases:
         chosen = release
 if chosen is None:
     raise SystemExit("no immutable app release found")
-assets = {asset["name"]: asset["browser_download_url"] for asset in chosen.get("assets", [])}
+assets = {asset["name"]: asset["url"] for asset in chosen.get("assets", [])}
 commit = chosen["tag_name"][4:]
 archive = f"formaliscope-app-{commit}.tar.gz"
 required = [archive, archive + ".sha256", "formaliscope-app-manifest.json"]
@@ -65,9 +65,9 @@ stage="$(mktemp -d "$ROOT/.app-pull.XXXXXX")"
 cleanup() { rm -rf "$stage"; }
 trap cleanup EXIT
 archive="$stage/$archive_name"
-curl --fail --silent --show-error --location --retry 3 -H "Authorization: Bearer $token" -o "$archive" "$archive_url"
-curl --fail --silent --show-error --location --retry 3 -H "Authorization: Bearer $token" -o "$stage/$archive_name.sha256" "$sha_url"
-curl --fail --silent --show-error --location --retry 3 -H "Authorization: Bearer $token" -o "$stage/formaliscope-app-manifest.json" "$manifest_url"
+curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$archive" "$archive_url"
+curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/$archive_name.sha256" "$sha_url"
+curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/formaliscope-app-manifest.json" "$manifest_url"
 
 (cd "$stage" && sha256sum -c "$archive_name.sha256")
 python3 - "$stage/formaliscope-app-manifest.json" "$archive_name" "$commit" "$archive" <<'PY'
