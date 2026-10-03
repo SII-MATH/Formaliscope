@@ -155,9 +155,7 @@
     for(const row of catalog)row._labels=labels.forCard(row);
     catalogInfo=data;directoryNodes=directories.buildTree(catalog);
     if(!directoryNodes.has(directory)){directory='';updateLocation();}
-    $("revision").textContent=`源码 · ${data.source_commit.slice(0,9)} · ${catalog.length.toLocaleString()} 条索引`;
-    $('directory-version').textContent=`源码版本 ${data.source_commit.slice(0,9)}`;
-    $('directory-tree-version').textContent=`固定提交 ${data.source_commit.slice(0,9)}`;
+    $('directory-tree-version').textContent=data.source_commit;
     renderList();return data;
   }
   function matches(c,row){
