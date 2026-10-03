@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +26,8 @@ SESSION_COOKIE = "kip126_review_session"
 
 
 def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore,
-                 *, preview: bool = False, admin_emails: frozenset[str] = frozenset()):
+                 *, preview: bool = False, admin_emails: frozenset[str] = frozenset(),
+                 trust_proxy_ip: bool = False):
     name_mode = isinstance(auth, NameAuthStore)
     auth_mode = "preview" if preview else "name" if name_mode else "email"
     cards_by_id = {card["id"]: card for card in snapshot["cards"]}
@@ -132,6 +134,22 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
             expected = ({auth.settings.public_origin} if auth.settings.public_origin
                         else {f"http://{host}", f"https://{host}"})
             return bool(origin and origin in expected)
+
+        def _client_ip(self) -> str:
+            peer = self.client_address[0]
+            # Only an explicitly configured local proxy may supply this value.
+            # It must overwrite X-Real-IP, never append a user-supplied header.
+            if not trust_proxy_ip:
+                return peer
+            try:
+                if not ipaddress.ip_address(peer).is_loopback:
+                    return peer
+                values = self.headers.get_all("X-Real-IP", [])
+                if len(values) != 1 or "%" in values[0]:
+                    return peer
+                return str(ipaddress.ip_address(values[0].strip()))
+            except ValueError:
+                return peer
 
         def do_GET(self):
             parsed = urlsplit(self.path)
@@ -254,11 +272,11 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                         if self._viewer():
                             self._json(409, {'error': '已登录，请先退出后再创建新身份'})
                             return
-                        token, recovery = auth.create_reviewer(payload.get('display_name'), self.client_address[0])
+                        token, recovery = auth.create_reviewer(payload.get('display_name'), self._client_ip())
                         self._json(201, {'ok': True, 'recovery_code': recovery}, extra_headers={
                             'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
                     elif path == '/api/auth/recover':
-                        token = auth.resume_reviewer(payload.get('recovery_code'), self.client_address[0])
+                        token = auth.resume_reviewer(payload.get('recovery_code'), self._client_ip())
                         if not token:
                             self._json(401, {'error': '恢复码无效，请检查是否完整，或联系管理员'})
                         else:
@@ -305,7 +323,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                     self._json(400, {"error": "请输入有效邮箱地址"})
                     return
                 try:
-                    auth.request_code(email, self.client_address[0])
+                    auth.request_code(email, self._client_ip())
                 except DeliveryError:
                     self._json(503, {"error": "验证码暂时无法发送，请稍后再试"})
                     return
@@ -386,6 +404,7 @@ def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port:
         else:
             raise ValueError('REVIEW_AUTH_MODE must be name or email')
     server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth,
-                             preview=preview, admin_emails=admin_emails))
+                             preview=preview, admin_emails=admin_emails,
+                             trust_proxy_ip=os.environ.get('REVIEW_TRUST_PROXY_IP', '').strip() == '1'))
     print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)
     server.serve_forever()

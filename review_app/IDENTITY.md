@@ -10,6 +10,8 @@
 
 配置示例在 `deploy/review.env.example`。公开入口必须使用 HTTPS；服务仍仅监听 loopback，经 Nginx/Caddy 对外提供。开发时可用 `REVIEW_PUBLIC_ORIGIN=http://127.0.0.1:8890`，HTTP 仅允许本机。
 
+网络限流默认使用直接连接的 IP，不信任请求中的代理头。本机 Caddy 部署应设置 `REVIEW_TRUST_PROXY_IP=1`，并在该应用的 `reverse_proxy` 内配置 `header_up X-Real-IP {remote_host}`，强制覆盖浏览器传入的值；否则所有学生会共同占用本机代理 IP 的额度。后端必须保持仅监听 loopback，不能直接暴露到公网，也不能让其他未经授权的本机代理转发到它。只有明确开启且直接连接来自 loopback 时，服务才使用唯一、合法的 `X-Real-IP`；缺失、重复、IP 列表或无效值均回退直接连接的 IP，始终忽略 `X-Forwarded-For`。该设置仅影响姓名注册、恢复和旧邮箱验证码的网络限流，写操作仍检查 Origin。
+
 管理员由服务器操作员本地创建，第一位注册学生、输入“管理员”或提交角色字段都不会获得管理员权限。在候选应用目录执行：
 
 ```bash

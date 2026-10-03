@@ -10,6 +10,10 @@
 | `publish-app.yml` | main push | 重跑同一应用/Workflow/模块/schema 导入测试门槛，`git archive` 打包整个仓库，从 `v0.0.1` 开始自动递增补丁版本；打包、上传 SHA-256 和带版本/commit 的 manifest，全部完成后发布草稿 |
 | `publish-snapshot.yml` | 手动或 `kip126-updated` dispatch | 默认 develop，也可指定固定 ref；从干净 KIP126 检出构建 `build --statements --require-clean`，验证模式、commit、digest，发布 `snapshot-<source-commit>` |
 
+证据发布在同一个全局队列串行执行，避免不同分支指向同一源码提交时同时更新同一标签。`deploy/formaliscope_snapshot_release.py` 先校验候选快照、SHA-256 与 manifest：新 Release 先建草稿，三份附件上传后重新下载、检查元数据与内容，通过后才公开。中断的草稿可重跑补齐；已上传的有效附件保留，`--clobber` 仅用于草稿中的未完成上传占位文件。
+
+同一 `snapshot-*` 已公开时，重跑只读取并校验原有 Release 元数据、三份附件完整性、SHA-256、快照内部 digest、干净 Statement 来源与 manifest，然后复用；任何缺失或损坏都报错，不自动修复或覆盖。新 builder 对同一 source commit 生成不同证据时报告 `immutable snapshot conflict`，需要另行评审证据版本方案。仅 `generated_at` 构建时间变化可复用原始附件，其他快照字段和 manifest 必须一致；原始附件字节和校验和保持不变。
+
 应用包包括 `review_app/`、`statement_workflow/` 与 enrichment schema。生产部署不需要自动 Agent 执行器；用户先按目录手动补数据。自动快照 workflow 发布的是基础源码快照，不自动生成 Agent 回译。需要发布手动 enrichment 时，先对冻结基础快照运行 `validate-enrichment` 和 `enrich-snapshot`，将校验通过的候选产物作为单独的正式变更评审；不能默默替换同一标签的证据。
 
 读取私有 `SII-MATH/KIP126` 需要只授予该仓库 Contents read 的 `KIP126_READ_TOKEN` Secret。发布使用 `GITHUB_TOKEN` 的 Contents write，CI 只有 Contents read。保护 main 并要求 CI 通过；按组织策略启用生产 Environment 审批。禁止在日志、制品或数据库打印 token 和恢复码。

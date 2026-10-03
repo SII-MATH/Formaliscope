@@ -15,7 +15,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-snapshot-${{ inputs.kip_ref || github.event.client_payload.ref || 'develop' }}
+  # Different refs may resolve to the same source SHA and immutable release tag.
+  group: publish-snapshot
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +31,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Verify immutable snapshot publishing
+        run: python3 -m unittest review_app.test_snapshot_releases
 
       - name: Check out KIP126 source
         uses: actions/checkout@v4
@@ -76,17 +80,14 @@ jobs:
           PY
           echo "source_commit=${source_commit}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish private snapshot release
+      - name: Verify or publish immutable snapshot release
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ steps.snapshot.outputs.source_commit }}
           TAG: snapshot-${{ steps.snapshot.outputs.source_commit }}
         run: |
           set -Eeuo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --target "${GITHUB_SHA}" \
-              --title "KIP126 snapshot ${SOURCE_COMMIT::12}" --latest=false \
-              --notes "Immutable evidence snapshot built from KIP126 ${SOURCE_COMMIT}."
-          fi
-          gh release upload "$TAG" snapshot.json snapshot.json.sha256 snapshot-manifest.json --clobber
+          python3 deploy/formaliscope_snapshot_release.py \
+            --repository "$GITHUB_REPOSITORY" --tag "$TAG" \
+            --target "$GITHUB_SHA" --artifacts "$GITHUB_WORKSPACE"
+          echo "Verified [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"

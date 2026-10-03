@@ -1,4 +1,7 @@
 """Name identities, HTTP ownership, administrator provisioning and recovery."""
+import hashlib
+import hmac
+import http.client
 import json
 import os
 import sqlite3
@@ -11,13 +14,14 @@ import uuid
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
-from .auth import AuthSettings
+from .auth import AuthSettings, AuthStore, IP_HOURLY_LIMIT
 from .build import CURRENT_FINGERPRINT_SCHEME, SNAPSHOT_SCHEMA
 from .judgments import history, submit, update_reviewer_profile
 from .name_auth import NAME_SESSION_LIFETIME, NameAuthStore, RateLimited, name_settings
 from .preflight import run_preflight
-from .server import ReviewHTTPServer, make_handler
+from .server import ReviewHTTPServer, make_handler, serve
 from .statements import compile_statements
 from .storage import create_backup
 
@@ -142,7 +146,8 @@ class NameHTTPTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db = Path(self.temp.name) / 'judgments.sqlite3'
-        self.auth = NameAuthStore(self.db)
+        self.now = 1_800_000_000
+        self.auth = NameAuthStore(self.db, clock=lambda: self.now)
         self.card = {'id': 'statement::KIP126.X', 'fingerprint': 'a'*64,
                      'fingerprint_scheme': CURRENT_FINGERPRINT_SCHEME,
                      'fingerprints': {CURRENT_FINGERPRINT_SCHEME: 'a'*64},
@@ -150,10 +155,26 @@ class NameHTTPTests(unittest.TestCase):
                      'declaration': 'KIP126.X', 'source_status': 'local', 'dependencies': []}
         self.snapshot = {'schema': SNAPSHOT_SCHEMA, 'digest': 'b'*64, 'source_commit': 'c'*40,
                          'review_mode': 'statement', 'cards': [self.card], 'unlinked_nodes': 0}
-        handler = make_handler(self.snapshot, self.db, Path(__file__).parent/'static', self.auth,
-                               admin_emails=frozenset({'管理员'}))
+        self.start_server()
+
+    def start_server(self, *, auth=None, trust_proxy_ip=False, peer=None):
+        if hasattr(self, 'server'):
+            self.server.shutdown()
+            self.server.server_close()
+            self.thread.join()
+        auth = auth or self.auth
+        handler = make_handler(self.snapshot, self.db, Path(__file__).parent/'static', auth,
+                               admin_emails=frozenset({'管理员'}), trust_proxy_ip=trust_proxy_ip)
         handler.log_message = lambda *_: None
         self.server = ReviewHTTPServer(('127.0.0.1', 0), handler)
+        if peer is not None:
+            accept = self.server.get_request
+
+            def get_request():
+                connection, address = accept()
+                return connection, (peer, address[1])
+
+            self.server.get_request = get_request
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f'http://127.0.0.1:{self.server.server_port}'
@@ -164,12 +185,13 @@ class NameHTTPTests(unittest.TestCase):
         self.thread.join()
         self.temp.cleanup()
 
-    def request(self, path, body=None, cookie=None, origin=None):
+    def request(self, path, body=None, cookie=None, origin=None, extra_headers=None):
         headers = {'Content-Type': 'application/json'} if body is not None else {}
         if body is not None:
             headers['Origin'] = origin if origin is not None else self.base
         if cookie:
             headers['Cookie'] = cookie
+        headers.update(extra_headers or {})
         request = Request(self.base+path, data=json.dumps(body).encode() if body is not None else None, headers=headers)
         try:
             response = urlopen(request, timeout=5)
@@ -240,6 +262,114 @@ class NameHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/auth/me', cookie=cookie)[0], 200)
         self.assertEqual(self.request('/api/auth/recover', {'recovery_code': key})[0], 401)
         self.assertEqual(self.request('/api/auth/recover', {'recovery_code': data['recovery_code']})[0], 200)
+
+    def ip_digest(self, address, auth=None):
+        return hmac.new((auth or self.auth).pepper, address.encode(), hashlib.sha256).hexdigest()
+
+    def test_local_proxy_keeps_name_registration_and_recovery_quotas_separate(self):
+        self.start_server(trust_proxy_ip=True)
+        first, second = '198.51.100.10', '2001:db8::20'
+        with sqlite3.connect(self.db) as db:
+            # Existing requests fill one address's quotas, outside the separate
+            # global minute limit; another student must still be able to enter.
+            for action, count in (('register', 120), ('recover', 60)):
+                db.executemany('INSERT INTO identity_requests VALUES (?, ?, ?)',
+                               [(action, self.ip_digest(first), self.now-120)]*count)
+        self.assertEqual(self.request('/api/auth/register', {'display_name': 'A'},
+                                      extra_headers={'X-Real-IP': first})[0], 429)
+        status, _, data = self.request('/api/auth/register', {'display_name': 'B'},
+                                       extra_headers={'X-Real-IP': '2001:0db8:0:0:0:0:0:20'})
+        self.assertEqual(status, 201)
+        recovery = data['recovery_code']
+        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery},
+                                      extra_headers={'X-Real-IP': first})[0], 429)
+        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery},
+                                      extra_headers={'X-Real-IP': second})[0], 200)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT action, COUNT(*) FROM identity_requests WHERE ip_digest=? '
+                                        'GROUP BY action ORDER BY action', (self.ip_digest(second),)).fetchall(),
+                             [('recover', 1), ('register', 1)])
+        self.assertEqual(self.request('/api/auth/register', {'display_name': 'C'},
+                                      origin='https://evil.example', extra_headers={'X-Real-IP': second})[0], 403)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM identity_requests WHERE ip_digest=?',
+                                        (self.ip_digest(second),)).fetchone()[0], 2)
+
+    def test_spoofed_proxy_headers_are_ignored_by_default_and_for_nonlocal_peers(self):
+        for trust, peer in ((False, '127.0.0.1'), (True, '203.0.113.5')):
+            with self.subTest(trust=trust, peer=peer):
+                self.start_server(trust_proxy_ip=trust, peer=peer)
+                with sqlite3.connect(self.db) as db:
+                    db.execute('DELETE FROM identity_requests')
+                for address in ('198.51.100.10', '198.51.100.20'):
+                    self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'},
+                                                  extra_headers={'X-Real-IP': address})[0], 201)
+                self.assertEqual(self.request('/api/auth/recover', {'recovery_code': 'not-a-key'},
+                                              extra_headers={'X-Real-IP': '198.51.100.30'})[0], 401)
+                with sqlite3.connect(self.db) as db:
+                    self.assertEqual(db.execute('SELECT DISTINCT ip_digest FROM identity_requests').fetchall(),
+                                     [(self.ip_digest(peer),)])
+
+    def test_missing_invalid_list_and_duplicate_real_ip_headers_fall_back_to_peer(self):
+        self.start_server(trust_proxy_ip=True)
+        cases = [{}, {'X-Forwarded-For': '198.51.100.10'}, {'Forwarded': 'for=198.51.100.10'}]
+        cases.extend({'X-Real-IP': value} for value in
+                     ('not-an-ip', '198.51.100.10, 198.51.100.20', 'example.org',
+                      '198.51.100.10:4321', '[2001:db8::1]', 'fe80::1%lo', ''))
+        for headers in cases:
+            with self.subTest(headers=headers):
+                self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'},
+                                              extra_headers=headers)[0], 201)
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        try:
+            body = json.dumps({'display_name': '学生'}).encode()
+            connection.putrequest('POST', '/api/auth/register')
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Origin', self.base)
+            connection.putheader('Content-Length', str(len(body)))
+            connection.putheader('X-Real-IP', '198.51.100.10')
+            connection.putheader('X-Real-IP', '198.51.100.20')
+            connection.endheaders(body)
+            response = connection.getresponse()
+            self.assertEqual(response.status, 201)
+            response.read()
+        finally:
+            connection.close()
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT ip_digest, COUNT(*) FROM identity_requests GROUP BY ip_digest').fetchall(),
+                             [(self.ip_digest('127.0.0.1'), len(cases)+1)])
+
+    def test_local_proxy_keeps_legacy_email_network_quotas_separate(self):
+        sent = []
+        auth = AuthStore(self.db, AuthSettings(mailer='none', allow_any_email=True),
+                         sender=lambda email, code: sent.append(email), clock=lambda: self.now)
+        self.start_server(auth=auth, trust_proxy_ip=True)
+        first, second = '198.51.100.10', '198.51.100.20'
+        with sqlite3.connect(self.db) as db:
+            db.executemany('INSERT INTO login_requests VALUES (?, ?, ?)',
+                           [(f'previous{index}@example.org', self.ip_digest(first, auth), self.now-120)
+                            for index in range(IP_HOURLY_LIMIT)])
+        for address, email in ((first, 'limited@example.org'), (second, 'student@example.org')):
+            self.assertEqual(self.request('/api/auth/request-code', {'email': email},
+                                          extra_headers={'X-Real-IP': address})[0], 200)
+        self.assertEqual(sent, ['student@example.org'])
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT ip_digest FROM login_requests WHERE email=?',
+                                        ('student@example.org',)).fetchone()[0], self.ip_digest(second, auth))
+
+    def test_serve_only_enables_proxy_trust_for_explicit_one(self):
+        snapshot_path = self.db.parent/'snapshot.json'
+        snapshot_path.write_text(json.dumps(self.snapshot))
+        for value, enabled in (('', False), ('0', False), ('true', False), ('1', True)):
+            with self.subTest(value=value), patch.dict(os.environ, {
+                    'REVIEW_AUTH_MODE': 'name', 'REVIEW_PUBLIC_ORIGIN': 'http://127.0.0.1:8765',
+                    'REVIEW_TRUST_PROXY_IP': value}), \
+                    patch('review_app.server.normalize_snapshot', return_value=self.snapshot), \
+                    patch('review_app.server.backfill_review_basis'), \
+                    patch('review_app.server.make_handler', wraps=make_handler) as make, \
+                    patch('review_app.server.ReviewHTTPServer'), patch('builtins.print'):
+                serve(snapshot_path, self.db, Path(__file__).parent/'static', '127.0.0.1', 8765)
+                self.assertIs(make.call_args.kwargs['trust_proxy_ip'], enabled)
 
 
 if __name__ == '__main__':
