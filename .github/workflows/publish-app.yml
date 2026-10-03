@@ -10,13 +10,14 @@ permissions:
 concurrency:
   group: publish-app-main
   cancel-in-progress: false
+  queue: max
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out source
+      - name: Check out the exact merged commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -30,7 +31,7 @@ jobs:
         run: |
           python3 -m unittest discover -s review_app -t . -p 'test_*.py'
           python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
-          python3 -m py_compile review_app/*.py statement_workflow/*.py
+          python3 -m py_compile review_app/*.py statement_workflow/*.py deploy/formaliscope_release.py
           for script in review_app/static/*.js; do node --check "$script"; done
           for test in review_app/test_*.cjs; do node "$test"; done
           bash -n deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup
@@ -38,48 +39,43 @@ jobs:
       - name: Check deployment units
         run: |
           sudo install -m 0755 deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+          sudo install -m 0755 deploy/formaliscope_release.py /usr/local/sbin/formaliscope-release
           systemd-analyze verify deploy/*.service deploy/*.timer
 
-      - name: Build immutable application archive
-        id: package
-        env:
-          COMMIT: ${{ github.sha }}
-        run: |
-          set -Eeuo pipefail
-          archive="formaliscope-app-${COMMIT}.tar.gz"
-          git archive --format=tar.gz --prefix="formaliscope-${COMMIT}/" "${COMMIT}" > "${archive}"
-          sha256sum "${archive}" > "${archive}.sha256"
-          python3 - "${archive}" "${COMMIT}" <<'PY'
-          import json
-          import hashlib
-          import pathlib
-          import sys
-
-          archive, commit = sys.argv[1:]
-          digest = hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest()
-          pathlib.Path("formaliscope-app-manifest.json").write_text(
-              json.dumps({
-                  "schema": "formaliscope-app-release.v1",
-                  "commit": commit,
-                  "archive": archive,
-                  "sha256": digest,
-              }, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
-          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
-
-      - name: Publish private GitHub release
+      - name: Choose the next release version
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: app-${{ github.sha }}
-          ARCHIVE: formaliscope-app-${{ github.sha }}.tar.gz
         run: |
           set -Eeuo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --target "${GITHUB_SHA}" \
-              --title "Formaliscope application ${GITHUB_SHA::12}" \
-              --notes "Immutable application release built from ${GITHUB_SHA}."
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/tags?per_page=100" > "$RUNNER_TEMP/tags.json"
+          tag="$(python3 deploy/formaliscope_release.py next-tag "$RUNNER_TEMP/releases.json" "$RUNNER_TEMP/tags.json" "$GITHUB_SHA")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable application archive
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: python3 deploy/formaliscope_release.py package --commit "$GITHUB_SHA" --version "$VERSION" --output "$RUNNER_TEMP/app-release"
+
+      - name: Publish only after all assets are uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          archive="formaliscope-app-$GITHUB_SHA.tar.gz"
+          if gh release view "$TAG" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            if python3 -c 'import json,sys; raise SystemExit(0 if not json.load(open(sys.argv[1]))["isDraft"] else 1)' "$RUNNER_TEMP/existing-release.json"; then
+              echo "$TAG is already published; immutable assets left unchanged."
+              exit 0
+            fi
+          else
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
+              --notes "Formaliscope $TAG. Built and tested from commit $GITHUB_SHA."
           fi
-          gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" formaliscope-app-manifest.json --clobber
+          gh release upload "$TAG" "$RUNNER_TEMP/app-release/$archive" \
+            "$RUNNER_TEMP/app-release/$archive.sha256" \
+            "$RUNNER_TEMP/app-release/formaliscope-app-manifest.json" --clobber
+          gh release edit "$TAG" --draft=false --latest
+          echo "Published [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"

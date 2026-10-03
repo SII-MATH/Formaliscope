@@ -4,6 +4,8 @@ KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜�
 
 仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
 
+日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
+
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
 ```bash

@@ -86,7 +86,7 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --target "${GITHUB_SHA}" \
-              --title "KIP126 snapshot ${SOURCE_COMMIT::12}" \
+              --title "KIP126 snapshot ${SOURCE_COMMIT::12}" --latest=false \
               --notes "Immutable evidence snapshot built from KIP126 ${SOURCE_COMMIT}."
           fi
           gh release upload "$TAG" snapshot.json snapshot.json.sha256 snapshot-manifest.json --clobber

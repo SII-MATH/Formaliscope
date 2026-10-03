@@ -3,7 +3,7 @@ name: Formaliscope CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -33,7 +33,7 @@ jobs:
       - name: Check Python and JavaScript syntax
         run: |
           python3 -m py_compile review_app/*.py
-          python3 -m py_compile statement_workflow/*.py
+          python3 -m py_compile statement_workflow/*.py deploy/formaliscope_release.py
           for script in review_app/static/*.js; do node --check "$script"; done
           for test in review_app/test_*.cjs; do node "$test"; done
           bash -n deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup
@@ -41,4 +41,5 @@ jobs:
       - name: Check systemd units
         run: |
           sudo install -m 0755 deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+          sudo install -m 0755 deploy/formaliscope_release.py /usr/local/sbin/formaliscope-release
           systemd-analyze verify deploy/*.service deploy/*.timer

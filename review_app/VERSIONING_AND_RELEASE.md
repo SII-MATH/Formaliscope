@@ -4,7 +4,7 @@
 
 | 版本线 | 标识 | 作用 |
 |---|---|---|
-| 审核应用 | `Formaliscope` Git commit / release | 前后端功能与支持的格式 |
+| 审核应用 | `Formaliscope` vX.Y.Z release + Git commit | 前后端功能与支持的格式 |
 | 数据库 | `schema_migrations.version` | 持久判断的表结构 |
 | 被审内容 | `source_commit` + `snapshot.digest` + `fingerprint_scheme` | 本次展示的 NL/Lean 证据 |
 

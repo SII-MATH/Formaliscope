@@ -73,6 +73,7 @@ sudo systemd-run --wait --pipe --uid=formaliscope-review \
 ```bash
 sudo install -o root -g root -m 0755 deploy/formaliscope-app-pull \
   deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+sudo install -o root -g root -m 0755 deploy/formaliscope_release.py /usr/local/sbin/formaliscope-release
 sudo install -o root -g root -m 0644 deploy/formaliscope-*.service \
   deploy/formaliscope-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload

@@ -9,14 +9,16 @@ ROOT="${FORMALISCOPE_ROOT:-/opt/formaliscope}"
 RELEASES="$ROOT/releases"
 DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
 LOCK_FILE="${FORMALISCOPE_DEPLOY_LOCK:-/run/lock/formaliscope-deploy.lock}"
-API="https://api.github.com/repos/${REPOSITORY}/releases?per_page=100"
+API="https://api.github.com/repos/${REPOSITORY}/releases"
+RELEASE_HELPER="${FORMALISCOPE_RELEASE_HELPER:-/usr/local/sbin/formaliscope-release}"
 
-for path in "$ROOT" "$DATA_DIR" "$LOCK_FILE" "$TOKEN_FILE"; do
+for path in "$ROOT" "$DATA_DIR" "$LOCK_FILE" "$TOKEN_FILE" "$RELEASE_HELPER"; do
   [[ "$path" == /* ]] || { echo "deployment paths must be absolute" >&2; exit 1; }
 done
 # Do not allow another checkout in the caller's cwd to override PYTHONPATH.
 cd /
 
+[[ -r "$RELEASE_HELPER" ]] || { echo "install deploy/formaliscope_release.py as $RELEASE_HELPER before pulling releases" >&2; exit 1; }
 [[ -r "$TOKEN_FILE" ]] || { echo "missing GitHub token file: $TOKEN_FILE" >&2; exit 1; }
 install -d -m 0755 "$RELEASES" "$(dirname "$LOCK_FILE")"
 exec 9>"$LOCK_FILE"
@@ -24,33 +26,23 @@ flock -n 9 || { echo "another Formaliscope deployment is running"; exit 0; }
 
 token="$(<"$TOKEN_FILE")"
 [[ -n "$token" ]] || { echo "GitHub token file is empty" >&2; exit 1; }
-release_json="$(curl --fail --silent --show-error --location --retry 3 \
-  -H 'Accept: application/vnd.github+json' \
-  -H "Authorization: Bearer $token" \
-  -H 'X-GitHub-Api-Version: 2022-11-28' "$API")"
-
-mapfile -t release_info < <(python3 -c '
-import json, re, sys
-releases = json.load(sys.stdin)
-chosen = None
-for release in releases:
-    tag = release.get("tag_name", "")
-    if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"app-[0-9a-f]{40}", tag):
-        continue
-    if chosen is None or (release.get("published_at") or release.get("created_at") or "") > (chosen.get("published_at") or chosen.get("created_at") or ""):
-        chosen = release
-if chosen is None:
-    raise SystemExit("no immutable app release found")
-assets = {asset["name"]: asset["url"] for asset in chosen.get("assets", [])}
-commit = chosen["tag_name"][4:]
-archive = f"formaliscope-app-{commit}.tar.gz"
-required = [archive, archive + ".sha256", "formaliscope-app-manifest.json"]
-missing = [name for name in required if name not in assets]
-if missing:
-    raise SystemExit("release is missing assets: " + ", ".join(missing))
-for value in (chosen["tag_name"], commit, archive, assets[archive], assets[archive + ".sha256"], assets["formaliscope-app-manifest.json"]):
-    print(value)
-' <<<"$release_json")
+stage="$(mktemp -d "$ROOT/.app-pull.XXXXXX")"
+cleanup() { rm -rf "$stage"; }
+trap cleanup EXIT
+# Paginate so frequent evidence snapshot releases cannot hide the app release.
+page=1
+while :; do
+  response="$stage/releases-$page.json"
+  curl --fail --silent --show-error --location --retry 3 \
+    -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $token" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' -o "$response" "$API?per_page=100&page=$page"
+  count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$response")"
+  [[ "$count" -lt 100 ]] && break
+  page=$((page+1))
+done
+# Command substitution propagates selection failures before any activation.
+release_details="$(python3 "$RELEASE_HELPER" select "$stage"/releases-*.json)"
+mapfile -t release_info <<<"$release_details"
 
 tag="${release_info[0]}"
 commit="${release_info[1]}"
@@ -67,29 +59,13 @@ if [[ "$current_target" == "$RELEASES/$commit" ]]; then
   exit 0
 fi
 
-stage="$(mktemp -d "$ROOT/.app-pull.XXXXXX")"
-cleanup() { rm -rf "$stage"; }
-trap cleanup EXIT
 archive="$stage/$archive_name"
 curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$archive" "$archive_url"
 curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/$archive_name.sha256" "$sha_url"
 curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/formaliscope-app-manifest.json" "$manifest_url"
 
 (cd "$stage" && sha256sum -c "$archive_name.sha256")
-python3 - "$stage/formaliscope-app-manifest.json" "$archive_name" "$commit" "$archive" <<'PY'
-import json
-import hashlib
-import pathlib
-import sys
-
-manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if manifest.get("schema") != "formaliscope-app-release.v1":
-    raise SystemExit("unsupported application manifest schema")
-if manifest.get("archive") != sys.argv[2] or manifest.get("commit") != sys.argv[3]:
-    raise SystemExit("application manifest does not match the selected release")
-if manifest.get("sha256") != hashlib.sha256(pathlib.Path(sys.argv[4]).read_bytes()).hexdigest():
-    raise SystemExit("application manifest digest does not match archive")
-PY
+python3 "$RELEASE_HELPER" validate "$stage/formaliscope-app-manifest.json" "$tag" "$archive_name" "$commit" "$archive"
 
 tar --list --file "$archive" | python3 -c '
 import sys
