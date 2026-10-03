@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .auth import AuthSettings, AuthStore, DeliveryError, SESSION_LIFETIME, normalize_email
 from .name_auth import NameAuthStore, RateLimited, name_settings
+from .session_store import SessionStore
 from .build import normalize_snapshot
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
@@ -25,7 +26,7 @@ MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
 
 
-def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore,
+def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionStore,
                  *, preview: bool = False, admin_emails: frozenset[str] = frozenset(),
                  trust_proxy_ip: bool = False):
     name_mode = isinstance(auth, NameAuthStore)
@@ -98,7 +99,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return None
 
         def _viewer(self) -> str | None:
-            return auth.session_email(self._session_token())
+            return auth.session_reviewer(self._session_token())
 
         def _is_admin(self, viewer):
             if name_mode:

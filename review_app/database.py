@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 6
+DB_SCHEMA_VERSION = 7
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -86,6 +86,36 @@ def _migration_6(db: sqlite3.Connection) -> None:
     db.execute('CREATE INDEX IF NOT EXISTS identity_requests_limits ON identity_requests(action, ip_digest, created_at)')
 
 
+def _migration_7(db: sqlite3.Connection) -> None:
+    # These tables were previously created by individual authentication modes,
+    # outside the migration history. Preserve their rows and opaque identities.
+    for table in ("login_sessions", "preview_identities"):
+        columns = {row[1] for row in db.execute(f"PRAGMA table_info('{table}')")}
+        if "email" in columns and "reviewer" not in columns:
+            db.execute(f"ALTER TABLE {table} RENAME COLUMN email TO reviewer")
+    db.execute("""CREATE TABLE IF NOT EXISTS login_challenges (
+        id TEXT PRIMARY KEY, email TEXT NOT NULL, code_digest TEXT NOT NULL,
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0, used_at INTEGER
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS login_challenges_email ON login_challenges(email, created_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS login_requests (
+        email TEXT NOT NULL, ip_digest TEXT NOT NULL, created_at INTEGER NOT NULL
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS login_requests_email ON login_requests(email, created_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS login_requests_ip ON login_requests(ip_digest, created_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS login_sessions (
+        token_digest TEXT PRIMARY KEY, reviewer TEXT NOT NULL,
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS login_sessions_reviewer ON login_sessions(reviewer)")
+    db.execute("CREATE INDEX IF NOT EXISTS login_sessions_expiry ON login_sessions(expires_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS preview_identities (
+        key_digest TEXT PRIMARY KEY, reviewer TEXT NOT NULL
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS preview_identities_reviewer ON preview_identities(reviewer)")
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -93,6 +123,7 @@ MIGRATIONS = (
     (4, "record-stable-review-basis", _migration_4),
     (5, "reviewer-display-names", _migration_5),
     (6, "name-identities-and-recovery", _migration_6),
+    (7, "unify-authentication-and-session-storage", _migration_7),
 )
 
 

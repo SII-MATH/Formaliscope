@@ -75,6 +75,20 @@ class NameIdentityTests(unittest.TestCase):
         self.assertIsNone(self.auth.resume_reviewer(key))
         self.assertFalse(self.auth.is_admin(owner))
 
+    def test_name_sessions_validate_identity_without_email_allowlist(self):
+        auth = NameAuthStore(self.db, AuthSettings(mailer='none'), clock=lambda: self.now)
+        token, recovery = auth.create_identity('用户')
+        owner = auth.session_reviewer(token)
+        self.assertRegex(owner, r'^u_[0-9a-f]{32}$')
+        self.assertEqual(auth.session_email(token), owner)
+        restarted = NameAuthStore(self.db, auth.settings, clock=lambda: self.now)
+        self.assertEqual(restarted.session_reviewer(token), owner)
+        self.assertEqual(restarted.session_reviewer(restarted.resume_reviewer(recovery)), owner)
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE name_identities SET disabled=1 WHERE reviewer=?', (owner,))
+        self.assertIsNone(restarted.session_reviewer(token))
+        self.assertIsNone(restarted.session_email(token))
+
     def test_credential_guesses_are_limited_and_origin_is_required(self):
         for _ in range(60):
             self.assertIsNone(self.auth.resume_reviewer('not-a-key'))

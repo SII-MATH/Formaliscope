@@ -79,6 +79,22 @@ class AuthStoreTests(unittest.TestCase):
         self.auth.sender = lambda email, code: self.sent.append((email, code))
         self.assertTrue(self.auth.request_code("alice@example.org", "127.0.0.1"))
 
+    def test_persisted_sessions_and_cached_sessions_reapply_email_policy(self):
+        email = 'alice@example.org'
+        self.auth.request_code(email, '127.0.0.1')
+        token = self.auth.verify_code(email, self.sent[-1][1])
+        restarted = AuthStore(self.db, self.auth.settings, clock=lambda: self.now)
+        self.assertEqual(restarted.session_reviewer(token), email)
+        self.assertEqual(restarted.session_email(token), email)
+        restarted.settings = AuthSettings(mailer='none', allowed_emails=frozenset({'other@example.org'}))
+        self.assertIsNone(restarted.session_reviewer(token))
+        blocked = AuthStore(self.db, restarted.settings, clock=lambda: self.now)
+        self.assertIsNone(blocked.session_email(token))
+        restarted.settings = self.auth.settings
+        self.assertEqual(restarted.session_reviewer(token), email)
+        restarted.logout(token)
+        self.assertIsNone(AuthStore(self.db, self.auth.settings, clock=lambda: self.now).session_email(token))
+
 
 class AuthHTTPTests(unittest.TestCase):
     def setUp(self):

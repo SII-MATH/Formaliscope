@@ -7,6 +7,8 @@ User=formaliscope-review
 Group=formaliscope-review
 WorkingDirectory=/opt/formaliscope/current
 Environment=REVIEW_DATA_DIR=/var/lib/formaliscope
+Environment=REVIEW_BACKUP_KEEP=30
+EnvironmentFile=-/etc/formaliscope/backup.env
 ExecStart=/usr/local/sbin/formaliscope-review-backup
 UMask=0077
 NoNewPrivileges=true

@@ -1,12 +1,12 @@
 # GitHub Actions 制品发布与 VPS 拉取
 
-仓库使用“GitHub 发布不可变制品，VPS 主动拉取”的流程。Actions 不保存 VPS SSH 私钥，不读取生产数据库。日常开发推送到 dev；合并到 main 后自动发布应用版本，发布结果以 Actions 的实际运行状态为准；目标机器的配置、拉取和验证仍需按下述步骤完成。
+仓库使用“GitHub 发布不可变制品，VPS 主动拉取”的流程。Actions 不保存 VPS SSH 私钥，不读取生产数据库。日常开发推送到 develop；合并到 main 后自动发布应用版本，发布结果以 Actions 的实际运行状态为准；目标机器的配置、拉取和验证仍需按下述步骤完成。
 
 ## 三条工作流
 
 | Workflow | 触发 | 发布前验证与产物 |
 | --- | --- | --- |
-| `ci.yml` | PR、dev/main push | 自动发现全部 review_app / statement_workflow 测试，检查全部前端模块和 Node 回归、Python/脚本语法及新旧 systemd 单元 |
+| `ci.yml` | PR、develop/dev/main push | 自动发现全部 review_app / statement_workflow 测试，检查全部前端模块和 Node 回归、Python/脚本语法及新旧 systemd 单元 |
 | `publish-app.yml` | main push | 重跑同一应用/Workflow/模块/schema 导入测试门槛，`git archive` 打包整个仓库，从 `v0.0.1` 开始自动递增补丁版本；打包、上传 SHA-256 和带版本/commit 的 manifest，全部完成后发布草稿 |
 | `publish-snapshot.yml` | 手动或 `kip126-updated` dispatch | 默认 develop，也可指定固定 ref；从干净 KIP126 检出构建 `build --statements --require-clean`，验证模式、commit、digest，发布 `snapshot-<source-commit>` |
 
@@ -54,7 +54,7 @@ sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pu
 
 ## 拉取器约束
 
-两个拉取器用 `/run/lock/formaliscope-deploy.lock` 串行化更新。应用选择数字版本最高的稳定 `vX.Y.Z`，没有数字版时兼容历史 `app-*`（完整分页查询，跳过草稿和预发行），校验版本、commit、archive 与 manifest，解包到不可变目录；先备份和迁移，再原子切换 `current`。快照选择最新 `snapshot-*`，核对 SHA-256、快照内部 digest、source commit、干净来源和 review mode；先备份，再原子安装。数据库、备份与快照写入使用服务身份，认证密钥由服务启动创建。
+两个拉取器用 `/run/lock/formaliscope-deploy.lock` 串行化更新；安装与备份另共用数据目录中的 `.data.lock`，保证快照和数据库副本配套。应用选择数字版本最高的稳定 `vX.Y.Z`，没有数字版时兼容历史 `app-*`（完整分页查询，跳过草稿和预发行），校验版本、commit、archive 与 manifest，解包到不可变目录；先使用旧应用 CLI 备份，停止审核服务后迁移，再原子切换 `current`，恢复原先运行的服务。原先停用或首次安装不自动启动；迁移失败保留备份并保持停用，不重启 schema 不兼容的旧代码。快照选择最新 `snapshot-*`，核对 SHA-256、快照内部 digest、source commit、干净来源和 review mode；先备份，再原子安装。数据库、备份与快照写入使用服务身份，认证密钥由服务启动创建。
 
 快照拉取器默认要求 Statement。已有 Blueprint 部署需要显式设置 `FORMALISCOPE_REVIEW_MODE=blueprint`；服务预检带 `--legacy-blueprint` 保持旧模式升级兼容。旧 `deploy/kip126-review*` 单元保留，但新安装使用 `formaliscope-*`。不要同时启用两套服务访问同一数据库。
 
@@ -64,13 +64,13 @@ sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pu
 
 ## 发布前验收
 
-在测试 Linux 环境确认所有 systemd 单元通过验证，正式 preflight ready=true，姓名登录、同名双身份隔离、恢复码与单独创建的管理员有效；演练一次 SQLite 在线备份和恢复、上一 release 回滚，并检查已有公开入口继续可用。默认 timer 每 15 分钟检查应用/快照，每日生成备份。
+在测试 Linux 环境确认所有 systemd 单元通过验证，正式 preflight ready=true，姓名登录、同名双身份隔离、恢复码与单独创建的管理员有效；演练一次 SQLite 在线备份和恢复、上一 release 回滚，并检查已有公开入口继续可用。默认 timer 每 15 分钟检查应用/快照，每日生成备份。备份服务从 `/etc/formaliscope/backup.env` 读取数量保留设置；默认保留最近 30 份已验证的同源 v2 备份，历史 v1 不自动删除。异机存储目前只准备配置，目的地确定后单独启用加密传输。
 
 代码提交、workflow 发布、目标机器配置、公开路由和 timer 启用分别是独立动作。仓库文件准备完成不表示这些外部步骤已经执行。
 
 ## 分支、自动版本与资源
 
-本仓库日常工作分支是 `dev`，本地跟踪 `origin/dev`。推送 dev 只执行 CI，合并到 main 才触发发布；main 也重跑完整验证，未通过不会发布。应用版本从 `v0.0.1` 开始，下一次 main 更新自动取最高已保留数字版本并增加 patch；手动建立新 minor/major 版本时后续 patch 从其继续递增。版本排序使用数字元组，不是字符串或发布日期。
+本仓库日常工作分支是 `develop`，本地跟踪 `origin/develop`。旧 `dev` 分支保留并仍执行 CI。推送 develop 只执行 CI，合并到 main 才触发发布；main 也重跑完整验证，未通过不会发布。应用版本从 `v0.0.1` 开始，下一次 main 更新自动取最高已保留数字版本并增加 patch；手动建立新 minor/major 版本时后续 patch 从其继续递增。版本排序使用数字元组，不是字符串或发布日期。
 
 同一发布队列串行执行，最多排队 100 个任务，避免版本竞争。重跑相同 commit 复用原标签；已发布附件不覆盖，失败草稿可继续上传，完成后才发布。自动化使用仓库自带 GITHUB_TOKEN，无需新建写权限个人 token。Actions 页可见实际成功/失败，失败时可点 Re-run failed jobs。
 

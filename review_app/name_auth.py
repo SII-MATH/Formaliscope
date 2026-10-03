@@ -12,8 +12,8 @@ from contextlib import closing
 from typing import Mapping
 from urllib.parse import urlsplit
 
-from .auth import AuthSettings, AuthStore
-from .database import initialize
+from .auth import AuthSettings
+from .session_store import SessionStore
 
 NAME_SESSION_LIFETIME = 30 * 86400
 
@@ -58,25 +58,16 @@ def name_settings(env: Mapping[str, str] | None = None) -> AuthSettings:
     return AuthSettings(mailer='none', allow_any_email=True, public_origin=text, cookie_path=cookie)
 
 
-class NameAuthStore(AuthStore):
+class NameAuthStore(SessionStore):
     session_lifetime = NAME_SESSION_LIFETIME
 
     def __init__(self, db_path, settings=None, **kwargs):
-        initialize(db_path)
-        super().__init__(db_path, settings or AuthSettings(mailer='none', allow_any_email=True),
-                         sender=self._no_mail, **kwargs)
-
-    @staticmethod
-    def _no_mail(*_args):
-        raise ValueError('name authentication does not send email')
+        super().__init__(db_path, **kwargs)
+        self.settings = settings or AuthSettings(mailer='none', allow_any_email=True)
 
     @staticmethod
     def _recovery():
         return 'KIP-' + secrets.token_urlsafe(32)
-
-    @staticmethod
-    def _digest(value):
-        return hashlib.sha256(value.encode()).hexdigest()
 
     def _limit(self, action, client_ip):
         now = int(self.clock())
@@ -106,7 +97,7 @@ class NameAuthStore(AuthStore):
         if not valid_name(name):
             raise ValueError('请输入 1–60 字的姓名，不含控制字符')
         reviewer = existing_reviewer or 'u_' + uuid.uuid4().hex
-        token, recovery = secrets.token_urlsafe(32), self._recovery()
+        recovery = self._recovery()
         now = int(self.clock())
         with self.lock, closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
@@ -123,13 +114,12 @@ class NameAuthStore(AuthStore):
                 db.execute('INSERT INTO reviewer_profiles (reviewer, display_name) VALUES (?, ?) '
                            'ON CONFLICT(reviewer) DO UPDATE SET display_name=excluded.display_name',
                            (reviewer, name.strip()))
-                db.execute('INSERT INTO login_sessions VALUES (?, ?, ?, ?)',
-                           (self._digest(token), reviewer, now, now+self.session_lifetime))
+                token = self._insert_session(db, reviewer, now)
                 db.execute('COMMIT')
             except BaseException:
                 db.execute('ROLLBACK')
                 raise
-            self._cache_session(self._digest(token), reviewer, now+self.session_lifetime)
+            self._remember_session(token, reviewer, now)
         return token, recovery
 
     def resume_reviewer(self, recovery, client_ip='127.0.0.1'):
@@ -147,24 +137,16 @@ class NameAuthStore(AuthStore):
             if not row:
                 db.execute('COMMIT')
                 return None
-            token = secrets.token_urlsafe(32)
-            digest = self._digest(token)
             db.execute('DELETE FROM login_sessions WHERE expires_at<=?', (now,))
-            db.execute('INSERT INTO login_sessions VALUES (?, ?, ?, ?)',
-                       (digest, row['reviewer'], now, now+self.session_lifetime))
+            token = self._insert_session(db, row['reviewer'], now)
             db.execute('COMMIT')
-            self._cache_session(digest, row['reviewer'], now+self.session_lifetime)
+            self._remember_session(token, row['reviewer'], now)
         return token
 
-    def session_email(self, token):
-        # Keep the historical adapter name; the returned value is an opaque ID.
-        reviewer = super().session_email(token)
-        if reviewer:
-            with closing(self._connect()) as db:
-                if db.execute('SELECT 1 FROM name_identities WHERE reviewer=? AND disabled=0',
-                              (reviewer,)).fetchone():
-                    return reviewer
-        return None
+    def _session_allowed(self, reviewer):
+        with closing(self._connect()) as db:
+            return bool(db.execute('SELECT 1 FROM name_identities WHERE reviewer=? AND disabled=0',
+                                   (reviewer,)).fetchone())
 
     def is_admin(self, reviewer):
         with closing(self._connect()) as db:
@@ -180,7 +162,7 @@ class NameAuthStore(AuthStore):
             if not changed:
                 db.execute('ROLLBACK')
                 raise ValueError('身份不可用')
-            db.execute('DELETE FROM login_sessions WHERE email=? AND token_digest<>?', (reviewer, keep_digest))
+            db.execute('DELETE FROM login_sessions WHERE reviewer=? AND token_digest<>?', (reviewer, keep_digest))
             db.execute('COMMIT')
             for digest, (owner, _) in list(self.sessions.items()):
                 if owner == reviewer and digest != keep_digest:

@@ -4,12 +4,13 @@ KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜�
 
 仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
 
-日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
+日常开发在 `develop`（跟踪 `origin/develop`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。旧 `dev` 分支保留，仍运行 CI。
 
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
 ```bash
-python3 -m review_app build --statements --source /path/to/KIP126 --data-dir .review
+python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
+python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .review
 python3 -m review_app preflight --preview --data-dir .review
 python3 -m review_app serve --preview --port 8876 --data-dir .review
 ```
@@ -20,7 +21,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .review
 
 ```bash
 python3 -m review_app build --statements --require-clean \
-  --source /path/to/KIP126 --data-dir /tmp/statement-artifact
+  --source /path/to/KIP126 --output /tmp/statement-artifact/snapshot.json
 ```
 
 当前 develop 示例包含 6,222 条声明、1,421 个文件。这是源码索引规模，实际审阅对象由目录和标签筛选确定；依赖图基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
@@ -35,7 +36,7 @@ python3 -m review_app enrich-snapshot \
   --output /tmp/enriched-snapshot.json
 ```
 
-这些命令不改人工数据库。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
+构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 
 完整验证：
 

@@ -8,11 +8,12 @@ TOKEN_FILE="${FORMALISCOPE_GITHUB_TOKEN_FILE:-/etc/formaliscope/github-read-toke
 ROOT="${FORMALISCOPE_ROOT:-/opt/formaliscope}"
 RELEASES="$ROOT/releases"
 DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
+BACKUP_DIR="${REVIEW_BACKUP_DIR:-/var/backups/formaliscope}"
 LOCK_FILE="${FORMALISCOPE_DEPLOY_LOCK:-/run/lock/formaliscope-deploy.lock}"
 API="https://api.github.com/repos/${REPOSITORY}/releases"
 RELEASE_HELPER="${FORMALISCOPE_RELEASE_HELPER:-/usr/local/sbin/formaliscope-release}"
 
-for path in "$ROOT" "$DATA_DIR" "$LOCK_FILE" "$TOKEN_FILE" "$RELEASE_HELPER"; do
+for path in "$ROOT" "$DATA_DIR" "$BACKUP_DIR" "$LOCK_FILE" "$TOKEN_FILE" "$RELEASE_HELPER"; do
   [[ "$path" == /* ]] || { echo "deployment paths must be absolute" >&2; exit 1; }
 done
 # Do not allow another checkout in the caller's cwd to override PYTHONPATH.
@@ -42,7 +43,10 @@ while :; do
 done
 # Command substitution propagates selection failures before any activation.
 release_details="$(python3 "$RELEASE_HELPER" select "$stage"/releases-*.json)"
-mapfile -t release_info <<<"$release_details"
+release_info=()
+while IFS= read -r line; do
+  release_info+=("$line")
+done <<<"$release_details"
 
 tag="${release_info[0]}"
 commit="${release_info[1]}"
@@ -87,23 +91,81 @@ if [[ -e "$release_dir" ]]; then
 fi
 mv "$release_stage" "$release_dir"
 
-# The backup uses the currently active application, then the migration runs
-# against persistent data with the new application before the code switch. It
-# is deliberately skipped when there is no installed snapshot yet; the
-# snapshot puller initializes the data directory before the first service
-# start.
-if [[ -f "$DATA_DIR/snapshot.json" ]]; then
-  if [[ -f "$DATA_DIR/judgments.sqlite3" ]]; then
-    [[ -x /usr/local/sbin/formaliscope-review-backup ]] || { echo "backup helper must be installed before migration" >&2; exit 1; }
-    /usr/local/sbin/formaliscope-review-backup
+# Back up before stopping the old process. Use its CLI directly: an installed
+# backup helper may already expect options that this older release lacks.
+# Keep this pre-upgrade backup without applying retention during activation.
+backup_created=0
+if [[ -f "$DATA_DIR/judgments.sqlite3" ]]; then
+  [[ -f "$DATA_DIR/snapshot.json" ]] || { echo "existing review database has no snapshot; restore the snapshot before upgrading" >&2; exit 1; }
+  backup_application="${current_target:-$release_dir}"
+  if ! runuser -u formaliscope-review -- env PYTHONPATH="$backup_application" REVIEW_DATA_DIR="$DATA_DIR" \
+    python3 -m review_app backup --data-dir "$DATA_DIR" --output "$BACKUP_DIR"; then
+    echo "pre-upgrade backup failed; application and running review service were not changed" >&2
+    exit 1
   fi
-  runuser -u formaliscope-review -- env PYTHONPATH="$release_dir" REVIEW_DATA_DIR="$DATA_DIR" \
-    python3 -m review_app migrate --data-dir "$DATA_DIR"
+  backup_created=1
+fi
+
+# Read named properties: systemctl's output order is not an interface guarantee.
+read_review_state() {
+  local details status=0 key value
+  details="$(systemctl show --property=LoadState --property=ActiveState formaliscope-review.service)" || status=$?
+  review_load_state=""
+  review_active_state=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      LoadState) review_load_state="$value" ;;
+      ActiveState) review_active_state="$value" ;;
+    esac
+  done <<<"$details"
+  [[ "$review_load_state" == not-found ]] && return 0
+  if [[ "$status" != 0 || -z "$review_load_state" || -z "$review_active_state" ]]; then
+    echo "could not read review service state; migration and activation aborted" >&2
+    return 1
+  fi
+}
+
+# Schema changes can rename columns used by the old release. Stop every
+# installed review unit, including a queued automatic restart or a process
+# still starting/stopping. Only previously running/starting units are resumed.
+review_should_restart=0
+read_review_state
+if [[ "$review_load_state" != not-found ]]; then
+  case "$review_active_state" in
+    active|activating|reloading) review_should_restart=1 ;;
+    inactive|failed|deactivating) ;;
+    *) echo "unexpected review service state: $review_active_state; migration and activation aborted" >&2; exit 1 ;;
+  esac
+  if ! systemctl stop formaliscope-review.service; then
+    echo "could not stop the review service; migration and activation aborted" >&2
+    exit 1
+  fi
+  read_review_state
+  case "$review_active_state" in
+    inactive|failed) ;;
+    *) echo "review service did not stop (ActiveState=$review_active_state); migration and activation aborted" >&2; exit 1 ;;
+  esac
+fi
+
+# No snapshot on a first install: the snapshot puller initializes the data before
+# an operator starts the review service. A failed migration may have committed
+# earlier migration steps, so never automatically restart the previous code.
+if [[ -f "$DATA_DIR/snapshot.json" ]]; then
+  if ! runuser -u formaliscope-review -- env PYTHONPATH="$release_dir" REVIEW_DATA_DIR="$DATA_DIR" \
+    python3 -m review_app migrate --data-dir "$DATA_DIR"; then
+    echo "application migration failed; current was not switched and the review service remains stopped" >&2
+    if [[ "$backup_created" == 1 ]]; then
+      echo "pre-upgrade backups are retained in $BACKUP_DIR; restore the matching backup before starting the previous release against this database" >&2
+    else
+      echo "no pre-upgrade database existed; inspect the migration error before explicitly starting a release" >&2
+    fi
+    exit 1
+  fi
 fi
 
 ln -sfn "$release_dir" "$ROOT/current.new"
 mv -Tf "$ROOT/current.new" "$ROOT/current"
-if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
+if [[ "$review_should_restart" == 1 ]]; then
   systemctl restart formaliscope-review.service
   ready=0
   for attempt in {1..15}; do
@@ -117,3 +179,6 @@ if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
   [[ "$ready" == 1 ]] || { echo "application readiness failed; use the documented rollback procedure" >&2; exit 1; }
 fi
 echo "activated application $tag"
+if [[ "$review_should_restart" == 0 ]]; then
+  echo "review service remains inactive; start it explicitly after installing and checking the snapshot"
+fi

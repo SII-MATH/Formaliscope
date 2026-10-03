@@ -8,7 +8,7 @@
 | 数据库 | `schema_migrations.version` | 持久判断的表结构 |
 | 被审内容 | `source_commit` + `snapshot.digest` + `fingerprint_scheme` | 本次展示的 NL/Lean 证据 |
 
-当前数据库 schema 为 5；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。schema 5 新增显示姓名表，保留既有判断。手动 Agent 旁文件为 `statement-enrichment.v1`，具体数学正文变化仍沿用内容指纹规则；中文展示别名和标签不改原标题/陈述，不清空已审记录。
+当前代码的数据库 schema 为 7；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。schema 5 新增显示姓名表，6 新增姓名身份与恢复摘要，7 将全部认证表纳入统一迁移，并把会话与预览凭证的身份列统一为 `reviewer`，保留已有数据。手动 Agent 旁文件为 `statement-enrichment.v1`，具体数学正文变化仍沿用内容指纹规则；中文展示别名和标签不改原标题/陈述，不清空已审记录。
 
 ## 1. KIP126 更新时如何沿用判断
 
@@ -30,7 +30,8 @@ Blueprint：Blueprint label :: Lean declaration name
 
 如果 label 或 Lean 声明名发生重命名，稳定键会变化，系统默认视为新对象。不能仅凭内容相似自动继承，因为不同数学对象可能拥有相同文本；需要时应提供显式、人工审核的旧 ID→新 ID 迁移表。
 
-构建会输出以下统计：
+构建产生独立的新候选文件，不覆盖旧快照；激活统一通过 `install-snapshot`。
+安装会输出以下统计：
 
 ```text
 unchanged=N, changed=N, added=N, removed=N
@@ -42,7 +43,7 @@ unchanged=N, changed=N, added=N, removed=N
 python3 -m review_app build \
   --statements \
   --source /srv/KIP126 \
-  --data-dir /tmp/kip126-snapshot-artifact \
+  --output /tmp/kip126-snapshot-artifact/snapshot.json \
   --require-clean
 ```
 
@@ -63,7 +64,7 @@ python3 -m review_app build \
 
 1. 创建一致性备份并复制到异机存储。
 2. 将新代码安装到新的只读 release 目录，运行完整测试。
-3. 使用新代码运行 `migrate --data-dir /var/lib/formaliscope`。这一步必须发生在安装新被审快照之前，以便从当前旧快照回填旧判断的稳定内容依据。
+3. 停止审核服务，使用新代码运行 `migrate --data-dir /var/lib/formaliscope`。schema 7 会重命名会话列，旧进程必须退出后迁移。这一步必须发生在安装新被审快照之前，以便从当前旧快照回填旧判断的稳定内容依据。
 4. 如有 KIP126 更新，运行 `install-snapshot`，查看 unchanged/changed/added/removed 数量。
 5. 原子切换 `/opt/formaliscope/current`，重启服务。
 6. 检查登录页、真实登录、卡片读取和一条测试账号写入；失败则切回旧应用与旧快照。只有经过兼容性验证的迁移允许直接回滚应用；破坏性迁移需要恢复发布前备份。
@@ -92,8 +93,8 @@ VPS 是运行状态的唯一写入点：
 /var/lib/formaliscope/snapshot.json       当前被审快照
 /var/lib/formaliscope/judgments.sqlite3   权威审核数据
 /var/lib/formaliscope/auth-pepper         本机认证密钥
-/etc/kip126-review/                        身份模式与公开入口配置
-/var/backups/kip126-review/                本机一致性备份
+/etc/formaliscope/                        身份模式、公开入口与备份配置
+/var/backups/formaliscope/                本机一致性备份
 ```
 
 SQLite 只允许一个审核服务实例直接写入。公网入口由 VPS 上的 Nginx/Caddy 终止 TLS，再转发到 `127.0.0.1:8765`。若以后需要多个应用副本或跨机器写入，先迁移到 PostgreSQL；不能把 SQLite 放入多机共享卷。
