@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Statement enrichment v1 — manually produced Agent drafts",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "statement-enrichment.v1"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/annotation"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "annotations"
+  ],
+  "$defs": {
+    "basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "snapshot_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "context_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "source_commit",
+        "snapshot_digest",
+        "source_sha256",
+        "context_fingerprint"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "file",
+        "line_start",
+        "line_end",
+        "excerpt"
+      ]
+    },
+    "unresolved": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "object": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "object",
+        "reason",
+        "evidence_ids"
+      ]
+    },
+    "readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "none",
+            "draft"
+          ]
+        },
+        "text_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unresolved"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "status",
+        "text_zh",
+        "unresolved",
+        "evidence_ids"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "none"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text_zh": {
+                "type": "null"
+              },
+              "unresolved": {
+                "maxItems": 0
+              },
+              "evidence_ids": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "text_zh": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "agent_candidate"
+        },
+        "role": {
+          "enum": [
+            "model",
+            "literature",
+            "computed",
+            "target",
+            "transport",
+            "derivation",
+            "challenge",
+            "infrastructure",
+            "unclassified"
+          ]
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "spectral",
+              "adams",
+              "sphere",
+              "comparison"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "rationale_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "status",
+        "role",
+        "topics",
+        "rationale_zh",
+        "evidence_ids"
+      ]
+    },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            null
+          ]
+        },
+        "reason_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "level",
+        "reason_zh",
+        "evidence_ids"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "level": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason_zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_ids": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reason_zh": {
+                "type": "null"
+              },
+              "evidence_ids": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "const": "agent_manual"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "policy_version": {
+          "const": "manual-enrichment.v1"
+        },
+        "context_completeness": {
+          "enum": [
+            "unknown",
+            "partial",
+            "complete"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "model",
+        "created_at",
+        "policy_version",
+        "context_completeness"
+      ]
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "declaration_id": {
+          "type": "string",
+          "pattern": "^statement::.+$"
+        },
+        "basis": {
+          "$ref": "#/$defs/basis"
+        },
+        "title_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "summary_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "readback": {
+          "$ref": "#/$defs/readback"
+        },
+        "classification": {
+          "$ref": "#/$defs/classification"
+        },
+        "priority": {
+          "$ref": "#/$defs/priority"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "required": [
+        "declaration_id",
+        "basis",
+        "title_zh",
+        "summary_zh",
+        "readback",
+        "classification",
+        "priority",
+        "evidence",
+        "provenance"
+      ]
+    }
+  },
+  "description": "Source-bound Agent enrichment sidecar; extracted Lean facts and personal review records remain separate. No risk label dimension or machine-authored human verification."
+}

@@ -15,6 +15,21 @@ from .storage import create_backup, install_snapshot
 
 
 class StorageTests(unittest.TestCase):
+    def test_unverified_archive_needs_explicit_development_override(self):
+        from .statements import compile_statements
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'source/KIP126').mkdir(parents=True)
+            (root/'source/KIP126/Example.lean').write_text('def value : Nat := 1\n')
+            payload = compile_statements(root/'source', source_commit='a'*40)
+            artifact = root/'snapshot.json'
+            artifact.write_text(json.dumps(payload))
+            with self.assertRaises(ValueError):
+                install_snapshot(artifact, root/'production')
+            self.assertFalse((root/'production').exists())
+            installed, _ = install_snapshot(artifact, root/'preview', allow_dirty_source=True)
+            self.assertEqual(installed['source_origin'], 'archive-unverified')
+
     def test_consistent_backup_keeps_reviews_and_discards_auth_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

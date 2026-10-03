@@ -26,13 +26,19 @@ jobs:
           python-version: '3.11'
 
       - name: Run application tests
-        run: python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+        run: |
+          python3 -m unittest discover -s review_app -t . -p 'test_*.py'
+          python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 
       - name: Check Python and JavaScript syntax
         run: |
           python3 -m py_compile review_app/*.py
-          node --check review_app/static/app.js
-          node --check review_app/static/login.js
+          python3 -m py_compile statement_workflow/*.py
+          for script in review_app/static/*.js; do node --check "$script"; done
+          for test in review_app/test_*.cjs; do node "$test"; done
+          bash -n deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup
 
       - name: Check systemd units
-        run: systemd-analyze verify deploy/kip126-review.service deploy/kip126-review-backup.service deploy/kip126-review-backup.timer
+        run: |
+          sudo install -m 0755 deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+          systemd-analyze verify deploy/*.service deploy/*.timer

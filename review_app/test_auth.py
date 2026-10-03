@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 from .auth import AuthSettings, AuthStore, DeliveryError
 from .build import CURRENT_FINGERPRINT_SCHEME, SNAPSHOT_SCHEMA
-from .server import ReviewHTTPServer, initialize, make_handler
+from .server import DB_SCHEMA_VERSION, ReviewHTTPServer, initialize, make_handler
 
 
 class AuthStoreTests(unittest.TestCase):
@@ -140,6 +140,28 @@ class AuthHTTPTests(unittest.TestCase):
             "/api/auth/verify-code", body={"email": email, "code": self.sent[email]})
         self.assertEqual(status, 200)
         return headers["Set-Cookie"].split(";", 1)[0]
+
+    def test_readiness_is_public_read_only_and_does_not_expose_review_data(self):
+        with sqlite3.connect(self.db) as db:
+            before = db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            counts = {name: db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+                      for (name,) in before}
+        status, headers, body = self.request("/healthz")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {
+            "ready": True, "snapshot_schema": SNAPSHOT_SCHEMA,
+            "database_schema": DB_SCHEMA_VERSION,
+        })
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertFalse(self.sent)
+        with sqlite3.connect(self.db) as db:
+            after = {name: db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+                     for (name,) in before}
+        self.assertEqual(counts, after)
+        self.assertEqual(self.request("/api/catalog")[0], 401)
+        self.assertEqual(self.request("/api/admin/summary")[0], 401)
+        self.assertEqual(self.request("/healthz", body={})[0], 404)
 
     def test_login_authorizes_api_and_binds_judgment_to_email(self):
         self.assertEqual(self.request("/api/catalog")[0], 401)

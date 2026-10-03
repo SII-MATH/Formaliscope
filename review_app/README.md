@@ -1,40 +1,66 @@
-# KIP126 对应关系审核台
+# Statement 审阅应用
 
-从单独指定的 KIP126 源码检出中读取 `blueprint/src/content.tex` 引用的章节，按每条 `\lean{...}` 生成一张人工审核卡片。页面并排展示 Blueprint 原文与定位到的 Lean 源码；审核者选择“对齐 / 部分对齐 / 不对齐 / 暂无法判断”，并可填写理由。未定位到的声明明确标示，机器生成的候选不会自动算作审核通过。
+应用读取独立的 KIP126 源码检出并生成只读快照。Statement 模式索引 `KIP126/` 与 `KIPBase/` 中的完整声明，按目录、标签和搜索组织内容。Lean 名称作为主标题；中文副标题、阅读摘要、独立回译和候选分类按 enrichment v1 交换契约补充。人工审阅使用“通过 / 没看懂 / 不通过”，与 Agent 输出分开保存。
 
-```bash
-python3 -m review_app build --source /path/to/KIP126
-REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --port 8765
-# 浏览器打开 http://127.0.0.1:8765/
-```
+## 模块边界
 
-应用本体仅使用 Python 标准库；`REVIEW_MAILER=agently` 模式还需要本机已授权的 `agently-cli`。本地运行数据默认放在本仓库 Git 忽略的 `.review/`。生产环境使用 `--data-dir /var/lib/kip126-review` 或 `REVIEW_DATA_DIR`，不要把运行数据放在源码检出或容器可写层中。`snapshot.json` 是构建时的只读证据快照，`judgments.sqlite3` 保存人工记录、验证码摘要及会话，`auth-pepper` 是验证码摘要密钥。源文件变化后生成并安装新快照；稳定键与内容指纹均未变化的判断自动沿用，其余旧判断留在历史中并显示“需重审”。登录后点击“导出我的记录”下载带有源码提交与快照摘要的 JSON，可用于人工审查、统计或导入后续流程；导出不会自动修改 KIP126。生产目录和备份见 [DEPLOYMENT.md](DEPLOYMENT.md)，三条版本线及兼容规则见 [VERSIONING_AND_RELEASE.md](VERSIONING_AND_RELEASE.md)。
+| 模块 | 职责 |
+| --- | --- |
+| `build.py` / `statements.py` | Blueprint 与 Statement 提取、源码版本、内容指纹和快照校验 |
+| `enrichment.py` | 手动 Agent 旁文件校验、源码依据绑定、生成候选补充快照 |
+| `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |
+| `auth.py` / `preview.py` | 正式邮箱验证码与本机姓名预览身份 |
+| `server.py` | HTTP 路由、资源、会话、授权和 API 适配 |
+| `storage.py` / `preflight.py` | 原子安装、在线备份及无写入部署预检 |
+| `static/statement.js` | 详情、列表、筛选与页面交互 |
+| `static/statement-api.js` / `statement-identity.js` / `statement-graph.js` | API 请求、身份交互和候选依赖图 |
+| `static/directory-tree.js` / `review-labels.js` | 目录树与统一标签、状态筛选规则 |
+| `static/latex-renderer.js` / `lean-renderer.js` | 本地数学公式渲染与安全转义后的 Lean 高亮 |
+| `../statement_workflow/` | 独立 Agent 任务、上下文隔离、校验、重试与产物契约 |
 
-## 邮箱登录
-
-当前配置允许任何能收信的邮箱登录。验证码为 8 位数字，10 分钟有效且只能使用一次；每个验证码最多试 5 次。会话有效期为 12 小时，退出后立即失效。审核人邮箱由服务端写入判断记录，页面提交的同名字段不会生效。邮件发送请求按邮箱、来源 IP 和全局限速；目前本机邮箱每日最多可发送 50 封，应用限制为 40 次/日，保留 10 封余量。发送失败不会扣应用限额。邮件服务商自身仍可能拒发或限流。
-
-每个已验证邮箱拥有独立的审核进度、判断历史和导出记录。所有用户查看同一份 Blueprint/Lean 证据快照，但无法通过网页 API 读取或修改其他邮箱的判断。判断仍存储在同一个 SQLite 数据库中，以审核邮箱为键隔离；服务管理员持有数据库文件时可以查看全部记录。部署此版本时，应用会自动将旧版判断表迁移为按邮箱限定请求 ID 的表，并保留原有判断。
-
-本机已绑定 `siimath@agent.qq.com` 时，使用上面的 `REVIEW_MAILER=agently` 命令。服务进程必须能访问同一用户的 `agently-cli` 登录状态与网络。不要在网页或仓库里填写邮箱密码。若改用 SMTP，请在运行环境设置 `REVIEW_MAILER=smtp`、`REVIEW_SMTP_HOST`、`REVIEW_SMTP_PORT`、`REVIEW_SMTP_SECURITY=ssl`（或 `starttls`）、`REVIEW_SMTP_USER`、`REVIEW_SMTP_FROM`，以及 `REVIEW_SMTP_PASSWORD_FILE` 指向仅服务账号可读的密码文件；也可用 `REVIEW_SMTP_PASSWORD` 环境变量。仍需设置 `REVIEW_ALLOW_ANY_EMAIL=1`。默认发件模式为 SMTP，缺少配置时服务拒绝启动。
-
-如果通过 HTTPS 代理公开，例如 `https://example.org/proxy/8765/`，设置 `REVIEW_PUBLIC_ORIGIN=https://example.org` 和 `REVIEW_COOKIE_PATH=/proxy/8765/`，由代理剥掉路径前缀再转发到本地服务。这样 Origin 校验使用公开地址，Cookie 仅发送到本应用路径并带 `Secure` 标记。登录页、资源、API 与跳转均使用相对路径。代理需终止 TLS，并限制对本机服务的直接访问。邮箱验证码适合这个人工审核场景；若以后承载更敏感的数据，应改用更强的登录方式。
-
-## 请求与缓存
-
-- 构建时解析 Blueprint 和 Lean，打开网页时不运行 Lake 或重新扫描源码。
-- 清单只传标题、标识、状态；卡片证据按需读取，并用内容指纹做 ETag。浏览器最多保留 12 张卡片，空闲时预读相邻卡片。
-- 审核历史与进度始终从 SQLite 读取且不缓存。数据库启用 WAL、短事务和 busy timeout；每次提交带 UUID，网络重试不会重复写入。
-- 并发等待时间、审核者之间的差距及优化前后五轮对照见 [PERFORMANCE.md](PERFORMANCE.md)。
-- 默认只监听 `127.0.0.1`。远程访问由可信 HTTPS 反向代理转发，部署时须设置公开 Origin 与 Cookie 路径。
-
-当前第一版按 KIP126 Blueprint 做候选来源。FormaliScope 的 Stage 3 论文节点和本应用不共享判断数据，也不应把两套节点 ID 当成同一审核对象。`\leanok` 和“对齐”是不同判断：此页面不验证证明完成情况。
-
-## 验证
+## 构建与本地演示
 
 ```bash
-python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+python3 -m review_app build --statements --source /path/to/KIP126 --data-dir .review
+python3 -m review_app preflight --preview --data-dir .review
+python3 -m review_app serve --preview --port 8876 --data-dir .review
 ```
 
-数学公式渲染使用从本机 FormaliScope 前端复用的 MathJax 浏览器包（Apache 2.0，许可证在 `static/MATHJAX-LICENSE.txt`）和该项目的 LaTeX 渲染辅助脚本。前端资源均由本地服务提供，无需 CDN。
-Lean 源码高亮复用 FormaliScope 的 `lean-renderer.js`，在浏览器内对关键字、注释、字符串、类型和 `sorry` 等着色；源码中的 HTML 特殊字符在生成高亮标记前转义。
+预览只监听 loopback，不发送验证码。姓名和恢复凭证隔离演示记录。只有 Statement 快照能使用预览身份；这个模式不能公开到生产。`--source-commit` 仅用于本机归档预览，它不能证明归档与提交一致，生产预检拒绝新生成的 `archive-unverified` 来源。
+
+生产从干净 Git 检出生成 `build --statements --require-clean`。早期 Blueprint 模式仍可用 `build --source /path/to/KIP126` 构建；它读取 `blueprint/src/content.tex` 的章节和 `\lean{...}`。已有 Blueprint 部署可显式运行 `preflight --legacy-blueprint`，不会把旧节点 ID 与 Statement ID 混用。
+
+## 手动 Agent 数据接入
+
+[enrichment v1 schema](../statement_workflow/schema/statement-enrichment.v1.schema.json) 是冻结的数据契约。先固定基础快照，再按选定目录逐批填写。缺失内容使用 null、none 或空数组；读不到的对象保留 unresolved，Agent 只能生成回译草稿。
+
+```bash
+python3 -m review_app validate-enrichment --snapshot .review/snapshot.json --file /path/to/enrichment.json
+python3 -m review_app enrich-snapshot --snapshot .review/snapshot.json \
+  --file /path/to/enrichment.json --output /tmp/enriched-snapshot.json
+python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data-dir .review
+```
+
+旁文件必须关联当前声明 ID、源码提交、基础快照摘要、源码 SHA-256 及实际引用的证据。补充快照安装后重启服务才能读取新资源；旧人工判断保留为历史，判断依据变化的条目重新进入未审阅。导入不会写人工 verdict，也不会替换源码。
+
+上例默认使用 Git checkout 构建的快照。本机若从 `--source-commit` 归档生成演示，安装补充产物须显式加 `install-snapshot --allow-dirty-source`；仅用于开发预览，生产仍需从干净 Git 检出重新构建。
+
+## 正式身份与授权
+
+正式 `serve` 使用邮箱验证码。配置 `REVIEW_MAILER=smtp`、SMTP host/port/security/user/from，以及 `REVIEW_SMTP_PASSWORD_FILE`；发件密码保存在仅服务账号可读的独立文件。已有本机开发环境可选择 `REVIEW_MAILER=agently`，但目标机器需有可用且已授权的 `agently-cli`。
+
+`REVIEW_ALLOW_ANY_EMAIL=1` 允许任意已验证邮箱；也可配置 `REVIEW_ALLOWED_EMAILS` / `REVIEW_ALLOWED_DOMAINS`。管理员通过 `REVIEW_ADMIN_EMAILS` 的逗号分隔名单或重复的 `serve --admin-email` 参数配置，且必须属于允许登录的邮箱。正式服务不能从名字授予管理员权限。
+
+验证码 8 位、10 分钟有效、只能使用一次，最多尝试 5 次；会话有效期 12 小时。发送按邮箱、IP、全局限速，当前应用默认每日最多 40 次。预检仅检查配置和密码文件可读性，不发送测试邮件，也不能证明邮件账号授权或网络连通。
+
+每个邮箱有独立的判断、进度和导出；网页 API 不接受其他用户提供的审核人字段。`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录及临时认证状态；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.review/`，生产位于 `/var/lib/formaliscope`。
+
+## 请求、渲染与部署检查
+
+打开网页不会运行 Lake 或重新扫描源码。清单和详情分开获取；详情有内容指纹 ETag，人工进度与历史不缓存。数据库启用 WAL、短事务和 busy timeout，提交携带 UUID 以避免网络重试重复写入。
+
+前端数学使用本地 MathJax 包（Apache 2.0，见 `static/MATHJAX-LICENSE.txt`）；Lean 高亮在转义 HTML 字符后执行。资源不依赖 CDN。静态资源由服务启动时读取，因此更新代码或快照后需要重启。
+
+公开服务设置 HTTPS `REVIEW_PUBLIC_ORIGIN`，路径前缀设置 `REVIEW_COOKIE_PATH`，由代理剥去前缀再转发 loopback 服务。部署前运行 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；返回 ready=false 时命令失败，且不初始化数据库、不创建密钥、不发邮件。启动后 `GET /healthz` 无需登录，只报告就绪状态及 schema 版本，不返回条目、用户或路径。
+
+完整测试命令见 [根 README](../README.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有 [性能报告](PERFORMANCE.md) 基于早期 Blueprint 规模，新 Statement 规模需要部署演练时重新测量。

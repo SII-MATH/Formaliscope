@@ -27,7 +27,18 @@ jobs:
           python-version: '3.11'
 
       - name: Verify before publishing
-        run: python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+        run: |
+          python3 -m unittest discover -s review_app -t . -p 'test_*.py'
+          python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
+          python3 -m py_compile review_app/*.py statement_workflow/*.py
+          for script in review_app/static/*.js; do node --check "$script"; done
+          for test in review_app/test_*.cjs; do node "$test"; done
+          bash -n deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup
+
+      - name: Check deployment units
+        run: |
+          sudo install -m 0755 deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+          systemd-analyze verify deploy/*.service deploy/*.timer
 
       - name: Build immutable application archive
         id: package

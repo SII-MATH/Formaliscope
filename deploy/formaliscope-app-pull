@@ -11,6 +11,12 @@ DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
 LOCK_FILE="${FORMALISCOPE_DEPLOY_LOCK:-/run/lock/formaliscope-deploy.lock}"
 API="https://api.github.com/repos/${REPOSITORY}/releases?per_page=100"
 
+for path in "$ROOT" "$DATA_DIR" "$LOCK_FILE" "$TOKEN_FILE"; do
+  [[ "$path" == /* ]] || { echo "deployment paths must be absolute" >&2; exit 1; }
+done
+# Do not allow another checkout in the caller's cwd to override PYTHONPATH.
+cd /
+
 [[ -r "$TOKEN_FILE" ]] || { echo "missing GitHub token file: $TOKEN_FILE" >&2; exit 1; }
 install -d -m 0755 "$RELEASES" "$(dirname "$LOCK_FILE")"
 exec 9>"$LOCK_FILE"
@@ -111,10 +117,11 @@ mv "$release_stage" "$release_dir"
 # snapshot puller initializes the data directory before the first service
 # start.
 if [[ -f "$DATA_DIR/snapshot.json" ]]; then
-  if [[ -f "$DATA_DIR/judgments.sqlite3" && -x /usr/local/sbin/formaliscope-review-backup ]]; then
+  if [[ -f "$DATA_DIR/judgments.sqlite3" ]]; then
+    [[ -x /usr/local/sbin/formaliscope-review-backup ]] || { echo "backup helper must be installed before migration" >&2; exit 1; }
     /usr/local/sbin/formaliscope-review-backup
   fi
-  PYTHONPATH="$release_dir" REVIEW_DATA_DIR="$DATA_DIR" \
+  runuser -u formaliscope-review -- env PYTHONPATH="$release_dir" REVIEW_DATA_DIR="$DATA_DIR" \
     python3 -m review_app migrate --data-dir "$DATA_DIR"
 fi
 
@@ -122,6 +129,15 @@ ln -sfn "$release_dir" "$ROOT/current.new"
 mv -Tf "$ROOT/current.new" "$ROOT/current"
 if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
   systemctl restart formaliscope-review.service
-  curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8765/login >/dev/null
+  ready=0
+  for attempt in {1..15}; do
+    if curl --fail --silent --max-time 2 http://127.0.0.1:8765/healthz | \
+      python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ready") is True else 1)' 2>/dev/null; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$ready" == 1 ]] || { echo "application readiness failed; use the documented rollback procedure" >&2; exit 1; }
 fi
 echo "activated application $tag"

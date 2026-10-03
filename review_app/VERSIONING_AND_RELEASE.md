@@ -8,14 +8,15 @@
 | 数据库 | `schema_migrations.version` | 持久判断的表结构 |
 | 被审内容 | `source_commit` + `snapshot.digest` + `fingerprint_scheme` | 本次展示的 NL/Lean 证据 |
 
-当前数据库 schema 为 4；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。
+当前数据库 schema 为 5；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。schema 5 新增显示姓名表，保留既有判断。手动 Agent 旁文件为 `statement-enrichment.v1`，具体数学正文变化仍沿用内容指纹规则；中文展示别名和标签不改原标题/陈述，不清空已审记录。
 
 ## 1. KIP126 更新时如何沿用判断
 
 审核对象的稳定键是：
 
 ```text
-Blueprint label :: Lean declaration name
+Statement：statement::<完整 Lean 声明名>
+Blueprint：Blueprint label :: Lean declaration name
 ```
 
 每张卡片同时保存 NL 摘要、Lean 摘要和带版本的综合指纹：
@@ -25,7 +26,7 @@ Blueprint label :: Lean declaration name
 - 无法在 KIP126 内定位的外部 Lean 对象同时绑定 `lake-manifest.json` 摘要；依赖锁变化时保守地要求重审。
 - 快照保留多个 `fingerprints`。将来升级指纹算法时，新快照可继续携带旧算法结果，已有判断无需批量重写。
 
-判断沿用规则：稳定键相同，且该判断所记录的 `fingerprint_scheme` 在新卡片中存在并具有相同指纹。`source_commit` 可以变化，文件可以移动，行号可以变化。NL 或 Lean 内容发生变化时，旧判断保留在历史中，当前卡片显示“需重审”。新增对象显示待审核；删除对象不再出现在队列里，但历史判断仍保存在数据库和个人导出中。
+判断沿用规则：稳定键相同，且该判断所记录的 `fingerprint_scheme` 在新卡片中存在并具有相同指纹。`source_commit` 可以变化，文件可以移动，行号可以变化。NL 或 Lean 内容发生变化时，旧判断保留在历史中，Statement 当前卡片归入“未审阅”，旧版本判断仍可在历史查看（Blueprint 旧界面保留原提示）。新增对象显示待审核；删除对象不再出现在队列里，但历史判断仍保存在数据库和个人导出中。
 
 如果 label 或 Lean 声明名发生重命名，稳定键会变化，系统默认视为新对象。不能仅凭内容相似自动继承，因为不同数学对象可能拥有相同文本；需要时应提供显式、人工审核的旧 ID→新 ID 迁移表。
 
@@ -39,12 +40,13 @@ unchanged=N, changed=N, added=N, removed=N
 
 ```bash
 python3 -m review_app build \
+  --statements \
   --source /srv/KIP126 \
   --data-dir /tmp/kip126-snapshot-artifact \
   --require-clean
 ```
 
-快照记录源码 commit、工作区是否有未提交修改、依赖锁摘要和内容摘要。VPS 安装时会重新校验快照 digest，并默认拒绝来自 dirty checkout 的快照。
+快照记录源码 commit、工作区是否有未提交修改、依赖锁摘要和内容摘要。VPS 安装时重新校验快照 digest，默认拒绝 dirty checkout 和 source_origin=archive-unverified 的预览归档。后者只能显式开发覆盖使用，正式预检仍拒绝。source_origin 已纳入有该字段的新快照 digest；没有该字段的旧快照仍保持原格式兼容。
 
 ## 2. 审核应用更新与数据库兼容
 
@@ -61,9 +63,9 @@ python3 -m review_app build \
 
 1. 创建一致性备份并复制到异机存储。
 2. 将新代码安装到新的只读 release 目录，运行完整测试。
-3. 使用新代码运行 `migrate --data-dir /var/lib/kip126-review`。这一步必须发生在安装新被审快照之前，以便从当前旧快照回填旧判断的稳定内容依据。
+3. 使用新代码运行 `migrate --data-dir /var/lib/formaliscope`。这一步必须发生在安装新被审快照之前，以便从当前旧快照回填旧判断的稳定内容依据。
 4. 如有 KIP126 更新，运行 `install-snapshot`，查看 unchanged/changed/added/removed 数量。
-5. 原子切换 `/opt/kip126-review/current`，重启服务。
+5. 原子切换 `/opt/formaliscope/current`，重启服务。
 6. 检查登录页、真实登录、卡片读取和一条测试账号写入；失败则切回旧应用与旧快照。只有经过兼容性验证的迁移允许直接回滚应用；破坏性迁移需要恢复发布前备份。
 
 ## 3. 开发机、发布通道和 VPS
@@ -85,11 +87,11 @@ flowchart LR
 VPS 是运行状态的唯一写入点：
 
 ```text
-/opt/kip126-review/releases/<app-commit>/  只读应用版本
-/opt/kip126-review/current -> releases/... 当前应用
-/var/lib/kip126-review/snapshot.json       当前被审快照
-/var/lib/kip126-review/judgments.sqlite3   权威审核数据
-/var/lib/kip126-review/auth-pepper         本机认证密钥
+/opt/formaliscope/releases/<app-commit>/  只读应用版本
+/opt/formaliscope/current -> releases/... 当前应用
+/var/lib/formaliscope/snapshot.json       当前被审快照
+/var/lib/formaliscope/judgments.sqlite3   权威审核数据
+/var/lib/formaliscope/auth-pepper         本机认证密钥
 /etc/kip126-review/                        SMTP 与公开入口配置
 /var/backups/kip126-review/                本机一致性备份
 ```

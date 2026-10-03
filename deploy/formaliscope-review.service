@@ -1,5 +1,5 @@
 [Unit]
-Description=Formaliscope correspondence review portal
+Description=Formaliscope statement review portal
 After=network-online.target
 Wants=network-online.target
 
@@ -10,6 +10,7 @@ Group=formaliscope-review
 WorkingDirectory=/opt/formaliscope/current
 Environment=REVIEW_DATA_DIR=/var/lib/formaliscope
 EnvironmentFile=/etc/formaliscope/review.env
+ExecStartPre=/usr/bin/python3 -m review_app preflight --host 127.0.0.1 --legacy-blueprint
 ExecStart=/usr/bin/python3 -m review_app serve --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=3

@@ -1,124 +1,58 @@
-# GitHub Actions 与 VPS 拉取部署
+# GitHub Actions 制品发布与 VPS 拉取
 
-本项目采用“GitHub 发布制品，VPS 主动拉取”的部署方式。GitHub Actions 不保存 VPS SSH 私钥，也不读取生产数据库。
+仓库使用“GitHub 发布不可变制品，VPS 主动拉取”的流程。Actions 不保存 VPS SSH 私钥，不读取生产数据库。更新 main 会触发应用制品发布，发布结果以 Actions 的实际运行状态为准；目标机器的配置、拉取和验证仍需按下述步骤完成。
 
-## 已加入的工作流
+## 三条工作流
 
-### `ci.yml`
+| Workflow | 触发 | 发布前验证与产物 |
+| --- | --- | --- |
+| `ci.yml` | PR、main push | 自动发现全部 review_app / statement_workflow 测试，检查全部前端模块和 Node 回归、Python/脚本语法及新旧 systemd 单元 |
+| `publish-app.yml` | main push | 重跑同一应用/Workflow/模块/schema 导入测试门槛，`git archive` 打包整个仓库，发布 `app-<commit>`、SHA-256 与应用 manifest |
+| `publish-snapshot.yml` | 手动或 `kip126-updated` dispatch | 默认 develop，也可指定固定 ref；从干净 KIP126 检出构建 `build --statements --require-clean`，验证模式、commit、digest，发布 `snapshot-<source-commit>` |
 
-在 Pull Request 和 `main` push 上运行：
+应用包包括 `review_app/`、`statement_workflow/` 与 enrichment schema。生产部署不需要自动 Agent 执行器；用户先按目录手动补数据。自动快照 workflow 发布的是基础源码快照，不自动生成 Agent 回译。需要发布手动 enrichment 时，先对冻结基础快照运行 `validate-enrichment` 和 `enrich-snapshot`，将校验通过的候选产物作为单独的正式变更评审；不能默默替换同一标签的证据。
 
-- Python 审核、登录、存储和迁移测试
-- Python/JavaScript 语法检查
-- systemd 单元检查
+读取私有 `SII-MATH/KIP126` 需要只授予该仓库 Contents read 的 `KIP126_READ_TOKEN` Secret。发布使用 `GITHUB_TOKEN` 的 Contents write，CI 只有 Contents read。保护 main 并要求 CI 通过；按组织策略启用生产 Environment 审批。禁止在日志、制品或数据库打印 token 和邮件密码。
 
-### `publish-app.yml`
-
-每次合并到 `main` 后：
-
-1. 重新运行测试。
-2. 用当前 commit 生成不可变应用包。
-3. 生成 SHA-256 清单。
-4. 发布私有 GitHub Release，标签为 `app-<commit>`。
-
-### `publish-snapshot.yml`
-
-支持手动运行，也支持 KIP126 仓库通过 `repository_dispatch` 触发：
-
-1. 使用指定的 KIP126 commit 检出源码。
-2. 在干净 checkout 上运行 `build --require-clean`。
-3. 发布 `snapshot.json`、校验和和变更统计。
-4. 创建标签为 `snapshot-<kip126-commit>` 的私有 Release。
-
-要让这个工作流读取私有 KIP126，需要在 Formaliscope 仓库添加一个只读的 `KIP126_READ_TOKEN` Secret。该 token 只授予 SII-MATH/KIP126 的 Contents read 权限。
-
-## VPS 拉取器的约定
-
-VPS 上的定时任务使用只读 GitHub token 查询 `SII-MATH/Formaliscope` 的 Release：
+## VPS 的目录和权限
 
 ```text
-/etc/formaliscope/github-read-token       只读 token，权限 0600
-/opt/formaliscope/releases/<app-commit>  应用 release
-/opt/formaliscope/current                 当前应用符号链接
-/var/lib/formaliscope/snapshot.json       当前证据快照
-/var/lib/formaliscope/judgments.sqlite3   审核数据库
+/etc/formaliscope/github-read-token      root:root 0600，只读 release token
+/etc/formaliscope/review.env             root:formaliscope-review 0640，真实邮件与公开入口
+/etc/formaliscope/smtp-password          root:formaliscope-review 0640，独立密码
+/opt/formaliscope/releases/<app-commit>   不可变应用目录
+/opt/formaliscope/current                当前应用链接
+/var/lib/formaliscope                    服务账号持有，0700
+/var/backups/formaliscope                服务账号持有，0700
 ```
 
-应用拉取器选择最新的 `app-*` release；快照拉取器选择最新的 `snapshot-*` release。下载后必须先校验 release manifest 和 SHA-256，再执行：
+目标 Linux 需要 curl、Python 3.10+、tar、sha256sum、flock、runuser 和 systemd。GitHub token 只读取 `SII-MATH/Formaliscope` 的 release；不要复制开发机凭据。正式账号、Origin、Cookie 和管理员配置见 [部署说明](DEPLOYMENT.md)。
 
-1. 备份 SQLite。
-2. 执行数据库迁移。
-3. 安装快照并读取 `unchanged/changed/added/removed`。
-4. 原子切换 `current`。
-5. 重启 systemd 服务。
-6. 请求本机登录页进行健康检查。
-
-仓库中的 `deploy/formaliscope-app-pull` 和 `deploy/formaliscope-snapshot-pull`
-实现了这套流程。它们只依赖 VPS 上已有的 `curl`、`python3`、`tar`、
-`sha256sum` 和 `systemd`，用 `/run/lock/formaliscope-deploy.lock` 防止应用与
-快照更新同时改动数据。应用包解压到不可变的
-`/opt/formaliscope/releases/<commit>`，校验通过后才原子切换
-`/opt/formaliscope/current`；快照更新先创建 SQLite 在线备份，再调用
-`install-snapshot`。首次安装快照时不会伪造空备份，服务首次启动负责创建数据库。
-
-对应的 systemd 单元是：
-
-```text
-formaliscope-app-pull.timer       每 15 分钟检查应用 release
-formaliscope-snapshot-pull.timer  每 15 分钟检查 KIP126 snapshot release
-formaliscope-review.service       只监听 127.0.0.1:8765
-formaliscope-review-backup.timer  每日创建一致性备份
-```
-
-安装这些单元时，把两个可执行拉取器和
-`deploy/formaliscope-review-backup` 复制到 `/usr/local/sbin/`，把 `.service`
-和 `.timer` 复制到 `/etc/systemd/system/`。应用用户使用
-`formaliscope-review`，持久数据位于 `/var/lib/formaliscope`，令牌文件为
-`/etc/formaliscope/github-read-token`（`0600`）。首次启用前必须先放入一个只对
-`SII-MATH/Formaliscope` 授予 **Contents: read** 的 fine-grained token；不要把现有
-开发机 Git 凭据复制到 VPS。
-
-一次性初始化可以按下面的顺序执行（命令在 HK 上以 root 运行）：
+首次安装先创建服务账号与目录、写好配置，安装三个 `/usr/local/sbin/formaliscope-*` 脚本。**先运行 app pull，再运行 snapshot pull，最后安装并启用 systemd 单元**；第一次 app pull 没有快照，因此不能先启用审核服务：
 
 ```bash
-useradd --system --home /nonexistent --shell /usr/sbin/nologin formaliscope-review
-install -d -o formaliscope-review -g formaliscope-review -m 0700 \
-  /var/lib/formaliscope /var/backups/formaliscope
-install -d -o root -g formaliscope-review -m 0750 /etc/formaliscope
-install -d -o root -g root -m 0755 /opt/formaliscope/releases
-install -o root -g root -m 0755 deploy/formaliscope-app-pull /usr/local/sbin/formaliscope-app-pull
-install -o root -g root -m 0755 deploy/formaliscope-snapshot-pull /usr/local/sbin/formaliscope-snapshot-pull
-install -o root -g root -m 0755 deploy/formaliscope-review-backup /usr/local/sbin/formaliscope-review-backup
-install -o root -g root -m 0644 deploy/formaliscope-*.service deploy/formaliscope-*.timer /etc/systemd/system/
-install -o root -g root -m 0600 /secure/formaliscope/github-read-token /etc/formaliscope/github-read-token
+sudo /usr/local/sbin/formaliscope-app-pull
+sudo /usr/local/sbin/formaliscope-snapshot-pull
+# 按 DEPLOYMENT.md 运行带实际环境文件的只读 preflight
+sudo install -m 0644 deploy/formaliscope-*.service deploy/formaliscope-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now formaliscope-review.service formaliscope-review-backup.timer
+# 人工验证 /healthz、公开入口、邮箱与管理员后启用：
+sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pull.timer
 ```
 
-先执行一次 `formaliscope-app-pull` 和 `formaliscope-snapshot-pull`，确认
-`/var/lib/formaliscope/snapshot.json`、`judgments.sqlite3` 和
-`/opt/formaliscope/current` 都已经出现，再启用四个 timer/service。这样首发
-失败时不会把旧的 Caddy 路由或已有审核数据切走。
+## 拉取器约束
 
-当前 HK 机器的 `math.opensii.ai/formaliscope/` 是旧的 Django 服务入口，仍由
-现有 SSH 反向隧道提供。部署新审核台时应使用新的公开入口，例如
-`/kip126-review/`，并保留旧路径。由于现有站点把 `forward_auth` 放在全局，若新
-入口需要只使用邮箱验证码，应在 Caddy 的 `route` 中先匹配新路径、直接反代
-`127.0.0.1:8765`，再对其余路径执行现有 `forward_auth`；不要简单把新的
-`handle_path` 追加到旧的全局认证之前。Caddy 改动应先 `caddy validate`，再备份并
-reload，最后检查旧 `/formaliscope/` 和新入口各一次。
+两个拉取器用 `/run/lock/formaliscope-deploy.lock` 串行化更新。应用选择最新 `app-*`，校验 archive 与 manifest，解包到不可变目录；先备份和迁移，再原子切换 `current`。快照选择最新 `snapshot-*`，核对 SHA-256、快照内部 digest、source commit、干净来源和 review mode；先备份，再原子安装。数据库、备份与快照写入使用服务身份，认证密钥由服务启动创建。
 
-QQ 邮箱生产配置仍需在 VPS 上单独写入 `/etc/formaliscope/review.env` 和
-`/etc/formaliscope/smtp-password`。密码或授权码不进 GitHub、workflow 日志、应用
-数据库或 release 制品。
+快照拉取器默认要求 Statement。已有 Blueprint 部署需要显式设置 `FORMALISCOPE_REVIEW_MODE=blueprint`；服务预检带 `--legacy-blueprint` 保持旧模式升级兼容。旧 `deploy/kip126-review*` 单元保留，但新安装使用 `formaliscope-*`。不要同时启用两套服务访问同一数据库。
 
-GitHub Actions 不接触 `/var/lib/formaliscope`。生产数据库只在 VPS 上读写。
+重启后检查 `/healthz`，最多重试 15 次。失败即报错，由运维按 [回滚步骤](DEPLOYMENT.md#备份恢复与回滚) 处理，不自动覆盖用户数据。静态资源、快照和 schema 在启动时读取，更新后需重启。`/login` 返回成功只代表登录页面可达，不能代替 readiness 检查。
 
-## GitHub 侧安全设置
+新自动 snapshot release 会更新当前证据，因此启用 timer 前确认接收 source 分支、审阅范围和手动 enrichment 保留策略。实际 source commit 和 digest 是审阅依据；GitHub release 时间不能证明数学内容或回译正确。
 
-- 保护 `main`，要求 CI 通过后才能合并。
-- 生产发布使用 GitHub Environment，必要时要求人工批准。
-- `GITHUB_TOKEN` 仅在发布工作流中使用 `contents: write`。
-- KIP126 读取 token 使用单独的 fine-grained token，只给 Contents read。
-- 不在 workflow 日志中打印 token、邮件密码或数据库内容。
-- 第三方 Action 应固定到审查过的版本；生产部署前先在测试 VPS 演练。
+## 发布前验收
 
-当前仓库只负责构建和发布私有制品；VPS 拉取器需要在目标机器安装后才会真正自动切换服务。
+在测试 Linux 环境确认所有 systemd 单元通过验证，正式 preflight ready=true，邮件登录、双邮箱隔离和管理员名单有效；演练一次 SQLite 在线备份和恢复、上一 release 回滚，并检查已有公开入口继续可用。默认 timer 每 15 分钟检查应用/快照，每日生成备份。
+
+代码提交、workflow 发布、目标机器配置、公开路由和 timer 启用分别是独立动作。仓库文件准备完成不表示这些外部步骤已经执行。

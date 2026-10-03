@@ -1,92 +1,121 @@
-# 部署与持久存储
+# 部署、就绪检查与持久存储
 
-生产环境将代码、运行数据和密钥分开。当前正式命名为 `formaliscope`；文档中
-保留的 `kip126-review` 旧单元只用于已有安装的迁移参考，新 HK 部署使用
-`/opt/formaliscope`、`/var/lib/formaliscope` 和 `formaliscope-review.service`：
+新部署统一使用 `formaliscope` 命名。保留的 `deploy/kip126-review*` 单元供已有安装迁移参考，不在新环境启用。发布前先在测试环境验证；本仓库的准备工作不会自动变更目标服务器。
 
-| 路径 | 内容 | 是否持久化 |
-|---|---|---|
-| `/opt/formaliscope/releases/<commit>` | 不可变的应用源码与静态资源 | 每次发布新增目录 |
-| `/opt/formaliscope/current` | 指向当前 release 的符号链接 | 发布时原子切换 |
-| `/var/lib/formaliscope` | `snapshot.json`、`judgments.sqlite3`、`auth-pepper` | 必须使用持久磁盘 |
-| `/etc/formaliscope` | 邮件和公开入口配置、SMTP 密码文件 | 必须备份到密钥系统 |
-| `/var/backups/formaliscope` | 经过 SQLite 在线备份 API 生成的备份 | 应再复制到异机存储 |
+| 路径 | 内容 | 发布时的处理 |
+| --- | --- | --- |
+| `/opt/formaliscope/releases/<commit>` | 不可变代码、静态资源、Workflow 与 schema | 新增目录，保留上一版本 |
+| `/opt/formaliscope/current` | 当前 release 的符号链接 | 原子切换 |
+| `/var/lib/formaliscope` | `snapshot.json`、`judgments.sqlite3`、`auth-pepper` | 使用持久磁盘，不随代码覆盖 |
+| `/etc/formaliscope` | 邮件、Origin、Cookie、管理员、只读 GitHub token | 密钥单独管理 |
+| `/var/backups/formaliscope` | SQLite 在线备份、对应快照及清单 | 加密复制到异机存储 |
 
-代码升级不能删除或覆盖 `/var/lib/kip126-review`。数据库只由一个应用实例访问；反向代理可以有多个，但审核服务保持单实例。如果需要多个审核服务实例，应先迁移到 PostgreSQL，不能让多个容器通过共享卷直接打开同一个 SQLite 文件。
+审核服务保持单实例，数据库使用 SQLite WAL。代码更新不删除判断。不要让多个容器通过共享卷同时运行审核服务；需要多写实例时先迁移数据库。
 
-## 初始化
+## 首次安装
 
-以下命令中的系统用户、源码安装方式和反向代理可按目标机器调整：
+下面是 Linux/systemd 安装模板，需替换域名、邮件账户和固定源码提交。目标机器需要 Python 3.10+、curl、tar、sha256sum、flock、runuser 和 systemd，无需 npm 或第三方 Python 包。
 
 ```bash
-sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin kip126-review
-sudo install -d -o kip126-review -g kip126-review -m 0700 /var/lib/kip126-review
-sudo install -d -o root -g kip126-review -m 0750 /etc/kip126-review
-sudo install -d -o kip126-review -g kip126-review -m 0700 /var/backups/kip126-review
-sudo install -o root -g kip126-review -m 0640 deploy/review.env.example /etc/kip126-review/review.env
-sudo install -o root -g kip126-review -m 0640 /secure/source/smtp-password /etc/kip126-review/smtp-password
+sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin formaliscope-review
+sudo install -d -o formaliscope-review -g formaliscope-review -m 0700 \
+  /var/lib/formaliscope /var/backups/formaliscope
+sudo install -d -o root -g formaliscope-review -m 0750 /etc/formaliscope
+sudo install -d -o root -g root -m 0755 /opt/formaliscope/releases
+sudo install -o root -g formaliscope-review -m 0640 deploy/review.env.example /etc/formaliscope/review.env
+sudo install -o root -g formaliscope-review -m 0640 /secure/source/smtp-password /etc/formaliscope/smtp-password
 ```
 
-推荐在开发机或 CI 的干净 KIP126 checkout 上生成证据快照：
+将示例配置替换为真实 SMTP、HTTPS Origin、Cookie 路径和 `REVIEW_ADMIN_EMAILS`。管理员必须是允许登录的已验证邮箱。正式服务不使用 `--preview`；预览身份及恢复凭证只用于本机演示，不导入生产数据库。`REVIEW_PUBLIC_ORIGIN=https://review.example.org` 不包含应用路径；前缀入口例如 `/review/` 使用 `REVIEW_COOKIE_PATH=/review/`。
+
+在开发机或 CI 的固定提交、干净 Git checkout 构建 Statement 快照：
 
 ```bash
-python3 -m review_app build \
-  --source /srv/KIP126 \
-  --data-dir /tmp/kip126-snapshot-artifact \
-  --require-clean
+python3 -m review_app build --statements --require-clean \
+  --source /srv/KIP126 --data-dir /tmp/formaliscope-artifact
 ```
 
-通过 SSH/CI 制品通道把 `snapshot.json` 送到 VPS 暂存目录，再由 VPS 校验并原子安装：
+应用包必须包含 `review_app/`、`statement_workflow/schema/` 及其本地静态资源。只复制 `review_app/` 会丢失 enrichment v1 运行契约。安装应用包到 `/opt/formaliscope/releases/<app-commit>`，先创建 `current` 链接，再以服务账号安装经过校验的候选快照：
 
 ```bash
-sudo -u kip126-review python3 -m review_app install-snapshot \
-  --file /tmp/release/snapshot.json \
-  --data-dir /var/lib/kip126-review
+sudo -u formaliscope-review python3 -m review_app install-snapshot \
+  --file /srv/staging/snapshot.json --data-dir /var/lib/formaliscope
 ```
 
-安装命令验证格式、内容 digest 和 dirty 状态，并报告可沿用、需重审、新增和删除的卡片数。VPS 不需要保存 KIP126 源码检出。
+命令应在候选应用目录执行，暂存文件和上层目录应可由服务账号读取。使用自动制品拉取时，按 [GitHub Actions 部署说明](GITHUB_ACTIONS_DEPLOYMENT.md) 先拉应用、再拉快照，最后安装并启用 service/timer，避免第一次启动时没有快照。
 
-首次启动会在数据目录创建数据库和 `auth-pepper`。生产机推荐 SMTP；本地 `agently-cli` 的 OAuth 状态不会自动复制到另一台机器。密码放在独立的 0640 文件中，不写入环境示例、源码或数据库。
+## 部署前的只读检查
 
-把 `deploy/formaliscope-*.service` 和 `deploy/formaliscope-*.timer` 安装到
-`/etc/systemd/system/`，把三个可执行脚本安装到 `/usr/local/sbin/`，然后启动：
+在候选应用目录，用实际服务身份及实际环境文件运行预检：
 
 ```bash
+sudo systemd-run --wait --pipe --uid=formaliscope-review \
+  --property=WorkingDirectory=/opt/formaliscope/current \
+  --property=EnvironmentFile=/etc/formaliscope/review.env \
+  /usr/bin/python3 -m review_app preflight --data-dir /var/lib/formaliscope
+```
+
+只有返回 `ready: true` 且退出码为 0 才继续。预检验证：源码提交、快照 digest/内容指纹、干净来源、Statement 模式、页面引用资源、enrichment schema、HTTPS Origin、Cookie 路径、邮件必要配置、登录准入和管理员邮箱。`archive-unverified` 来源只适用于预览，不能作为新生产快照。已有 Blueprint 安装可显式加 `--legacy-blueprint`；正式 systemd 服务使用该兼容开关，Statement 检查仍然有效。
+
+兼容开关允许保留尚未记录 clean 状态的既有 v1 Blueprint 快照，并在预检中明确报告来源限制；它不允许新 Statement 快照跳过干净来源要求。再次发布新证据时重新构建。
+
+预检不访问用户数据库、不生成认证密钥、不发送邮件、不测试代理或邮件网络。仍需在测试部署中完成一次真实验证码登录、退出、两个邮箱隔离、管理员汇总与一条可清理的功能测试记录。用生产 SMTP 凭证做这一步前，确认邮件供应商发送策略和目标收件箱可用。
+
+## 启动与 readiness
+
+```bash
+sudo install -o root -g root -m 0755 deploy/formaliscope-app-pull \
+  deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup /usr/local/sbin/
+sudo install -o root -g root -m 0644 deploy/formaliscope-*.service \
+  deploy/formaliscope-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now formaliscope-review.service
-sudo systemctl enable --now formaliscope-review-backup.timer
-sudo systemctl enable --now formaliscope-app-pull.timer
-sudo systemctl enable --now formaliscope-snapshot-pull.timer
+curl --fail http://127.0.0.1:8765/healthz
 ```
 
-更新审核应用时，先备份，在新的 `/opt/kip126-review/releases/<commit>` 目录安装代码并运行测试，然后执行下列命令。`migrate` 会读取当前已安装的快照，为旧格式判断补算稳定内容依据；因此它必须先于新快照的 `install-snapshot`：
+`/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源与验证码登录。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
+
+Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已有全局认证或旧应用路由，明确新路径是否使用邮箱认证，并同时验证旧入口继续可用。此文档不假定既有站点路径或认证规则可直接覆盖。
+
+## 更新顺序
+
+1. 在新 release 目录运行全部应用、Workflow、模块和 schema 导入回归，校验制品 checksum。
+2. 记录当前应用提交、快照 digest、数据库 schema 及 `current` 目标；创建在线备份并确认异机副本可读取。
+3. 先对当前快照执行 `migrate`，再安装新快照。旧快照用于为早期判断补齐稳定依据，不能先覆盖。
+4. 检查 `unchanged/changed/added/removed`，在实际服务身份下运行预检。
+5. 原子切换 `current`，重启服务；检查 `/healthz`、公开入口与登录。确认后启用拉取 timer。
 
 ```bash
-sudo -u kip126-review /usr/bin/python3 -m review_app migrate \
-  --data-dir /var/lib/kip126-review
-sudo ln -sfn /opt/kip126-review/releases/<commit> /opt/kip126-review/current.new
-sudo mv -Tf /opt/kip126-review/current.new /opt/kip126-review/current
-sudo systemctl restart kip126-review.service
+sudo /usr/local/sbin/formaliscope-review-backup
+sudo -u formaliscope-review python3 -m review_app migrate --data-dir /var/lib/formaliscope
+sudo ln -sfn /opt/formaliscope/releases/<new-commit> /opt/formaliscope/current.new
+sudo mv -Tf /opt/formaliscope/current.new /opt/formaliscope/current
+sudo systemctl restart formaliscope-review.service
 ```
 
-服务只监听 `127.0.0.1:8765`。由 Nginx、Caddy 或现有入口提供 HTTPS，并把公开地址写入 `REVIEW_PUBLIC_ORIGIN`。如果公开在路径前缀下，同时把前缀写入 `REVIEW_COOKIE_PATH`。
+这些命令应由指定 release 提供 Python 模块；不要在其他 checkout 下误运行。发布脚本以 `formaliscope-review` 身份做迁移和快照写入，避免 root 创建的 0600 数据文件使服务无法读取。
 
-## 备份与恢复
+## 备份、恢复与回滚
 
-不要在服务运行时用普通 `cp` 只复制 `judgments.sqlite3`，因为已提交数据可能仍在 WAL 文件中。使用应用命令调用 SQLite 在线备份 API：
+服务运行时不要只 `cp judgments.sqlite3`，提交数据可能仍在 WAL 中。每日 timer 与以下命令使用 SQLite 在线备份 API：
 
 ```bash
-sudo -u kip126-review python3 -m review_app backup \
-  --data-dir /var/lib/kip126-review \
-  --output /var/backups/kip126-review
+sudo /usr/local/sbin/formaliscope-review-backup
 ```
 
-每个时间戳目录包含一致的数据库、对应的证据快照和清单，并运行 `PRAGMA integrity_check`。验证码、会话和限流记录会从备份中删除，所以恢复后所有人需要重新登录。备份不包含 SMTP 密码或 `auth-pepper`。应由机器现有的备份系统把这些目录加密复制到另一台机器或对象存储，并设置保留周期和容量告警。
+时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份移除验证码、会话、限流与预览凭证；恢复后重新登录。SMTP 密码和 `auth-pepper` 不在应用备份中，配置应由独立密钥备份管理。异机备份应加密并设置保留周期、容量告警及定期恢复演练。
 
-恢复步骤：停止服务，把选定备份中的 `judgments.sqlite3` 和 `snapshot.json` 复制到空的数据目录，所有者设为 `kip126-review`、权限设为 0600，然后启动服务。服务会生成新的 `auth-pepper`，所有旧会话自然失效。更新 KIP126 证据时生成新快照并执行 `install-snapshot`，再重启服务；数据库中的旧判断保留，内容依据不匹配的判断显示为“需重审”。
+发现 readiness 或登录失败时，先暂停 `formaliscope-app-pull.timer` 和 `formaliscope-snapshot-pull.timer`，停止服务，保存失败现场。区分两类恢复：
 
-## 容量规划
+- **只回滚代码或快照**：确认旧代码支持当前数据库 schema；将 `current` 原子指回上一 release，或使用 `install-snapshot` 安装上一份已验证快照。保留当前数据库，使发布后的人工判断不会丢失；不匹配的判断仍留在历史中。
+- **恢复整个数据集**：数据库不兼容或数据受损时，先保存当前数据目录，再在空目录恢复选定备份的 `judgments.sqlite3` 和 `snapshot.json`。这会回到备份时间点，必须明确发布后新增记录如何处理，不能自动覆盖。
 
-当前证据快照约 0.5 MB，只有 255 张审核卡。即使 1,000 人全部审核，也只有约 25.5 万条判断。生产初期给数据和备份各预留数 GB 已很宽裕；更有意义的告警是磁盘使用率、备份是否按时生成、`PRAGMA integrity_check` 结果以及写入延迟。数据库接近单盘容量、需要多个写服务实例或持续出现锁等待时，再迁移到 PostgreSQL。
+恢复文件所有者为 `formaliscope-review`，数据目录 0700、数据文件 0600。恢复备份时创建新的 `auth-pepper` 或由批准的密钥恢复策略处理，所有旧会话失效。运行预检、迁移兼容检查、启动并检查 `/healthz` 和登录，确认后再恢复 timer。脚本 readiness 失败会报错，不会自动用旧数据库覆盖新记录。
 
-被审代码更新、应用发布和数据库迁移的兼容性契约见 [VERSIONING_AND_RELEASE.md](VERSIONING_AND_RELEASE.md)。GitHub Actions 制品发布和 VPS 主动拉取流程见 [GITHUB_ACTIONS_DEPLOYMENT.md](GITHUB_ACTIONS_DEPLOYMENT.md)。
+## 容量与待部署确认
+
+当前 develop 示例快照约 41 MB，含 6,222 条声明与 1,421 个文件；早期“255 张卡片、约 0.5 MB”的容量估算不适用于 Statement 模式。若 1,000 人各保存一次全库判断，量级约 622 万条；历史重判会继续增加记录。
+
+上线前按实际审阅人数、摘要长度、备份频率与保留期测量数据库、备份和磁盘余量，重新做列表/依赖图/并发写入演练。监控磁盘、写入延迟、数据库锁等待、备份生成及完整性检查；需要多写实例时再规划 PostgreSQL。
+
+[版本模型](VERSIONING_AND_RELEASE.md) 定义已有判断与快照的兼容性；[GitHub Actions 部署](GITHUB_ACTIONS_DEPLOYMENT.md) 定义制品发布。生产邮件投递、公开代理路由、systemd 单元验证和备份恢复演练均需在目标 Linux 环境完成后才算上线准备验证完毕。

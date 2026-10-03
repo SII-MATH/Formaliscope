@@ -1,19 +1,45 @@
-# KIP126 对应关系审核台
+# Formaliscope · Statement 审阅台
 
-这是独立于 [KIP126](https://github.com/SII-MATH/KIP126) 的人工审核应用。它读取另一份 KIP126 源码检出，生成 Blueprint 陈述与 Lean 声明的审核卡片；审核结论保存在本仓库本机的 SQLite 数据库中，不写入 KIP126。
+KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [Statement enrichment v1](statement_workflow/schema/statement-enrichment.v1.schema.json)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
 
-需要 Python 3.10+。在本仓库根目录运行：
+仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
+
+需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
 ```bash
-python3 -m review_app build --source /path/to/KIP126
-REVIEW_MAILER=agently REVIEW_ALLOW_ANY_EMAIL=1 python3 -m review_app serve --port 8765
-# 浏览器打开 http://127.0.0.1:8765/
+python3 -m review_app build --statements --source /path/to/KIP126 --data-dir .review
+python3 -m review_app preflight --preview --data-dir .review
+python3 -m review_app serve --preview --port 8876 --data-dir .review
 ```
 
-`--source` 指向含有 `blueprint/src/content.tex` 和 `KIP126/` 的 Git 检出。本地开发默认把数据放在 Git 忽略的 `.review/`。生产部署使用独立的 `/var/lib/kip126-review`；开发机/CI 从干净的 KIP126 commit 生成快照，VPS 验证后原子安装。更新 KIP126 不会删除判断，NL 与 Lean 内容指纹不变的卡片自动沿用旧判断。目录、systemd 服务与备份恢复步骤见 [部署文档](review_app/DEPLOYMENT.md)，版本与迁移规则见 [版本模型](review_app/VERSIONING_AND_RELEASE.md)，GitHub Actions 制品发布见 [自动化部署说明](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)。
+打开 `http://127.0.0.1:8876/`。预览使用姓名和恢复凭证，不发送邮件，只允许本机监听。它是前端演示模式；正式服务通过邮箱验证码识别审阅者，管理员用已验证邮箱白名单授权。
 
-审核者用邮箱验证码登录；所有能收信的邮箱均可登录。验证码从已在本机 `agently-cli` 授权的 `siimath@agent.qq.com` 邮箱发送。每个邮箱的审核进度、历史和导出记录独立，服务端只接受登录邮箱名下的判断。也可改用 SMTP；配置、限额及数据回流见 [应用文档](review_app/README.md)。服务默认只监听本机；远程访问需可信 HTTPS 反向代理。前后性能测量见 [性能报告](review_app/PERFORMANCE.md)。
+正式证据应从固定提交的干净 Git 检出生成：
 
 ```bash
-python3 -m unittest review_app.test_review review_app.test_auth review_app.test_storage
+python3 -m review_app build --statements --require-clean \
+  --source /path/to/KIP126 --data-dir /tmp/statement-artifact
+```
+
+当前 develop 示例包含 6,222 条声明、1,421 个文件。这是源码索引规模，实际审阅对象由目录和标签筛选确定；依赖图基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
+
+Agent 补充数据通过已冻结快照校验、生成候选快照：
+
+```bash
+python3 -m review_app validate-enrichment \
+  --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json
+python3 -m review_app enrich-snapshot \
+  --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json \
+  --output /tmp/enriched-snapshot.json
+```
+
+这些命令不改人工数据库。正式安装、邮件配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
+
+完整验证：
+
+```bash
+python3 -m unittest discover -s review_app -t . -p 'test_*.py'
+python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
+for script in review_app/static/*.js; do node --check "$script"; done
+for test in review_app/test_*.cjs; do node "$test"; done
 ```

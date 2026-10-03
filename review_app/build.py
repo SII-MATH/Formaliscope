@@ -48,7 +48,7 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
         # Keep the exact v1 digest contract so already deployed snapshots remain
         # readable. v2 additionally protects provenance fields used for audit.
         return _digest({"cards": snapshot.get("cards"), "schema": snapshot.get("schema")})
-    return _digest({
+    protected = {
         "schema": snapshot.get("schema"),
         "fingerprint_scheme": snapshot.get("fingerprint_scheme"),
         "source_commit": snapshot.get("source_commit"),
@@ -56,7 +56,11 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
         "dependency_lock_digest": snapshot.get("dependency_lock_digest"),
         "unlinked_nodes": snapshot.get("unlinked_nodes"),
         "cards": snapshot.get("cards"),
-    })
+    }
+    for key in ('review_mode', 'review_contract', 'modules', 'source_origin'):
+        if key in snapshot:
+            protected[key] = snapshot[key]
+    return _digest(protected)
 
 
 def validate_snapshot(snapshot: dict) -> None:

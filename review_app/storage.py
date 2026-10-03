@@ -17,6 +17,8 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
     validate_snapshot(payload)
     if payload.get("source_dirty") and not allow_dirty_source:
         raise ValueError("refusing a snapshot built from a dirty reviewed-source checkout")
+    if payload.get('source_origin') == 'archive-unverified' and not allow_dirty_source:
+        raise ValueError('unverified source archives are for preview; production requires a clean Git checkout')
     destination = data_dir / "snapshot.json"
     previous = None
     if destination.is_file():
@@ -28,7 +30,8 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
     # from positional fingerprints to stable content fingerprints.
     database = data_dir / "judgments.sqlite3"
     if previous is not None and database.is_file():
-        from .server import backfill_review_basis, initialize
+        from .database import initialize
+        from .judgments import backfill_review_basis
         initialize(database)
         backfill_review_basis(database, previous)
     payload["comparison"] = comparison
@@ -68,7 +71,7 @@ def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = N
         with sqlite3.connect(staged_db) as staged:
             # Authentication state is intentionally disposable. A restore must
             # require fresh login and must not resurrect old OTPs or sessions.
-            for table in ("login_challenges", "login_requests", "login_sessions"):
+            for table in ("login_challenges", "login_requests", "login_sessions", "preview_identities"):
                 if staged.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone():

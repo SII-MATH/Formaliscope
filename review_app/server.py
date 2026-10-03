@@ -1,290 +1,40 @@
-"""Small loopback review server; immutable evidence and durable judgments."""
+"""Loopback HTTP transport, session authorization, and cached static assets."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
-import threading
-import uuid
-from contextlib import closing
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .auth import AuthSettings, AuthStore, DeliveryError, SESSION_LIFETIME, normalize_email
-from .build import (CURRENT_FINGERPRINT_SCHEME, LEGACY_FINGERPRINT_SCHEME,
-                    normalize_snapshot)
+from .build import normalize_snapshot
+# Keep the historical server imports working for existing integrations. New
+# database consumers can import these modules without loading HTTP transport.
+from .database import DB_SCHEMA_VERSION, MIGRATIONS, connect, database_schema_version, initialize
+from .judgments import (VERDICTS, WRITE_LOCK, _card_fingerprints, _judgment_matches,
+                        admin_summary, backfill_review_basis, catalog, history,
+                        reviewer_export, reviewer_profile, submit, update_reviewer_profile)
 
-VERDICTS = frozenset({"aligned", "partial", "misaligned", "uncertain"})
 MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
-WRITE_LOCK = threading.Lock()
-DB_SCHEMA_VERSION = 4
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path, timeout=5, isolation_level=None)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def _migration_1(db: sqlite3.Connection) -> None:
-    db.execute("""CREATE TABLE IF NOT EXISTS judgments (
-        id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL,
-        card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-        reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
-        rationale TEXT NOT NULL, created_at TEXT NOT NULL
-    )""")
-
-
-def _migration_2(db: sqlite3.Connection) -> None:
-    global_request_id = any(
-        index[2] and [column[2] for column in db.execute(f"PRAGMA index_info('{index[1]}')")] == ["request_id"]
-        for index in db.execute("PRAGMA index_list('judgments')")
-    )
-    if global_request_id:
-        db.execute("ALTER TABLE judgments RENAME TO judgments_legacy")
-        db.execute("""CREATE TABLE judgments (
-            id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
-            card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
-            reviewer TEXT NOT NULL, verdict TEXT NOT NULL,
-            rationale TEXT NOT NULL, created_at TEXT NOT NULL,
-            UNIQUE(reviewer, request_id)
-        )""")
-        db.execute("""INSERT INTO judgments
-            (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at)
-            SELECT id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at
-            FROM judgments_legacy ORDER BY rowid""")
-        db.execute("DROP TABLE judgments_legacy")
-    db.execute("DROP INDEX IF EXISTS judgments_card_created")
-    db.execute("CREATE INDEX IF NOT EXISTS judgments_reviewer_card_created ON judgments(reviewer, card_id, created_at)")
-
-
-def _migration_3(db: sqlite3.Connection) -> None:
-    columns = {row[1] for row in db.execute("PRAGMA table_info('judgments')")}
-    if "fingerprint_scheme" not in columns:
-        db.execute(f"ALTER TABLE judgments ADD COLUMN fingerprint_scheme TEXT NOT NULL DEFAULT '{LEGACY_FINGERPRINT_SCHEME}'")
-    if "source_commit" not in columns:
-        db.execute("ALTER TABLE judgments ADD COLUMN source_commit TEXT")
-    if "snapshot_digest" not in columns:
-        db.execute("ALTER TABLE judgments ADD COLUMN snapshot_digest TEXT")
-
-
-def _migration_4(db: sqlite3.Connection) -> None:
-    columns = {row[1] for row in db.execute("PRAGMA table_info('judgments')")}
-    if "review_basis_scheme" not in columns:
-        db.execute("ALTER TABLE judgments ADD COLUMN review_basis_scheme TEXT")
-    if "review_basis_fingerprint" not in columns:
-        db.execute("ALTER TABLE judgments ADD COLUMN review_basis_fingerprint TEXT")
-
-
-MIGRATIONS = (
-    (1, "create-judgments", _migration_1),
-    (2, "scope-request-id-by-reviewer", _migration_2),
-    (3, "record-review-provenance", _migration_3),
-    (4, "record-stable-review-basis", _migration_4),
-)
-
-
-def initialize(db_path: Path) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    db_path.parent.chmod(0o700)
-    with closing(connect(db_path)) as db:
-        # Journal mode is persistent. Setting it on every GET takes a database
-        # lock and makes readers compete with one another under burst load.
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL
-        )""")
-        applied = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
-        if applied and (max(applied) > DB_SCHEMA_VERSION or applied != set(range(1, max(applied) + 1))):
-            raise ValueError("database schema is newer than or inconsistent with this application")
-        for version, name, migration in MIGRATIONS:
-            if version in applied:
-                continue
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                migration(db)
-                db.execute("INSERT INTO schema_migrations VALUES (?, ?, ?)",
-                           (version, name, datetime.now(timezone.utc).isoformat()))
-                db.execute("COMMIT")
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
-    db_path.chmod(0o600)
-
-
-def database_schema_version(db_path: Path) -> int:
-    if not db_path.is_file():
-        return 0
-    with closing(connect(db_path)) as db:
-        exists = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
-        ).fetchone()
-        if not exists:
-            return 0
-        row = db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-        return int(row[0] or 0)
-
-
-def backfill_review_basis(db_path: Path, snapshot: dict) -> int:
-    """Attach v2 content fingerprints to judgments made against a v1 snapshot."""
-    changed = 0
-    with closing(connect(db_path)) as db:
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            for card in snapshot["cards"]:
-                basis = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
-                if not basis:
-                    continue
-                for scheme, fingerprint in _card_fingerprints(card).items():
-                    cursor = db.execute("""UPDATE judgments
-                        SET review_basis_scheme=?, review_basis_fingerprint=?
-                        WHERE review_basis_fingerprint IS NULL AND card_id=?
-                          AND fingerprint_scheme=? AND fingerprint=?""",
-                        (CURRENT_FINGERPRINT_SCHEME, basis, card["id"], scheme, fingerprint))
-                    changed += cursor.rowcount
-            db.execute("COMMIT")
-        except BaseException:
-            db.execute("ROLLBACK")
-            raise
-    return changed
-
-
-def _card_fingerprints(card: dict) -> dict[str, str]:
-    return card.get("fingerprints") or {
-        card.get("fingerprint_scheme", LEGACY_FINGERPRINT_SCHEME): card["fingerprint"]
-    }
-
-
-def _judgment_matches(card: dict, judgment: sqlite3.Row | dict) -> bool:
-    keys = judgment.keys()
-    basis = judgment["review_basis_fingerprint"] if "review_basis_fingerprint" in keys else None
-    basis_scheme = judgment["review_basis_scheme"] if "review_basis_scheme" in keys else None
-    if basis and _card_fingerprints(card).get(basis_scheme) == basis:
-        return True
-    scheme = judgment["fingerprint_scheme"]
-    return _card_fingerprints(card).get(scheme) == judgment["fingerprint"]
-
-
-def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | None = None) -> dict:
-    with closing(connect(db_path)) as db:
-        rows = db.execute("""SELECT card_id, fingerprint, fingerprint_scheme,
-            review_basis_scheme, review_basis_fingerprint, verdict, created_at FROM judgments
-            WHERE reviewer=? ORDER BY created_at, rowid""", (reviewer,)).fetchall()
-    by_card: dict[str, list[sqlite3.Row]] = {}
-    for row in rows:
-        by_card.setdefault(row["card_id"], []).append(row)
-    cards = []
-    for card in snapshot["cards"]:
-        judgments = by_card.get(card["id"], [])
-        current = next((row for row in reversed(judgments) if _judgment_matches(card, row)), None)
-        cards.append({
-            "id": card["id"], "label": card["label"], "title": card["title"],
-            "chapter": card["chapter"], "kind": card["kind"],
-            "declaration": card["declaration"], "source_status": card["source_status"],
-            "verdict": current["verdict"] if current else None,
-            "stale": bool(judgments and not current),
-        })
-    payload = {
-        "snapshot_schema": snapshot["schema"],
-        "fingerprint_scheme": snapshot.get("fingerprint_scheme"),
-        "digest": snapshot["digest"],
-        "source_commit": snapshot["source_commit"],
-        "source_dirty": snapshot.get("source_dirty", False),
-        "unlinked_nodes": snapshot["unlinked_nodes"],
-        "cards": cards,
-    }
-    if initial_id is not None:
-        if initial_id == "auto":
-            initial_id = next((row["id"] for row in cards
-                               if row["source_status"] == "local" and not row["verdict"]),
-                              cards[0]["id"] if cards else None)
-        payload["initial_evidence"] = next(
-            (card for card in snapshot["cards"] if card["id"] == initial_id), None
-        )
-    return payload
-
-
-def history(db_path: Path, card_id: str, reviewer: str) -> list[dict]:
-    with closing(connect(db_path)) as db:
-        rows = db.execute("""SELECT id, fingerprint, fingerprint_scheme,
-            review_basis_scheme, review_basis_fingerprint, source_commit,
-            snapshot_digest, reviewer, verdict, rationale, created_at
-            FROM judgments WHERE card_id=? AND reviewer=? ORDER BY created_at DESC, rowid DESC""",
-            (card_id, reviewer)).fetchall()
-    return [dict(row) for row in rows]
-
-
-def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple[int, dict]:
-    if not isinstance(payload, dict):
-        return 400, {"error": "请求格式错误"}
-    card_id = payload.get("card_id")
-    card = next((item for item in snapshot["cards"] if item["id"] == card_id), None)
-    if card is None:
-        return 404, {"error": "审核对象不存在"}
-    if payload.get("fingerprint") != card["fingerprint"]:
-        return 409, {"error": "原文或 Lean 对象已更新，请重新打开卡片"}
-    verdict = payload.get("verdict")
-    rationale = payload.get("rationale", "")
-    request_id = payload.get("request_id")
-    try:
-        uuid.UUID(request_id)
-    except (TypeError, ValueError):
-        return 400, {"error": "缺少有效请求 ID"}
-    if verdict not in VERDICTS:
-        return 400, {"error": "请选择审核结论"}
-    if not isinstance(rationale, str) or len(rationale) > 4000 or (verdict != "aligned" and not rationale.strip()):
-        return 400, {"error": "除“对齐”外，请填写理由（最多 4000 字）"}
-    if normalize_email(reviewer) != reviewer:
-        return 400, {"error": "审核人邮箱无效"}
-    fingerprint_scheme = card.get("fingerprint_scheme", LEGACY_FINGERPRINT_SCHEME)
-    review_basis_fingerprint = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
-    review_basis_scheme = CURRENT_FINGERPRINT_SCHEME if review_basis_fingerprint else fingerprint_scheme
-    review_basis_fingerprint = review_basis_fingerprint or card["fingerprint"]
-    canonical = (card_id, card["fingerprint"], reviewer, verdict, rationale.strip())
-    # This server has one process. Queue writes briefly in Python rather than
-    # sending a simultaneous burst into SQLite's busy wait loop.
-    with WRITE_LOCK:
-        with closing(connect(db_path)) as db:
-            db.execute("BEGIN IMMEDIATE")
-            previous = db.execute("""SELECT id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
-                fingerprint_scheme, review_basis_scheme, review_basis_fingerprint,
-                source_commit, snapshot_digest
-                FROM judgments WHERE reviewer=? AND request_id=?""", (reviewer, request_id)).fetchone()
-            if previous:
-                old = (previous["card_id"], previous["fingerprint"], previous["reviewer"],
-                       previous["verdict"], previous["rationale"])
-                db.execute("COMMIT")
-                return (200, {"judgment": dict(previous), "replayed": True}) if old == canonical else (409, {"error": "请求 ID 已用于另一条判断"})
-            record = {
-                "id": str(uuid.uuid4()), "request_id": request_id, "card_id": card_id,
-                "fingerprint": card["fingerprint"], "reviewer": reviewer,
-                "fingerprint_scheme": fingerprint_scheme,
-                "review_basis_scheme": review_basis_scheme,
-                "review_basis_fingerprint": review_basis_fingerprint,
-                "source_commit": snapshot.get("source_commit"),
-                "snapshot_digest": snapshot.get("digest"),
-                "verdict": verdict, "rationale": rationale.strip(),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            db.execute("""INSERT INTO judgments
-                (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
-                 fingerprint_scheme, review_basis_scheme, review_basis_fingerprint,
-                 source_commit, snapshot_digest)
-                VALUES (:id, :request_id, :card_id, :fingerprint, :reviewer, :verdict, :rationale, :created_at,
-                        :fingerprint_scheme, :review_basis_scheme, :review_basis_fingerprint,
-                        :source_commit, :snapshot_digest)""", record)
-            db.execute("COMMIT")
-    return 201, {"judgment": record, "replayed": False}
-
-
-def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore):
+def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore,
+                 *, preview: bool = False, admin_emails: frozenset[str] = frozenset()):
     cards_by_id = {card["id"]: card for card in snapshot["cards"]}
-    files = {"/": ("index.html", "text/html; charset=utf-8"),
+    files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
+             "/admin": ("admin.html", "text/html; charset=utf-8"),
+             "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
+             "/statement.js": ("statement.js", "text/javascript; charset=utf-8"),
+             "/statement-api.js": ("statement-api.js", "text/javascript; charset=utf-8"),
+             "/statement-identity.js": ("statement-identity.js", "text/javascript; charset=utf-8"),
+             "/statement-graph.js": ("statement-graph.js", "text/javascript; charset=utf-8"),
+             "/directory-tree.js": ("directory-tree.js", "text/javascript; charset=utf-8"),
+             "/review-labels.js": ("review-labels.js", "text/javascript; charset=utf-8"),
+             "/statement.css": ("statement.css", "text/css; charset=utf-8"),
              "/login": ("login.html", "text/html; charset=utf-8"),
              "/login.js": ("login.js", "text/javascript; charset=utf-8"),
              "/login.css": ("login.css", "text/css; charset=utf-8"),
@@ -376,6 +126,16 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
         def do_GET(self):
             parsed = urlsplit(self.path)
             path = parsed.path
+            if path == "/healthz":
+                # Static assets and the immutable snapshot have loaded before
+                # the handler is created. Readiness must not read identities,
+                # access card evidence, issue a login code, or mutate SQLite.
+                self._json(200, {"ready": True, "snapshot_schema": snapshot.get("schema"),
+                                 "database_schema": DB_SCHEMA_VERSION})
+                return
+            if path == '/api/config':
+                self._json(200, {'preview': preview, 'review_mode': snapshot.get('review_mode', 'blueprint')})
+                return
             if path == "/login":
                 viewer = self._viewer()
                 if viewer:
@@ -383,18 +143,35 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 else:
                     self._serve_static(path)
                 return
-            if path in static_payloads and path != "/":
+            if path in static_payloads and path not in {"/", "/admin"}:
                 self._serve_static(path)
                 return
             viewer = self._viewer()
-            if path == "/" and not viewer:
+            if path == "/" and not viewer and not preview:
                 self._redirect("./login")
                 return
             if path == "/api/auth/me":
-                self._json(200, {"email": viewer}) if viewer else self._json(401, {"error": "请先登录"})
+                profile = reviewer_profile(db_path, viewer) if viewer else {}
+                self._json(200, {"email": viewer, 'display_name': profile.get('display_name', ''),
+                    'is_admin': viewer in admin_emails or bool(preview and profile.get('preview_admin')),
+                    'preview': preview}) if viewer else self._json(401, {"error": "请先登录"})
                 return
             if path == "/":
                 self._serve_static(path)
+                return
+            if path == '/admin' or path == '/api/admin/summary':
+                profile = reviewer_profile(db_path, viewer) if viewer else {}
+                if not viewer:
+                    if path.startswith('/api/'):
+                        self._json(401, {'error': '请先登录'})
+                    else:
+                        self._redirect('./') if preview else self._redirect('./login')
+                elif viewer not in admin_emails and not (preview and profile.get('preview_admin')):
+                    self._json(403, {'error': '此入口仅对管理员开放'})
+                elif path == '/admin':
+                    self._serve_static(path)
+                else:
+                    self._json(200, admin_summary(snapshot, db_path))
                 return
             if path.startswith("/api/") and not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
@@ -402,6 +179,11 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
                 self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial))
+                return
+            if path == '/api/module':
+                module = parse_qs(parsed.query).get('file', [''])[0]
+                source = snapshot.get('modules', {}).get(module)
+                self._json(200, {'file': module, 'source': source}) if source is not None else self._json(404, {'error': '源码不存在'})
                 return
             if path == "/api/card":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -428,25 +210,14 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 self._json(200, card, etag='"' + card["fingerprint"] + '"')
                 return
             if path == "/api/export":
-                with closing(connect(db_path)) as db:
-                    rows = [dict(row) for row in db.execute(
-                        "SELECT * FROM judgments WHERE reviewer=? ORDER BY created_at, rowid", (viewer,))]
-                self._json(200, {
-                    "snapshot_schema": snapshot["schema"],
-                    "fingerprint_scheme": snapshot.get("fingerprint_scheme"),
-                    "snapshot_digest": snapshot["digest"],
-                    "source_commit": snapshot["source_commit"],
-                    "source_dirty": snapshot.get("source_dirty", False),
-                    "reviewer": viewer,
-                    "judgments": rows,
-                })
+                self._json(200, reviewer_export(snapshot, db_path, viewer))
                 return
             self._json(404, {"error": "页面不存在"})
 
         def do_POST(self):
             path = urlsplit(self.path).path
             if path not in {"/api/judgments", "/api/auth/request-code",
-                            "/api/auth/verify-code", "/api/auth/logout"}:
+                            "/api/auth/verify-code", "/api/auth/logout", '/api/profile', '/api/preview/session', '/api/preview/resume'}:
                 self._json(404, {"error": "页面不存在"})
                 return
             if (not self._origin_ok() or
@@ -463,6 +234,29 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return
             if not isinstance(payload, dict):
                 self._json(400, {"error": "请求格式错误"})
+                return
+            if path == '/api/preview/session':
+                name = payload.get('display_name')
+                if not preview:
+                    self._json(404, {'error': '页面不存在'})
+                elif not isinstance(name, str) or not 1 <= len(name.strip()) <= 60:
+                    self._json(400, {'error': '请输入 1–60 字的姓名'})
+                else:
+                    token, resume_key = auth.create_reviewer(name.strip())
+                    self._json(201, {'ok': True, 'resume_key': resume_key}, extra_headers={'Set-Cookie': self._cookie(token, max_age=SESSION_LIFETIME)})
+                return
+            if path == '/api/preview/resume':
+                if not preview:
+                    self._json(404, {'error': '页面不存在'})
+                else:
+                    token = auth.resume_reviewer(payload.get('resume_key'))
+                    if not token:
+                        self._json(401, {'error': '此身份的恢复凭证无效，请新建预览身份'})
+                    else:
+                        self._json(200, {'ok': True}, extra_headers={'Set-Cookie': self._cookie(token, max_age=SESSION_LIFETIME)})
+                return
+            if preview and path in {'/api/auth/request-code', '/api/auth/verify-code'}:
+                self._json(404, {'error': '预览使用姓名入口'})
                 return
             if path == "/api/auth/request-code":
                 email = normalize_email(payload.get("email"))
@@ -494,6 +288,10 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
             viewer = self._viewer()
             if not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
+                return
+            if path == '/api/profile':
+                code, result = update_reviewer_profile(db_path, viewer, payload.get('display_name'))
+                self._json(code, result)
                 return
             code, result = submit(snapshot, db_path, viewer, payload)
             self._json(code, result)
@@ -528,13 +326,19 @@ class ReviewHTTPServer(ThreadingHTTPServer):
             self._db_keeper.close()
 
 
-def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port: int) -> None:
+def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port: int,
+          *, preview: bool = False, admin_emails: frozenset[str] = frozenset()) -> None:
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("仅允许监听本机；远程访问需先配置可信认证代理")
     snapshot = normalize_snapshot(json.loads(snapshot_path.read_text(encoding="utf-8")))
     initialize(db_path)
     backfill_review_basis(db_path, snapshot)
-    auth = AuthStore(db_path, AuthSettings.from_env())
-    server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth))
+    if preview:
+        from .preview import PreviewAuthStore
+        auth = PreviewAuthStore(db_path)
+    else:
+        auth = AuthStore(db_path, AuthSettings.from_env())
+    server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth,
+                             preview=preview, admin_emails=admin_emails))
     print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)
     server.serve_forever()

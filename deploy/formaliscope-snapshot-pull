@@ -8,11 +8,19 @@ ROOT="${FORMALISCOPE_ROOT:-/opt/formaliscope}"
 DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
 BACKUP_DIR="${REVIEW_BACKUP_DIR:-/var/backups/formaliscope}"
 LOCK_FILE="${FORMALISCOPE_DEPLOY_LOCK:-/run/lock/formaliscope-deploy.lock}"
+REVIEW_MODE="${FORMALISCOPE_REVIEW_MODE:-statement}"
 API="https://api.github.com/repos/${REPOSITORY}/releases?per_page=100"
+
+for path in "$ROOT" "$DATA_DIR" "$BACKUP_DIR" "$LOCK_FILE" "$TOKEN_FILE"; do
+  [[ "$path" == /* ]] || { echo "deployment paths must be absolute" >&2; exit 1; }
+done
+# Validate, migrate and install with the selected application, not caller cwd.
+cd /
 
 [[ -r "$TOKEN_FILE" ]] || { echo "missing GitHub token file: $TOKEN_FILE" >&2; exit 1; }
 [[ -L "$ROOT/current" ]] || { echo "application has not been installed: $ROOT/current" >&2; exit 1; }
-install -d -m 0755 "$(dirname "$LOCK_FILE")" "$DATA_DIR" "$BACKUP_DIR"
+install -d -m 0755 "$(dirname "$LOCK_FILE")"
+install -d -o formaliscope-review -g formaliscope-review -m 0700 "$DATA_DIR" "$BACKUP_DIR"
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "another Formaliscope deployment is running"; exit 0; }
 
@@ -44,7 +52,8 @@ for value in (chosen["tag_name"], assets["snapshot.json"], assets["snapshot.json
 
 tag="${release_info[0]}"
 stage="$(mktemp -d "$ROOT/.snapshot-pull.XXXXXX")"
-cleanup() { rm -rf "$stage"; }
+candidate=""
+cleanup() { rm -rf "$stage"; if [[ -n "$candidate" ]]; then rm -f "$candidate"; fi; }
 trap cleanup EXIT
 for item in snapshot.json snapshot.json.sha256 snapshot-manifest.json; do
   case "$item" in
@@ -55,19 +64,31 @@ for item in snapshot.json snapshot.json.sha256 snapshot-manifest.json; do
   curl --fail --silent --show-error --location --retry 3 -H 'Accept: application/octet-stream' -H "Authorization: Bearer $token" -o "$stage/$item" "$url"
 done
 (cd "$stage" && sha256sum -c snapshot.json.sha256)
-python3 - "$stage/snapshot-manifest.json" "$stage/snapshot.json" "$tag" <<'PY'
+PYTHONPATH="$(readlink -f "$ROOT/current")" \
+  python3 - "$stage/snapshot-manifest.json" "$stage/snapshot.json" "$tag" "$REVIEW_MODE" <<'PY'
 import json
 import pathlib
 import sys
+from review_app.build import validate_snapshot
 
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 snapshot = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+validate_snapshot(snapshot)
 if manifest.get("schema") != "formaliscope-snapshot-release.v1":
     raise SystemExit("unsupported snapshot manifest schema")
 if manifest.get("source_commit") != sys.argv[3][len("snapshot-"):]:
     raise SystemExit("snapshot manifest source commit does not match release tag")
 if manifest.get("snapshot_digest") != snapshot.get("digest"):
     raise SystemExit("snapshot manifest digest does not match snapshot")
+if snapshot.get("source_commit") != manifest.get("source_commit"):
+    raise SystemExit("snapshot source commit does not match manifest")
+if snapshot.get("source_dirty") is not False or snapshot.get("source_origin") == "archive-unverified":
+    raise SystemExit("production snapshot must come from a clean verified source checkout")
+if sys.argv[4] not in {"statement", "blueprint"}:
+    raise SystemExit("FORMALISCOPE_REVIEW_MODE must be statement or blueprint")
+mode = snapshot.get("review_mode", "blueprint")
+if mode != sys.argv[4] or manifest.get("review_mode", mode) != mode:
+    raise SystemExit("snapshot review mode does not match the configured deployment")
 PY
 
 current_digest=""
@@ -81,13 +102,24 @@ if [[ "$current_digest" == "$incoming_digest" ]]; then
 fi
 
 if [[ -f "$DATA_DIR/snapshot.json" && -f "$DATA_DIR/judgments.sqlite3" ]]; then
-  PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
+  runuser -u formaliscope-review -- env PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
     python3 -m review_app backup --data-dir "$DATA_DIR" --output "$BACKUP_DIR"
 fi
-PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
-  python3 -m review_app install-snapshot --file "$stage/snapshot.json" --data-dir "$DATA_DIR"
+candidate="$(mktemp "$DATA_DIR/.incoming-snapshot.XXXXXX")"
+install -o formaliscope-review -g formaliscope-review -m 0600 "$stage/snapshot.json" "$candidate"
+runuser -u formaliscope-review -- env PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
+  python3 -m review_app install-snapshot --file "$candidate" --data-dir "$DATA_DIR"
 if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
   systemctl restart formaliscope-review.service
-  curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8765/login >/dev/null
+  ready=0
+  for attempt in {1..15}; do
+    if curl --fail --silent --max-time 2 http://127.0.0.1:8765/healthz | \
+      python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ready") is True else 1)' 2>/dev/null; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$ready" == 1 ]] || { echo "snapshot readiness failed; use the documented rollback procedure" >&2; exit 1; }
 fi
 echo "activated snapshot $tag; digest=$incoming_digest"

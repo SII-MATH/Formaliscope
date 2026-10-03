@@ -6,7 +6,7 @@ on:
       kip_ref:
         description: KIP126 branch, tag, or commit to review
         required: true
-        default: main
+        default: develop
         type: string
   repository_dispatch:
     types: [kip126-updated]
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-snapshot-${{ inputs.kip_ref || github.event.client_payload.ref || 'main' }}
+  group: publish-snapshot-${{ inputs.kip_ref || github.event.client_payload.ref || 'develop' }}
   cancel-in-progress: false
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: SII-MATH/KIP126
-          ref: ${{ inputs.kip_ref || github.event.client_payload.ref || 'main' }}
+          ref: ${{ inputs.kip_ref || github.event.client_payload.ref || 'develop' }}
           token: ${{ secrets.KIP126_READ_TOKEN }}
           path: kip126
 
@@ -46,6 +46,7 @@ jobs:
           python3 -m review_app build \
             --source "$GITHUB_WORKSPACE/kip126" \
             --data-dir "$RUNNER_TEMP/formaliscope-snapshot" \
+            --statements \
             --require-clean
           cp "$RUNNER_TEMP/formaliscope-snapshot/snapshot.json" snapshot.json
           source_commit="$(git -C kip126 rev-parse HEAD)"
@@ -54,13 +55,20 @@ jobs:
           import json
           import pathlib
           import sys
+          from review_app.build import validate_snapshot
 
           snapshot = json.loads(pathlib.Path("snapshot.json").read_text(encoding="utf-8"))
+          validate_snapshot(snapshot)
+          if snapshot.get("review_mode") != "statement" or snapshot.get("source_dirty") is not False:
+              raise SystemExit("release requires a clean Statement snapshot")
+          if snapshot.get("source_commit") != sys.argv[1]:
+              raise SystemExit("snapshot source commit does not match the checked-out source")
           manifest = {
               "schema": "formaliscope-snapshot-release.v1",
               "source_repository": "SII-MATH/KIP126",
               "source_commit": sys.argv[1],
               "snapshot_digest": snapshot["digest"],
+              "review_mode": "statement",
               "comparison": snapshot.get("comparison"),
           }
           pathlib.Path("snapshot-manifest.json").write_text(
