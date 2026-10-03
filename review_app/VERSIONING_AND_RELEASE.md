@@ -92,7 +92,7 @@ VPS 是运行状态的唯一写入点：
 /var/lib/formaliscope/snapshot.json       当前被审快照
 /var/lib/formaliscope/judgments.sqlite3   权威审核数据
 /var/lib/formaliscope/auth-pepper         本机认证密钥
-/etc/kip126-review/                        SMTP 与公开入口配置
+/etc/kip126-review/                        身份模式与公开入口配置
 /var/backups/kip126-review/                本机一致性备份
 ```
 

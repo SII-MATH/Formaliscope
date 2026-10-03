@@ -278,7 +278,7 @@
   });
 
   Promise.all([json("./api/auth/me"), loadCatalog({includeInitial: true})]).then(([identity]) => {
-    $("reviewer-email").textContent = identity.email;
+    $("reviewer-email").textContent = identity.display_name || identity.user_id || identity.email;
     const fromHash = decodeURIComponent(location.hash.slice(1));
     const start = catalog.find((item) => item.id === fromHash) || visible()[0] || catalog[0];
     if (start) openCard(start.id);

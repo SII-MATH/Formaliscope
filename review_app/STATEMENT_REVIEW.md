@@ -37,7 +37,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .statement-review
 
 姓名预览必须显式传 `--preview`，只监听 loopback、不发送邮件、不用于公开部署。第一个预览身份有管理员权限。恢复凭证只用于该本机预览，清理浏览器存储后会失去恢复入口。
 
-正式运行沿用邮箱验证码认证，随后填写显示姓名。管理员通过 `--admin-email someone@example.org` 或 `REVIEW_ADMIN_EMAILS` 指定；提交姓名或页面参数不能授予管理员权限。正式模式禁用姓名预览/恢复 API。数据库 v5 只添加显示姓名表，既有判断历史不重写。
+正式运行默认姓名登记与恢复码登录，不需要邮件或学生密码。同名者分别保存记录；管理员通过本地 `create-admin` 创建，提交姓名或页面参数不能授予权限。数据库 v6 添加身份和恢复摘要，既有判断不重写；旧邮箱模式和迁移详见 [IDENTITY.md](IDENTITY.md)。
 
 ## 数据边界
 
@@ -88,7 +88,7 @@ node review_app/test_statement_modules.cjs
 | statements.py / build.py | 定位源码、构建快照、内容指纹；不调用 Agent |
 | enrichment.py | 校验 v1 旁文件及实际源码证据，生成独立候选快照；不改人工记录 |
 | database.py / judgments.py | SQLite 迁移、版本匹配、幂等提交、个人导出和管理读模型 |
-| auth.py / preview.py | 正式邮箱验证与显式本机预览身份 |
+| name_auth.py / auth.py / preview.py | 正式姓名身份、兼容邮箱与显式本机预览 |
 | server.py | HTTP 路由、会话鉴权、静态资源、只读 /healthz |
 | preflight.py / storage.py | 只读部署检查、快照安装、备份 |
 | statement-api.js / statement-identity.js | 请求与证据缓存、登录/恢复/注销 |
@@ -99,4 +99,4 @@ node review_app/test_statement_modules.cjs
 
 正式检查使用 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；
 本地预览检查加 `--preview`。检查不发送邮件、不创建会话、密钥或数据库。
-生产启动由 systemd 在服务前执行 preflight；实际邮件投递、代理和恢复演练仍须在目标环境完成。
+生产启动由 systemd 在服务前执行 preflight；实际姓名登录、代理和恢复演练仍须在目标环境完成。

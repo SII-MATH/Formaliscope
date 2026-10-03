@@ -7,14 +7,14 @@
 | `/opt/formaliscope/releases/<commit>` | 不可变代码、静态资源、Workflow 与 schema | 新增目录，保留上一版本 |
 | `/opt/formaliscope/current` | 当前 release 的符号链接 | 原子切换 |
 | `/var/lib/formaliscope` | `snapshot.json`、`judgments.sqlite3`、`auth-pepper` | 使用持久磁盘，不随代码覆盖 |
-| `/etc/formaliscope` | 邮件、Origin、Cookie、管理员、只读 GitHub token | 密钥单独管理 |
+| `/etc/formaliscope` | Origin、Cookie、只读 GitHub token | 密钥单独管理 |
 | `/var/backups/formaliscope` | SQLite 在线备份、对应快照及清单 | 加密复制到异机存储 |
 
 审核服务保持单实例，数据库使用 SQLite WAL。代码更新不删除判断。不要让多个容器通过共享卷同时运行审核服务；需要多写实例时先迁移数据库。
 
 ## 首次安装
 
-下面是 Linux/systemd 安装模板，需替换域名、邮件账户和固定源码提交。目标机器需要 Python 3.10+、curl、tar、sha256sum、flock、runuser 和 systemd，无需 npm 或第三方 Python 包。
+下面是 Linux/systemd 安装模板，需替换域名和固定源码提交。目标机器需要 Python 3.10+、curl、tar、sha256sum、flock、runuser 和 systemd，无需 npm 或第三方 Python 包。
 
 ```bash
 sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin formaliscope-review
@@ -23,10 +23,17 @@ sudo install -d -o formaliscope-review -g formaliscope-review -m 0700 \
 sudo install -d -o root -g formaliscope-review -m 0750 /etc/formaliscope
 sudo install -d -o root -g root -m 0755 /opt/formaliscope/releases
 sudo install -o root -g formaliscope-review -m 0640 deploy/review.env.example /etc/formaliscope/review.env
-sudo install -o root -g formaliscope-review -m 0640 /secure/source/smtp-password /etc/formaliscope/smtp-password
 ```
 
-将示例配置替换为真实 SMTP、HTTPS Origin、Cookie 路径和 `REVIEW_ADMIN_EMAILS`。管理员必须是允许登录的已验证邮箱。正式服务不使用 `--preview`；预览身份及恢复凭证只用于本机演示，不导入生产数据库。`REVIEW_PUBLIC_ORIGIN=https://review.example.org` 不包含应用路径；前缀入口例如 `/review/` 使用 `REVIEW_COOKIE_PATH=/review/`。
+配置 `REVIEW_AUTH_MODE=name`、HTTPS Origin 和 Cookie 路径，不需要邮箱服务、学生名单或密码。管理员由服务账号在候选应用目录执行下列命令创建；凭证文件只读给本人，勿打包或上传：
+
+```bash
+sudo -u formaliscope-review python3 -m review_app create-admin \
+  --data-dir /var/lib/formaliscope --name '管理员姓名' \
+  --output /var/lib/formaliscope/admin-recovery.txt
+```
+
+管理员在登录页选“使用恢复码”。更多身份、恢复码保存及旧记录迁移步骤见 [IDENTITY.md](IDENTITY.md)。已有邮箱部署继续使用时必须显式设置 `REVIEW_AUTH_MODE=email`。正式服务不使用 `--preview`。`REVIEW_PUBLIC_ORIGIN=https://review.example.org` 不包含应用路径；前缀入口 `/review/` 使用 `REVIEW_COOKIE_PATH=/review/`。
 
 在开发机或 CI 的固定提交、干净 Git checkout 构建 Statement 快照：
 
@@ -55,11 +62,11 @@ sudo systemd-run --wait --pipe --uid=formaliscope-review \
   /usr/bin/python3 -m review_app preflight --data-dir /var/lib/formaliscope
 ```
 
-只有返回 `ready: true` 且退出码为 0 才继续。预检验证：源码提交、快照 digest/内容指纹、干净来源、Statement 模式、页面引用资源、enrichment schema、HTTPS Origin、Cookie 路径、邮件必要配置、登录准入和管理员邮箱。`archive-unverified` 来源只适用于预览，不能作为新生产快照。已有 Blueprint 安装可显式加 `--legacy-blueprint`；正式 systemd 服务使用该兼容开关，Statement 检查仍然有效。
+只有返回 `ready: true` 且退出码为 0 才继续。预检验证：源码提交、快照 digest/内容指纹、干净来源、Statement 模式、页面引用资源、enrichment schema、HTTPS Origin、Cookie 路径、姓名身份模式与启用的管理员（兼容 email 模式才检查邮件配置）。`archive-unverified` 来源只适用于预览，不能作为新生产快照。已有 Blueprint 安装可显式加 `--legacy-blueprint`；正式 systemd 服务使用该兼容开关，Statement 检查仍然有效。
 
 兼容开关允许保留尚未记录 clean 状态的既有 v1 Blueprint 快照，并在预检中明确报告来源限制；它不允许新 Statement 快照跳过干净来源要求。再次发布新证据时重新构建。
 
-预检不访问用户数据库、不生成认证密钥、不发送邮件、不测试代理或邮件网络。仍需在测试部署中完成一次真实验证码登录、退出、两个邮箱隔离、管理员汇总与一条可清理的功能测试记录。用生产 SMTP 凭证做这一步前，确认邮件供应商发送策略和目标收件箱可用。
+预检只读查询身份表中的管理员配置，不初始化数据库、不创建密钥、不发邮件、不测试代理。仍需在测试部署中完成姓名注册、同名双用户隔离、退出恢复、管理员汇总与恢复码轮换。
 
 ## 启动与 readiness
 
@@ -73,9 +80,9 @@ sudo systemctl enable --now formaliscope-review.service
 curl --fail http://127.0.0.1:8765/healthz
 ```
 
-`/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源与验证码登录。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
+`/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源与姓名注册和恢复码登录。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
 
-Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已有全局认证或旧应用路由，明确新路径是否使用邮箱认证，并同时验证旧入口继续可用。此文档不假定既有站点路径或认证规则可直接覆盖。
+Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已有全局认证或旧应用路由，明确新路径所用身份模式，并同时验证旧入口继续可用。此文档不假定既有站点路径或认证规则可直接覆盖。
 
 ## 更新顺序
 
@@ -103,7 +110,7 @@ sudo systemctl restart formaliscope-review.service
 sudo /usr/local/sbin/formaliscope-review-backup
 ```
 
-时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份移除验证码、会话、限流与预览凭证；恢复后重新登录。SMTP 密码和 `auth-pepper` 不在应用备份中，配置应由独立密钥备份管理。异机备份应加密并设置保留周期、容量告警及定期恢复演练。
+时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份移除验证码、会话、限流与预览凭证，保留姓名身份、角色和恢复摘要；恢复后用原恢复码重新登录。`auth-pepper` 不在应用备份中，恢复时可以重新生成。明文恢复码文件不在备份或应用包中，用户自行保存。异机备份应加密并设置保留周期、容量告警及定期恢复演练。
 
 发现 readiness 或登录失败时，先暂停 `formaliscope-app-pull.timer` 和 `formaliscope-snapshot-pull.timer`，停止服务，保存失败现场。区分两类恢复：
 
@@ -118,4 +125,4 @@ sudo /usr/local/sbin/formaliscope-review-backup
 
 上线前按实际审阅人数、摘要长度、备份频率与保留期测量数据库、备份和磁盘余量，重新做列表/依赖图/并发写入演练。监控磁盘、写入延迟、数据库锁等待、备份生成及完整性检查；需要多写实例时再规划 PostgreSQL。
 
-[版本模型](VERSIONING_AND_RELEASE.md) 定义已有判断与快照的兼容性；[GitHub Actions 部署](GITHUB_ACTIONS_DEPLOYMENT.md) 定义制品发布。生产邮件投递、公开代理路由、systemd 单元验证和备份恢复演练均需在目标 Linux 环境完成后才算上线准备验证完毕。
+[版本模型](VERSIONING_AND_RELEASE.md) 定义已有判断与快照的兼容性；[GitHub Actions 部署](GITHUB_ACTIONS_DEPLOYMENT.md) 定义制品发布。姓名登录与恢复、公开代理路由、systemd 单元验证和备份恢复演练均需在目标 Linux 环境完成后才算上线准备验证完毕。

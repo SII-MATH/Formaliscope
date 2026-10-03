@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .auth import AuthSettings, AuthStore, DeliveryError, SESSION_LIFETIME, normalize_email
+from .name_auth import NameAuthStore, RateLimited, name_settings
 from .build import normalize_snapshot
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
@@ -24,6 +26,8 @@ SESSION_COOKIE = "kip126_review_session"
 
 def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore,
                  *, preview: bool = False, admin_emails: frozenset[str] = frozenset()):
+    name_mode = isinstance(auth, NameAuthStore)
+    auth_mode = "preview" if preview else "name" if name_mode else "email"
     cards_by_id = {card["id"]: card for card in snapshot["cards"]}
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
@@ -94,6 +98,12 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
         def _viewer(self) -> str | None:
             return auth.session_email(self._session_token())
 
+        def _is_admin(self, viewer):
+            if name_mode:
+                return bool(viewer and auth.is_admin(viewer))
+            profile = reviewer_profile(db_path, viewer) if viewer else {}
+            return viewer in admin_emails or bool(preview and profile.get('preview_admin'))
+
         def _cookie(self, token: str, *, max_age: int) -> str:
             value = (f"{SESSION_COOKIE}={token}; Path={auth.settings.cookie_path}; "
                      f"Max-Age={max_age}; HttpOnly; SameSite=Strict")
@@ -134,7 +144,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                                  "database_schema": DB_SCHEMA_VERSION})
                 return
             if path == '/api/config':
-                self._json(200, {'preview': preview, 'review_mode': snapshot.get('review_mode', 'blueprint')})
+                self._json(200, {'preview': preview, 'auth_mode': auth_mode, 'review_mode': snapshot.get('review_mode', 'blueprint')})
                 return
             if path == "/login":
                 viewer = self._viewer()
@@ -152,8 +162,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return
             if path == "/api/auth/me":
                 profile = reviewer_profile(db_path, viewer) if viewer else {}
-                self._json(200, {"email": viewer, 'display_name': profile.get('display_name', ''),
-                    'is_admin': viewer in admin_emails or bool(preview and profile.get('preview_admin')),
+                self._json(200, {"user_id": viewer, "email": None if name_mode else viewer, 'display_name': profile.get('display_name', ''),
+                    'is_admin': self._is_admin(viewer), 'auth_mode': auth_mode,
                     'preview': preview}) if viewer else self._json(401, {"error": "请先登录"})
                 return
             if path == "/":
@@ -166,7 +176,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                         self._json(401, {'error': '请先登录'})
                     else:
                         self._redirect('./') if preview else self._redirect('./login')
-                elif viewer not in admin_emails and not (preview and profile.get('preview_admin')):
+                elif not self._is_admin(viewer):
                     self._json(403, {'error': '此入口仅对管理员开放'})
                 elif path == '/admin':
                     self._serve_static(path)
@@ -216,7 +226,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if path not in {"/api/judgments", "/api/auth/request-code",
+            if path not in {"/api/auth/register", "/api/auth/recover", "/api/auth/recovery", "/api/judgments", "/api/auth/request-code",
                             "/api/auth/verify-code", "/api/auth/logout", '/api/profile', '/api/preview/session', '/api/preview/resume'}:
                 self._json(404, {"error": "页面不存在"})
                 return
@@ -234,6 +244,37 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return
             if not isinstance(payload, dict):
                 self._json(400, {"error": "请求格式错误"})
+                return
+            if path in {'/api/auth/register', '/api/auth/recover', '/api/auth/recovery'}:
+                if not name_mode:
+                    self._json(404, {'error': '页面不存在'})
+                    return
+                try:
+                    if path == '/api/auth/register':
+                        if self._viewer():
+                            self._json(409, {'error': '已登录，请先退出后再创建新身份'})
+                            return
+                        token, recovery = auth.create_reviewer(payload.get('display_name'), self.client_address[0])
+                        self._json(201, {'ok': True, 'recovery_code': recovery}, extra_headers={
+                            'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
+                    elif path == '/api/auth/recover':
+                        token = auth.resume_reviewer(payload.get('recovery_code'), self.client_address[0])
+                        if not token:
+                            self._json(401, {'error': '恢复码无效，请检查是否完整，或联系管理员'})
+                        else:
+                            self._json(200, {'ok': True}, extra_headers={
+                                'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
+                    else:
+                        viewer = self._viewer()
+                        if not viewer:
+                            self._json(401, {'error': '请先登录'})
+                            return
+                        recovery = auth.rotate_recovery(viewer, self._session_token())
+                        self._json(200, {'recovery_code': recovery})
+                except RateLimited:
+                    self._json(429, {'error': '操作过于频繁，请稍后再试'}, extra_headers={'Retry-After': '60'})
+                except ValueError as error:
+                    self._json(400, {'error': str(error)})
                 return
             if path == '/api/preview/session':
                 name = payload.get('display_name')
@@ -255,8 +296,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                     else:
                         self._json(200, {'ok': True}, extra_headers={'Set-Cookie': self._cookie(token, max_age=SESSION_LIFETIME)})
                 return
-            if preview and path in {'/api/auth/request-code', '/api/auth/verify-code'}:
-                self._json(404, {'error': '预览使用姓名入口'})
+            if (preview or name_mode) and path in {'/api/auth/request-code', '/api/auth/verify-code'}:
+                self._json(404, {'error': '当前使用姓名入口'})
                 return
             if path == "/api/auth/request-code":
                 email = normalize_email(payload.get("email"))
@@ -337,7 +378,13 @@ def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port:
         from .preview import PreviewAuthStore
         auth = PreviewAuthStore(db_path)
     else:
-        auth = AuthStore(db_path, AuthSettings.from_env())
+        mode = os.environ.get('REVIEW_AUTH_MODE', 'name').strip().lower()
+        if mode == 'name':
+            auth = NameAuthStore(db_path, name_settings())
+        elif mode == 'email':
+            auth = AuthStore(db_path, AuthSettings.from_env())
+        else:
+            raise ValueError('REVIEW_AUTH_MODE must be name or email')
     server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth,
                              preview=preview, admin_emails=admin_emails))
     print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)

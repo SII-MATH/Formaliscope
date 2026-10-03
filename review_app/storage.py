@@ -71,7 +71,7 @@ def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = N
         with sqlite3.connect(staged_db) as staged:
             # Authentication state is intentionally disposable. A restore must
             # require fresh login and must not resurrect old OTPs or sessions.
-            for table in ("login_challenges", "login_requests", "login_sessions", "preview_identities"):
+            for table in ("login_challenges", "login_requests", "login_sessions", "preview_identities", "identity_requests"):
                 if staged.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone():
@@ -104,7 +104,7 @@ def create_backup(data_dir: Path, output_root: Path, *, now: datetime | None = N
             "source_commit": snapshot_payload.get("source_commit"),
             "sqlite_integrity_check": integrity,
             "database_schema_version": database_schema_version,
-            "auth_state": "excluded; restored users must sign in again",
+            "auth_state": "sessions excluded; name identity and recovery digests retained; restored users sign in with recovery codes",
         }
         manifest_path = temporary / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

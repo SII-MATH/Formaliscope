@@ -12,13 +12,13 @@
 
 应用包包括 `review_app/`、`statement_workflow/` 与 enrichment schema。生产部署不需要自动 Agent 执行器；用户先按目录手动补数据。自动快照 workflow 发布的是基础源码快照，不自动生成 Agent 回译。需要发布手动 enrichment 时，先对冻结基础快照运行 `validate-enrichment` 和 `enrich-snapshot`，将校验通过的候选产物作为单独的正式变更评审；不能默默替换同一标签的证据。
 
-读取私有 `SII-MATH/KIP126` 需要只授予该仓库 Contents read 的 `KIP126_READ_TOKEN` Secret。发布使用 `GITHUB_TOKEN` 的 Contents write，CI 只有 Contents read。保护 main 并要求 CI 通过；按组织策略启用生产 Environment 审批。禁止在日志、制品或数据库打印 token 和邮件密码。
+读取私有 `SII-MATH/KIP126` 需要只授予该仓库 Contents read 的 `KIP126_READ_TOKEN` Secret。发布使用 `GITHUB_TOKEN` 的 Contents write，CI 只有 Contents read。保护 main 并要求 CI 通过；按组织策略启用生产 Environment 审批。禁止在日志、制品或数据库打印 token 和恢复码。
 
 ## VPS 的目录和权限
 
 ```text
 /etc/formaliscope/github-read-token      root:root 0600，只读 release token
-/etc/formaliscope/review.env             root:formaliscope-review 0640，真实邮件与公开入口
+/etc/formaliscope/review.env             root:formaliscope-review 0640，姓名身份模式与公开入口
 /etc/formaliscope/smtp-password          root:formaliscope-review 0640，独立密码
 /opt/formaliscope/releases/<app-commit>   不可变应用目录
 /opt/formaliscope/current                当前应用链接
@@ -37,7 +37,8 @@ sudo /usr/local/sbin/formaliscope-snapshot-pull
 sudo install -m 0644 deploy/formaliscope-*.service deploy/formaliscope-*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now formaliscope-review.service formaliscope-review-backup.timer
-# 人工验证 /healthz、公开入口、邮箱与管理员后启用：
+# 首次启动前按 IDENTITY.md 执行 create-admin；旧邮件部署明确设置 REVIEW_AUTH_MODE=email。
+# 人工验证 /healthz、公开入口、姓名登录、恢复码与管理员后启用：
 sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pull.timer
 ```
 
@@ -53,6 +54,6 @@ sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pu
 
 ## 发布前验收
 
-在测试 Linux 环境确认所有 systemd 单元通过验证，正式 preflight ready=true，邮件登录、双邮箱隔离和管理员名单有效；演练一次 SQLite 在线备份和恢复、上一 release 回滚，并检查已有公开入口继续可用。默认 timer 每 15 分钟检查应用/快照，每日生成备份。
+在测试 Linux 环境确认所有 systemd 单元通过验证，正式 preflight ready=true，姓名登录、同名双身份隔离、恢复码与单独创建的管理员有效；演练一次 SQLite 在线备份和恢复、上一 release 回滚，并检查已有公开入口继续可用。默认 timer 每 15 分钟检查应用/快照，每日生成备份。
 
 代码提交、workflow 发布、目标机器配置、公开路由和 timer 启用分别是独立动作。仓库文件准备完成不表示这些外部步骤已经执行。

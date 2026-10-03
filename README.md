@@ -12,7 +12,7 @@ python3 -m review_app preflight --preview --data-dir .review
 python3 -m review_app serve --preview --port 8876 --data-dir .review
 ```
 
-打开 `http://127.0.0.1:8876/`。预览使用姓名和恢复凭证，不发送邮件，只允许本机监听。它是前端演示模式；正式服务通过邮箱验证码识别审阅者，管理员用已验证邮箱白名单授权。
+打开 `http://127.0.0.1:8876/`。预览使用姓名和恢复凭证，不发送邮件，只允许本机监听。它是前端演示模式；正式服务默认也使用姓名登记和私人恢复码；管理员由服务器操作员单独创建，见 [身份说明](review_app/IDENTITY.md)。
 
 正式证据应从固定提交的干净 Git 检出生成：
 
@@ -33,7 +33,7 @@ python3 -m review_app enrich-snapshot \
   --output /tmp/enriched-snapshot.json
 ```
 
-这些命令不改人工数据库。正式安装、邮件配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
+这些命令不改人工数据库。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 
 完整验证：
 

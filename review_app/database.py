@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 5
+DB_SCHEMA_VERSION = 6
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -75,12 +75,24 @@ def _migration_5(db: sqlite3.Connection) -> None:
     )''')
 
 
+def _migration_6(db: sqlite3.Connection) -> None:
+    db.execute('''CREATE TABLE IF NOT EXISTS name_identities (
+        reviewer TEXT PRIMARY KEY, recovery_digest TEXT UNIQUE NOT NULL,
+        is_admin INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0
+    )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS identity_requests (
+        action TEXT NOT NULL, ip_digest TEXT NOT NULL, created_at INTEGER NOT NULL
+    )''')
+    db.execute('CREATE INDEX IF NOT EXISTS identity_requests_limits ON identity_requests(action, ip_digest, created_at)')
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
     (3, "record-review-provenance", _migration_3),
     (4, "record-stable-review-basis", _migration_4),
     (5, "reviewer-display-names", _migration_5),
+    (6, "name-identities-and-recovery", _migration_6),
 )
 
 

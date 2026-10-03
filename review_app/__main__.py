@@ -62,6 +62,15 @@ def main():
         operation.add_argument('--file', type=Path, required=True, help='statement-enrichment.v1 annotation file')
         if command == 'enrich-snapshot':
             operation.add_argument('--output', type=Path, required=True, help='new candidate artifact; input is never overwritten')
+    for command, description in [('create-admin', 'create an administrator with a private recovery file'),
+                                 ('bind-recovery', 'bind an existing reviewer to name login without moving records')]:
+        operation = sub.add_parser(command, help=description)
+        operation.add_argument('--data-dir', type=Path, default=default_data_dir)
+        operation.add_argument('--name', required=True)
+        operation.add_argument('--output', type=Path, required=True, help='new private recovery file; never overwritten')
+        if command == 'bind-recovery':
+            operation.add_argument('--reviewer', required=True, help='exact existing internal reviewer key')
+            operation.add_argument('--admin', action='store_true', help='explicitly grant operator role')
     args = parser.parse_args()
     if args.command in {'validate-enrichment', 'enrich-snapshot'}:
         from .enrichment import enrich_snapshot, validate_enrichment
@@ -97,6 +106,32 @@ def main():
             parser.exit(1, f'{error}\n')
         return
     data_dir = args.data_dir.expanduser().resolve()
+    if args.command in {'create-admin', 'bind-recovery'}:
+        from .name_auth import NameAuthStore, valid_name
+        if not valid_name(args.name):
+            parser.error('请输入 1–60 字的姓名，不含控制字符')
+        output = args.output.expanduser().absolute()
+        # Exclusive creation also refuses symlinks. Never print credentials to logs.
+        try:
+            descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError:
+            parser.exit(1, 'Cannot create a new private recovery file; choose a new --output path.\n')
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as secret_file:
+                auth = NameAuthStore(data_dir / 'judgments.sqlite3')
+                token, recovery = auth.create_identity(args.name,
+                    admin=args.command == 'create-admin' or args.admin,
+                    existing_reviewer=getattr(args, 'reviewer', None))
+                secret_file.write(recovery + '\n')
+                secret_file.flush()
+                os.fsync(secret_file.fileno())
+                reviewer = auth.session_email(token)
+                auth.logout(token)
+        except (OSError, ValueError) as error:
+            output.unlink(missing_ok=True)
+            parser.exit(1, str(error) + '\n')
+        print(json.dumps({'reviewer': reviewer, 'name': args.name.strip(), 'recovery_file': str(output)}, ensure_ascii=False))
+        return
     snapshot = data_dir / "snapshot.json"
     if args.command == "build":
         source = args.source.expanduser().resolve()

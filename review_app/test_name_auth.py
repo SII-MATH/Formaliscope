@@ -1,0 +1,246 @@
+"""Name identities, HTTP ownership, administrator provisioning and recovery."""
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+import uuid
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+from .auth import AuthSettings
+from .build import CURRENT_FINGERPRINT_SCHEME, SNAPSHOT_SCHEMA
+from .judgments import history, submit, update_reviewer_profile
+from .name_auth import NAME_SESSION_LIFETIME, NameAuthStore, RateLimited, name_settings
+from .preflight import run_preflight
+from .server import ReviewHTTPServer, make_handler
+from .statements import compile_statements
+from .storage import create_backup
+
+
+class NameIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.db = self.root / 'data/judgments.sqlite3'
+        self.now = 1_800_000_000
+        self.auth = NameAuthStore(self.db, clock=lambda: self.now)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_same_names_rename_restart_and_expiry(self):
+        first, key = self.auth.create_reviewer('同名')
+        second, _ = self.auth.create_reviewer('同名')
+        owner = self.auth.session_email(first)
+        self.assertNotEqual(owner, self.auth.session_email(second))
+        self.assertFalse(self.auth.is_admin(owner))
+        update_reviewer_profile(self.db, owner, '改名')
+        restarted = NameAuthStore(self.db, clock=lambda: self.now)
+        self.assertEqual(restarted.session_email(first), owner)
+        resumed = restarted.resume_reviewer(key)
+        self.assertEqual(restarted.session_email(resumed), owner)
+        self.now += NAME_SESSION_LIFETIME
+        self.assertIsNone(restarted.session_email(resumed))
+
+    def test_recovery_rotation_revokes_other_sessions_and_old_key(self):
+        token, key = self.auth.create_identity('用户')
+        other = self.auth.resume_reviewer(key)
+        self.assertTrue(self.auth.session_email(other))  # populate cache
+        owner = self.auth.session_email(token)
+        replacement = self.auth.rotate_recovery(owner, token)
+        self.assertIsNone(self.auth.resume_reviewer(key))
+        self.assertIsNone(self.auth.session_email(other))
+        self.assertEqual(self.auth.session_email(token), owner)
+        self.assertEqual(self.auth.session_email(self.auth.resume_reviewer(replacement)), owner)
+        with sqlite3.connect(self.db) as db:
+            text = '\n'.join(db.iterdump())
+        for secret in (token, key, replacement):
+            self.assertNotIn(secret, text)
+
+    def test_disabled_identity_rejects_cached_session_and_recovery(self):
+        token, key = self.auth.create_identity('用户', admin=True)
+        owner = self.auth.session_email(token)
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE name_identities SET disabled=1 WHERE reviewer=?', (owner,))
+        self.assertIsNone(self.auth.session_email(token))
+        self.assertIsNone(self.auth.resume_reviewer(key))
+        self.assertFalse(self.auth.is_admin(owner))
+
+    def test_credential_guesses_are_limited_and_origin_is_required(self):
+        for _ in range(60):
+            self.assertIsNone(self.auth.resume_reviewer('not-a-key'))
+        with self.assertRaises(RateLimited):
+            self.auth.resume_reviewer('not-a-key')
+        self.now += 601
+        self.assertIsNone(self.auth.resume_reviewer('not-a-key'))
+        for origin in ('', 'http://public.example.org', 'https://u:p@example.org', 'https://example.org/path', 'https://example.org:99999'):
+            with self.subTest(origin=origin), self.assertRaises(ValueError):
+                name_settings({'REVIEW_PUBLIC_ORIGIN': origin})
+        self.assertEqual(name_settings({'REVIEW_PUBLIC_ORIGIN': 'http://127.0.0.1:8890'}).mailer, 'none')
+
+    def test_backup_preserves_recovery_without_old_sessions_or_pepper(self):
+        token, key = self.auth.create_identity('管理员', admin=True)
+        owner = self.auth.session_email(token)
+        (self.db.parent / 'snapshot.json').write_text(json.dumps({'digest': 'a'*64, 'source_commit': 'b'*40}))
+        backup = create_backup(self.db.parent, self.root / 'backups')
+        restored = NameAuthStore(backup / 'judgments.sqlite3')
+        self.assertNotEqual(restored.pepper, self.auth.pepper)
+        self.assertIsNone(restored.session_email(token))
+        self.assertEqual(restored.session_email(restored.resume_reviewer(key)), owner)
+        self.assertTrue(restored.is_admin(owner))
+
+    def test_operator_cli_private_file_and_existing_identity_binding(self):
+        output = self.root / 'admin-recovery.txt'
+        command = [sys.executable, '-m', 'review_app', 'create-admin', '--data-dir', str(self.db.parent),
+                   '--name', '管理员', '--output', str(output)]
+        first = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        key = output.read_text().strip()
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(key, first.stdout + first.stderr)
+        owner = json.loads(first.stdout)['reviewer']
+        self.assertTrue(self.auth.is_admin(owner))
+        self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+        self.assertEqual(output.read_text().strip(), key)
+        update_reviewer_profile(self.db, 'legacy@example.org', '旧用户')
+        bound = self.root / 'legacy.txt'
+        result = subprocess.run([sys.executable, '-m', 'review_app', 'bind-recovery', '--data-dir', str(self.db.parent),
+                                 '--reviewer', 'legacy@example.org', '--name', '旧用户', '--output', str(bound)], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recovered = self.auth.resume_reviewer(bound.read_text())
+        self.assertEqual(self.auth.session_email(recovered), 'legacy@example.org')
+        self.assertFalse(self.auth.is_admin('legacy@example.org'))
+
+    def test_default_name_preflight_no_mail_and_read_only_admin_check(self):
+        source = self.root / 'source/KIP126'
+        source.mkdir(parents=True)
+        (source / 'X.lean').write_text('def x : Nat := 1\n')
+        snapshot = compile_statements(source.parent, source_commit='a'*40)
+        snapshot.pop('source_origin', None)
+        from .build import calculate_snapshot_digest
+        snapshot['digest'] = calculate_snapshot_digest(snapshot)
+        (self.db.parent / 'snapshot.json').write_text(json.dumps(snapshot))
+        env = {'REVIEW_PUBLIC_ORIGIN': 'https://review.example.org'}
+        self.assertFalse(run_preflight(self.db.parent, env=env)['ready'])
+        self.auth.create_identity('管理员', admin=True)
+        with sqlite3.connect(self.db) as db:
+            before = list(db.iterdump())
+        report = run_preflight(self.db.parent, env=env)
+        self.assertTrue(report['ready'], report)
+        self.assertEqual(report['auth_mode'], 'name')
+        self.assertNotIn('mailer', {item['id'] for item in report['checks']})
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(before, list(db.iterdump()))
+
+
+class NameHTTPTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / 'judgments.sqlite3'
+        self.auth = NameAuthStore(self.db)
+        self.card = {'id': 'statement::KIP126.X', 'fingerprint': 'a'*64,
+                     'fingerprint_scheme': CURRENT_FINGERPRINT_SCHEME,
+                     'fingerprints': {CURRENT_FINGERPRINT_SCHEME: 'a'*64},
+                     'label': 'X', 'title': 'X', 'chapter': 'Test', 'kind': 'def',
+                     'declaration': 'KIP126.X', 'source_status': 'local', 'dependencies': []}
+        self.snapshot = {'schema': SNAPSHOT_SCHEMA, 'digest': 'b'*64, 'source_commit': 'c'*40,
+                         'review_mode': 'statement', 'cards': [self.card], 'unlinked_nodes': 0}
+        handler = make_handler(self.snapshot, self.db, Path(__file__).parent/'static', self.auth,
+                               admin_emails=frozenset({'管理员'}))
+        handler.log_message = lambda *_: None
+        self.server = ReviewHTTPServer(('127.0.0.1', 0), handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f'http://127.0.0.1:{self.server.server_port}'
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.temp.cleanup()
+
+    def request(self, path, body=None, cookie=None, origin=None):
+        headers = {'Content-Type': 'application/json'} if body is not None else {}
+        if body is not None:
+            headers['Origin'] = origin if origin is not None else self.base
+        if cookie:
+            headers['Cookie'] = cookie
+        request = Request(self.base+path, data=json.dumps(body).encode() if body is not None else None, headers=headers)
+        try:
+            response = urlopen(request, timeout=5)
+        except HTTPError as error:
+            response = error
+        with response:
+            content = response.read()
+            return response.status, dict(response.headers), json.loads(content) if content else None
+
+    def register(self, name='同名'):
+        status, headers, data = self.request('/api/auth/register', {'display_name': name, 'is_admin': True, 'reviewer': 'spoof'})
+        self.assertEqual(status, 201)
+        return headers['Set-Cookie'].split(';', 1)[0], data['recovery_code']
+
+    def test_same_name_ownership_spoof_rename_and_recovery(self):
+        first, key = self.register()
+        second, _ = self.register()
+        owner = self.request('/api/auth/me', cookie=first)[2]['user_id']
+        self.assertNotEqual(owner, self.request('/api/auth/me', cookie=second)[2]['user_id'])
+        body = {'request_id': str(uuid.uuid4()), 'card_id': self.card['id'], 'fingerprint': 'a'*64,
+                'verdict': 'aligned', 'rationale': '私人的判断', 'reviewer': 'spoof', 'display_name': 'spoof'}
+        self.assertEqual(self.request('/api/judgments', body, first)[0], 201)
+        self.assertEqual(self.request('/api/history?id='+self.card['id'], cookie=second)[2]['history'], [])
+        self.assertEqual(self.request('/api/export', cookie=second)[2]['judgments'], [])
+        self.assertEqual(self.request('/api/profile', {'display_name': '改名'}, first)[0], 200)
+        self.assertEqual(self.request('/api/auth/me', cookie=first)[2]['user_id'], owner)
+        self.assertEqual(self.request('/api/auth/logout', {}, first)[0], 200)
+        self.assertEqual(self.request('/api/auth/me', cookie=first)[0], 401)
+        status, headers, _ = self.request('/api/auth/recover', {'recovery_code': key})
+        self.assertEqual(status, 200)
+        recovered = headers['Set-Cookie'].split(';', 1)[0]
+        self.assertEqual(self.request('/api/auth/me', cookie=recovered)[2]['display_name'], '改名')
+        history_data = self.request('/api/history?id='+self.card['id'], cookie=recovered)[2]['history']
+        self.assertEqual(len(history_data), 1)
+        self.assertEqual(history_data[0]['reviewer'], owner)
+        self.assertNotIn(key, json.dumps(self.request('/api/auth/me', cookie=recovered)[2]))
+        self.assertEqual(self.request('/api/auth/register', {'display_name': 'new'}, recovered)[0], 409)
+
+    def test_no_admin_by_name_or_first_registration_and_operator_login(self):
+        cookie, _ = self.register('管理员')
+        self.assertFalse(self.request('/api/auth/me', cookie=cookie)[2]['is_admin'])
+        self.assertEqual(self.request('/api/admin/summary', cookie=cookie)[0], 403)
+        _, key = self.auth.create_identity('管理员', admin=True)
+        status, headers, _ = self.request('/api/auth/recover', {'recovery_code': key})
+        self.assertEqual(status, 200)
+        admin_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        self.assertTrue(self.request('/api/auth/me', cookie=admin_cookie)[2]['is_admin'])
+        self.assertEqual(self.request('/api/admin/summary', cookie=admin_cookie)[0], 200)
+
+    def test_origin_legacy_routes_and_secure_prefix_cookie(self):
+        self.assertEqual(self.request('/api/auth/register', {'display_name': 'X'}, origin='https://evil.example')[0], 403)
+        self.assertEqual(self.request('/api/auth/request-code', {'email': 'x@example.org'})[0], 404)
+        self.assertEqual(self.request('/api/auth/verify-code', {'email': 'x@example.org', 'code': '12345678'})[0], 404)
+        self.assertEqual(self.request('/api/preview/session', {'display_name': 'X'})[0], 404)
+        self.assertEqual(self.request('/api/auth/recovery', {})[0], 401)
+        self.auth.settings = AuthSettings(mailer='none', allow_any_email=True,
+                                         public_origin='https://review.example.org', cookie_path='/review/')
+        status, headers, _ = self.request('/api/auth/register', {'display_name': 'X'}, origin='https://review.example.org')
+        self.assertEqual(status, 201)
+        for attribute in ('Path=/review/', f'Max-Age={NAME_SESSION_LIFETIME}', 'HttpOnly', 'SameSite=Strict', 'Secure'):
+            self.assertIn(attribute, headers['Set-Cookie'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+
+    def test_rotation_keeps_current_login_and_revokes_old_recovery(self):
+        cookie, key = self.register()
+        status, _, data = self.request('/api/auth/recovery', {}, cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request('/api/auth/me', cookie=cookie)[0], 200)
+        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': key})[0], 401)
+        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': data['recovery_code']})[0], 200)
+
+
+if __name__ == '__main__':
+    unittest.main()

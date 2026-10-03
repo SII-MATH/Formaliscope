@@ -9,7 +9,7 @@
 | `build.py` / `statements.py` | Blueprint 与 Statement 提取、源码版本、内容指纹和快照校验 |
 | `enrichment.py` | 手动 Agent 旁文件校验、源码依据绑定、生成候选补充快照 |
 | `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |
-| `auth.py` / `preview.py` | 正式邮箱验证码与本机姓名预览身份 |
+| `name_auth.py` / `auth.py` / `preview.py` | 正式姓名身份、兼容邮箱验证码与本机预览 |
 | `server.py` | HTTP 路由、资源、会话、授权和 API 适配 |
 | `storage.py` / `preflight.py` | 原子安装、在线备份及无写入部署预检 |
 | `static/statement.js` | 详情、列表、筛选与页面交互 |
@@ -47,13 +47,11 @@ python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data
 
 ## 正式身份与授权
 
-正式 `serve` 使用邮箱验证码。配置 `REVIEW_MAILER=smtp`、SMTP host/port/security/user/from，以及 `REVIEW_SMTP_PASSWORD_FILE`；发件密码保存在仅服务账号可读的独立文件。已有本机开发环境可选择 `REVIEW_MAILER=agently`，但目标机器需有可用且已授权的 `agently-cli`。
+正式 `serve` 默认使用姓名登记：浏览器保持身份 30 天，系统生成的私人恢复码用于换设备或退出后找回记录。学生不需要邮箱、密码、邀请码或预先名单。同名者各有随机身份 ID，改名不改变记录归属，API 从会话确定 owner。
 
-`REVIEW_ALLOW_ANY_EMAIL=1` 允许任意已验证邮箱；也可配置 `REVIEW_ALLOWED_EMAILS` / `REVIEW_ALLOWED_DOMAINS`。管理员通过 `REVIEW_ADMIN_EMAILS` 的逗号分隔名单或重复的 `serve --admin-email` 参数配置，且必须属于允许登录的邮箱。正式服务不能从名字授予管理员权限。
+管理员由操作员执行 `create-admin --name ... --output ...` 单独创建。恢复码只保存摘要，初次创建与轮换时才显示明文；恢复码文件不得放入发布包。部署与旧邮箱记录迁移见 [IDENTITY.md](IDENTITY.md)。旧邮件安装须显式选择 `REVIEW_AUTH_MODE=email` 才继续使用原有邮件配置和邮箱白名单。
 
-验证码 8 位、10 分钟有效、只能使用一次，最多尝试 5 次；会话有效期 12 小时。发送按邮箱、IP、全局限速，当前应用默认每日最多 40 次。预检仅检查配置和密码文件可读性，不发送测试邮件，也不能证明邮件账号授权或网络连通。
-
-每个邮箱有独立的判断、进度和导出；网页 API 不接受其他用户提供的审核人字段。`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录及临时认证状态；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.review/`，生产位于 `/var/lib/formaliscope`。
+`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录、姓名身份、角色及恢复摘要；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.review/`，生产位于 `/var/lib/formaliscope`。备份清除会话但保留身份，恢复后用原恢复码重新登录。
 
 ## 请求、渲染与部署检查
 

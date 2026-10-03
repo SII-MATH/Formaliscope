@@ -22,7 +22,7 @@ class PreflightTests(unittest.TestCase):
         self.snapshot = compile_statements(self.root / "source", source_commit="a" * 40)
         self.snapshot.pop("source_origin", None)
         self.write_snapshot()
-        self.env = {"REVIEW_PUBLIC_ORIGIN": "https://review.example.org",
+        self.env = {"REVIEW_AUTH_MODE": "email", "REVIEW_PUBLIC_ORIGIN": "https://review.example.org",
                     "REVIEW_COOKIE_PATH": "/review/", "REVIEW_MAILER": "smtp",
                     "REVIEW_SMTP_HOST": "smtp.example.org", "REVIEW_SMTP_USER": "sender",
                     "REVIEW_SMTP_PASSWORD": "unique-hidden-secret", "REVIEW_SMTP_FROM": "sender@example.org",

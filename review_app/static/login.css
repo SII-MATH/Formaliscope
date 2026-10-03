@@ -18,3 +18,5 @@ button.quiet:hover{background:#f2f8f3}
 #message{min-height:1.5em;color:#456e54;font-size:12px;line-height:1.6;margin:20px 0 0}
 #message.error{color:#b34b42}
 [hidden]{display:none!important}
+
+h2{font-size:20px;margin:24px 0 0}.login-tabs{display:flex;gap:8px;margin-top:18px}.login-tabs button{flex:1}.login-tabs [aria-pressed="true"]{background:#e9f3eb;border-color:#63a67b}.login-card #continue{width:100%}#new-recovery-code{font-family:monospace;margin-top:8px;font-size:12px}#recovery-panel label{display:block}#recover-form .hint{margin:0;font-size:12px}

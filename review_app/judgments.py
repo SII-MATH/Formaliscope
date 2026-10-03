@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .auth import normalize_email
+from .name_auth import valid_name, valid_reviewer_id
 from .build import CURRENT_FINGERPRINT_SCHEME, LEGACY_FINGERPRINT_SCHEME
 from .database import connect
 
@@ -148,8 +149,8 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
         return 400, {"error": "请选择审核结论"}
     if not isinstance(rationale, str) or len(rationale) > 4000 or (snapshot.get('review_mode') != 'statement' and verdict != "aligned" and not rationale.strip()):
         return 400, {"error": "除“对齐”外，请填写理由（最多 4000 字）"}
-    if normalize_email(reviewer) != reviewer:
-        return 400, {"error": "审核人邮箱无效"}
+    if normalize_email(reviewer) != reviewer and not valid_reviewer_id(reviewer):
+        return 400, {"error": "审核人身份无效"}
     fingerprint_scheme = card.get("fingerprint_scheme", LEGACY_FINGERPRINT_SCHEME)
     review_basis_fingerprint = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
     review_basis_scheme = CURRENT_FINGERPRINT_SCHEME if review_basis_fingerprint else fingerprint_scheme
@@ -199,7 +200,7 @@ def reviewer_profile(db_path: Path, reviewer: str) -> dict:
 
 def update_reviewer_profile(db_path: Path, reviewer: str, name: object) -> tuple[int, dict]:
     """Change the display name while retaining identity and admin permissions."""
-    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 60:
+    if not valid_name(name):
         return 400, {'error': '请输入 1–60 字的姓名'}
     name = name.strip()
     with closing(connect(db_path)) as db:
