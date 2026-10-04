@@ -20,7 +20,7 @@
 | `symbols.py` / `static/statement-symbols.js` | 快照内名称与局部绑定定位、定义追溯交互 |
 | `static/directory-tree.js` / `review-labels.js` | 目录树与统一标签、状态筛选规则 |
 | `static/latex-renderer.js` / `lean-renderer.js` | 本地数学公式渲染与安全转义后的 Lean 高亮 |
-| `../.agents/skills/formaliscope-enrich/` | 配置模型、分组补全、低置信度复核与批次结果收集 |
+| `../skills/` | 配置模型、分组补全、低置信度复核与批次结果收集 |
 | `../statement_workflow/schema/` | v2 Agent 和收集产物契约，保留 v1 历史校验；其他执行器属于早期实验入口 |
 
 ## 构建与本地演示
@@ -38,7 +38,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .review
 
 ## Agent 补充数据接入
 
-[仓库 Skill](../.agents/skills/formaliscope-enrich/SKILL.md) 是当前补全入口，按 [模型配置](../.agents/skills/formaliscope-enrich/config.json) 调用子 Agent，并依据自报置信度安排主 Agent 复核。`collect.py` 生成下述命令消费的 `enrichment.json`；操作细节见 Skill，字段约定见 [补充数据说明](../statement_workflow/README.md)。
+[仓库 Skill](../skills/README.md) 是当前补全入口，按 [模型配置](../skills/README.md#模型配置) 调用子 Agent，并依据自报置信度安排主 Agent 复核。`collect.py` 生成下述命令消费的 `enrichment.json`；操作细节见 Skill，字段约定见 [补充数据说明](../statement_workflow/README.md)。
 
 [字段标准 v2](../statement_workflow/SCHEMA_V2.md) 是当前填写依据。Agent 只填标题、完整回译、单选角色、多选项目主题、优先度、内部预期判断及两个置信度。否／不知道必填理由；没有独立预期材料时填不知道。模型、时间和源码版本由调度层记录，不填摘要、unresolved 或证据。新主题由批次配置冻结，并进入公开快照和筛选配置。
 

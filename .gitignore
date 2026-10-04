@@ -6,3 +6,7 @@ __pycache__/
 .statement-workflow/
 .statement-review/
 .statement-enrichment/
+# Project-local installed copies; sources live in skills/<harness>/.
+.agents/skills/formaliscope-enrich
+.claude/skills/formaliscope-enrich
+.kimi-code/skills/formaliscope-enrich

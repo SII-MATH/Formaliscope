@@ -18,7 +18,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .statement-review
 
 ## 功能
 
-字段补全通过 [仓库 Skill](../.agents/skills/formaliscope-enrich/SKILL.md) 按用户指定范围分批执行，模型和主题由 [配置文件](../.agents/skills/formaliscope-enrich/config.json) 选择，仅原始回译低置信度结果交主 Agent 复核。[字段标准 v2](../statement_workflow/SCHEMA_V2.md) 定义中文副标题、完整回译、七类角色、项目主题、优先度及内部预期判断。两个置信度分开保存，不要求 Agent 填摘要、未解释对象、证据或来源记录。内部判断通过显式命令导入独立数据库表，不进入卡片、筛选、导出或人工进度；细节见 [契约与导入](../statement_workflow/README.md)。
+字段补全通过 [仓库 Skill](../skills/README.md) 按用户指定范围分批执行，模型和主题由 [配置文件](../skills/README.md#模型配置) 选择，仅原始回译低置信度结果交主 Agent 复核。[字段标准 v2](../statement_workflow/SCHEMA_V2.md) 定义中文副标题、完整回译、七类角色、项目主题、优先度及内部预期判断。两个置信度分开保存，不要求 Agent 填摘要、未解释对象、证据或来源记录。内部判断通过显式命令导入独立数据库表，不进入卡片、筛选、导出或人工进度；细节见 [契约与导入](../statement_workflow/README.md)。
 
 - 完整条目索引、检索、分页、审阅优先度/名称排序；主定理及直接引用可筛选，KIPBase 可通过目录选择，数学角色按声明实际用途划分。
 - 源码目录树逐层展开并显示递归声明数；选择整个目录或单个 Lean 文件，在所选范围内继续搜索和筛选。当前目录以 URL 参数保存，切换视图和重新打开链接保留范围；跨目录引用跳转显示范围外提示。
@@ -87,7 +87,7 @@ node review_app/test_statement_modules.cjs
 | statement-graph.js / directory-tree.js / review-labels.js | 依赖图、目录与标签规则 |
 | lean-renderer.js / latex-renderer.js | Lean 高亮与 LaTeX 展示 |
 | statement.js | 页面状态、筛选和详情的协调 |
-| ../.agents/skills/formaliscope-enrich/ | 模型配置、分组补全、低置信度复核与结果收集 |
+| ../skills/ | 模型配置、分组补全、低置信度复核与结果收集 |
 | ../statement_workflow/schema/ | v2 Agent 和收集产物契约，保留 v1 历史校验 |
 
 正式检查使用 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；

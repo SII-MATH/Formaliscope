@@ -1,0 +1,45 @@
+{
+  "schema": "formaliscope-enrichment-config.v2",
+  "worker": {
+    "model": "luna6",
+    "reasoning_effort": null
+  },
+  "topics": [
+    {
+      "id": "spectral_sequence",
+      "name": "谱序列"
+    },
+    {
+      "id": "adams",
+      "name": "Adams 理论"
+    },
+    {
+      "id": "stable_homotopy",
+      "name": "稳定同伦论"
+    },
+    {
+      "id": "sphere",
+      "name": "球谱"
+    },
+    {
+      "id": "synthetic_homotopy",
+      "name": "合成同伦论"
+    },
+    {
+      "id": "steenrod",
+      "name": "Steenrod 代数"
+    },
+    {
+      "id": "homological_algebra",
+      "name": "分次与同调代数"
+    },
+    {
+      "id": "higher_algebra",
+      "name": "范畴与高阶代数"
+    },
+    {
+      "id": "kervaire",
+      "name": "Kervaire 问题"
+    }
+  ]
+}

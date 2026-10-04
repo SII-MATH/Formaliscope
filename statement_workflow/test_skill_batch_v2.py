@@ -14,7 +14,7 @@ from review_app.enrichment import validate_enrichment
 from review_app.statements import compile_statements
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / '.agents/skills/formaliscope-enrich/scripts'
+SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/scripts'
 
 
 def load(name):
@@ -309,6 +309,35 @@ class SkillBatchV2Tests(unittest.TestCase):
         self.assertEqual(json.loads(completed.stdout)['routes'],
                          {'direct': 2, 'reviewed': 0, 'pending': 1, 'failed': 0})
         self.assertFalse(list(self.root.rglob('judgments.sqlite3')))
+
+    def test_prepare_cli_requires_explicit_harness_config(self):
+        output = self.root / 'without-config'
+        completed = subprocess.run([sys.executable, str(SCRIPTS / 'prepare.py'),
+                                    '--snapshot', str(self.snapshot_path),
+                                    '--directory', 'KIP126/Sub', '--output', str(output)],
+                                   cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn('--config', completed.stderr)
+        self.assertFalse(output.exists())
+
+    def test_prepare_cli_freezes_each_harness_config_from_unrelated_directory(self):
+        for harness in ('codex', 'claude-code', 'kimi-code'):
+            with self.subTest(harness=harness):
+                config_path = SCRIPTS.parent / harness / 'formaliscope-enrich/config.json'
+                config = json.loads(config_path.read_text())
+                output = self.root / harness
+                completed = subprocess.run([sys.executable, str(SCRIPTS / 'prepare.py'),
+                                            '--config', str(config_path),
+                                            '--snapshot', str(self.snapshot_path),
+                                            '--directory', 'KIP126/Sub', '--output', str(output)],
+                                           cwd=self.root, capture_output=True, text=True)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(json.loads(completed.stdout)['model'], config['worker']['model'])
+                self.assertEqual(json.loads((output / 'agent-config.json').read_text()), config)
+                run = json.loads((output / 'manifest.json').read_text())['run']
+                self.assertEqual(run['model'], config['worker']['model'])
+                self.assertEqual(run['reasoning_effort'], config['worker']['reasoning_effort'])
+                self.assertEqual(run['topics'], config['topics'])
 
 
 if __name__ == '__main__':

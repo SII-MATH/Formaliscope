@@ -13,7 +13,7 @@ from review_app.enrichment import validate_enrichment
 from review_app.statements import compile_statements
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / '.agents/skills/formaliscope-enrich/scripts/collect.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'skills/scripts/collect.py'
 spec = importlib.util.spec_from_file_location('formaliscope_skill_collect', SCRIPT)
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)

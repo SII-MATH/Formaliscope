@@ -1,6 +1,6 @@
 # Statement 补充数据契约与导入
 
-[字段与填写标准 v2](SCHEMA_V2.md) 是当前生成规范。入口是 [仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)，分组调度、两阶段 prompt、准备和收集脚本统一在那里维护。新批次使用 v2；旧 v1 试跑仍可按原契约校验，不自动转换。
+[字段与填写标准 v2](SCHEMA_V2.md) 是当前生成规范。入口是按当前 harness 安装的 [仓库 Skill](../skills/README.md)，Codex、Claude Code、Kimi Code 三份调度说明与两阶段 prompt 分别维护在 `skills/`；准备和收集脚本共用 `skills/scripts/`。新批次使用 v2；旧 v1 试跑仍可按原契约校验，不自动转换。
 
 ## 当前流程
 
@@ -8,7 +8,7 @@
 
 没有预期材料时，判断为不知道；不能自行从 Lean 构造预期再判符合。第二阶段不能改变已保存的回译正文及其分值。主 Agent 复核也保留原始两个分值和完整机器预期判断，不把机器处理标为人的审阅。
 
-模型、推理等级、主题选项从 [config.json](../.agents/skills/formaliscope-enrich/config.json) 读取，prompt 不固定模型。准备脚本冻结配置和源码，续做沿用副本。调度层必须按配置显式启动子 Agent，并确认实际执行模型；模型不可用或不符时停止并准备新批次，不能静默回退。
+模型路由 ID、推理等级、主题选项从[当前 harness 的配置](../skills/README.md#模型配置)读取，prompt 不固定模型。准备脚本冻结配置和源码，续做沿用副本。调度层必须按配置显式启动子 Agent，并确认实际执行模型；模型不可用或不符时停止并准备新批次，不能静默回退。
 
 复核唯一条件是原始 `readback.confidence < threshold`，默认 0.8，等于阈值直接汇总。预期判断及其分值、角色、优先度、依赖数量、复杂度和抽样都不参与路由。正文 null 单列生成失败，不计成功，不以空正文覆盖现有回译。
 
@@ -41,17 +41,18 @@ Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、ba
 在仓库根目录准备一个新的私密批次：
 
 ```sh
-python3 .agents/skills/formaliscope-enrich/scripts/prepare.py \
+python3 skills/scripts/prepare.py \
+  --config /path/to/selected-agent-config.json \
   --snapshot /path/to/snapshot.json --directory KIP126/Interface/Axiom \
   --output .statement-enrichment/new-batch
 ```
 
-也可用 `--file`、`--declaration-id`，多次提供时取并集。可选 `--config`、用户指定的 `--threshold` 和 `--expectation-context`。冻结的预期材料只在第二阶段提供给 Worker。批次目录 0700、文件 0600，全部放在被 Git 忽略的 `.statement-enrichment/`；因为含内部评估，不放入公开目录。
+也可用 `--file`、`--declaration-id`，多次提供时取并集。必须通过 `--config` 指定当前 harness 的模型配置；可选用户指定的 `--threshold` 和 `--expectation-context`。冻结的预期材料只在第二阶段提供给 Worker。批次目录 0700、文件 0600，全部放在被 Git 忽略的 `.statement-enrichment/`；因为含内部评估，不放入公开目录。
 
 按 Skill 完成分组两阶段输出，调度层确认模型后收集：
 
 ```sh
-python3 .agents/skills/formaliscope-enrich/scripts/collect.py \
+python3 skills/scripts/collect.py \
   --snapshot .statement-enrichment/new-batch/snapshot.json \
   --manifest .statement-enrichment/new-batch/manifest.json \
   --result .statement-enrichment/new-batch/group-1.json \

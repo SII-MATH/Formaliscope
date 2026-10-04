@@ -15,7 +15,6 @@ SCRIPT = Path(__file__).resolve().parent / 'collect.py'
 spec = importlib.util.spec_from_file_location('formaliscope_prepare_collect', SCRIPT)
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / 'config.json'
 
 
 def _relative(value, label):
@@ -26,7 +25,7 @@ def _relative(value, label):
     return str(PurePosixPath(value))
 
 
-def prepare(snapshot_path, output, *, config_path=DEFAULT_CONFIG, directories=(), files=(),
+def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
             declaration_ids=(), threshold=0.8, expectation_context=None):
     """Validate all inputs, then create a new private directory with frozen copies."""
     snapshot = helper._read(snapshot_path)
@@ -93,7 +92,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--snapshot', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--config', type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument('--config', required=True, type=Path,
+                        help='explicit configuration for the selected harness')
     parser.add_argument('--directory', action='append', default=[])
     parser.add_argument('--file', action='append', default=[])
     parser.add_argument('--declaration-id', action='append', default=[])

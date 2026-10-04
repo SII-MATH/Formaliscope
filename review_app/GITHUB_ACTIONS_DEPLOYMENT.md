@@ -14,7 +14,7 @@
 
 同一 `snapshot-*` 已公开时，重跑只读取并校验原有 Release 元数据、三份附件完整性、SHA-256、快照内部 digest、干净 Statement 来源与 manifest，然后复用；任何缺失或损坏都报错，不自动修复或覆盖。新 builder 对同一 source commit 生成不同证据时报告 `immutable snapshot conflict`，需要另行评审证据版本方案。仅 `generated_at` 构建时间变化可复用原始附件，其他快照字段和 manifest 必须一致；原始附件字节和校验和保持不变。
 
-应用包包括 `review_app/`、`statement_workflow/` 与 enrichment schema。补充数据通过 [仓库 Skill](../.agents/skills/formaliscope-enrich/SKILL.md) 在 Codex 会话内按指定范围生成，生产站点消费安装后的快照，VPS 无需启动回译执行器。自动快照 workflow 发布的是基础源码快照，不自动生成 Agent 回译。需要发布 enrichment 时，先对冻结基础快照运行 `validate-enrichment` 和 `enrich-snapshot`，将校验通过的候选产物作为单独的正式变更评审；不能默默替换同一标签的证据。
+应用包包括 `review_app/`、`statement_workflow/` 与 enrichment schema。补充数据通过 [仓库 Skill](../skills/README.md) 按当前 Codex、Claude Code 或 Kimi Code harness 安装后，在会话内按指定范围生成，生产站点消费安装后的快照，VPS 无需启动回译执行器。自动快照 workflow 发布的是基础源码快照，不自动生成 Agent 回译。需要发布 enrichment 时，先对冻结基础快照运行 `validate-enrichment` 和 `enrich-snapshot`，将校验通过的候选产物作为单独的正式变更评审；不能默默替换同一标签的证据。
 
 读取私有 `SII-MATH/KIP126` 需要只授予该仓库 Contents read 的 `KIP126_READ_TOKEN` Secret。发布使用 `GITHUB_TOKEN` 的 Contents write，CI 只有 Contents read。保护 main 并要求 CI 通过；按组织策略启用生产 Environment 审批。禁止在日志、制品或数据库打印 token 和恢复码。
 

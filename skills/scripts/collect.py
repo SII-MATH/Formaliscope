@@ -11,7 +11,7 @@ import sys
 
 
 # Locate the repository from this script, independently of the caller's cwd.
-REPO = Path(__file__).resolve().parents[4]
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 from review_app.enrichment import validate_enrichment
 
