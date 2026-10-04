@@ -50,7 +50,13 @@
     $('graph').addEventListener('keydown',event=>{const node=event.target.closest('[data-id]');if(node&&['Enter',' '].includes(event.key)){event.preventDefault();onSelect(node.dataset.id);}});
     $('zoom-in').onclick=()=>zoom(1.3);$('zoom-out').onclick=()=>zoom(1/1.3);
     $('center-graph').onclick=()=>{graphZoom=1;render();};$('graph-depth').onchange=render;
-    return Object.freeze({show});
+    function capture(){return {depth:$('graph-depth').value,zoom:graphZoom,box:{...graphBox}};}
+    function restore(state){
+      if(!state||![1,2].includes(Number(state.depth))||!Number.isFinite(state.zoom))return;
+      $('graph-depth').value=String(state.depth);graphZoom=Math.min(3,Math.max(.2,state.zoom));render();
+      if(state.box&&['x','y','w','h'].every(key=>Number.isFinite(state.box[key]))&&state.box.w>0&&state.box.h>0){graphBox={...state.box};applyBox();}
+    }
+    return Object.freeze({show,capture,restore});
   }
   (typeof window!=="undefined"?window:globalThis).StatementGraph=Object.freeze({create,neighborhood});
 })();

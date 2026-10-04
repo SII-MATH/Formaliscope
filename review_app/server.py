@@ -13,6 +13,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from .auth import AuthSettings, AuthStore, DeliveryError, SESSION_LIFETIME, normalize_email
 from .name_auth import NameAuthStore, RateLimited, name_settings
+from .session_store import SessionStore
+from .symbols import SymbolIndex
 from .build import normalize_snapshot
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
@@ -25,18 +27,23 @@ MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
 
 
-def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStore,
+def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionStore,
                  *, preview: bool = False, admin_emails: frozenset[str] = frozenset(),
                  trust_proxy_ip: bool = False):
     name_mode = isinstance(auth, NameAuthStore)
     auth_mode = "preview" if preview else "name" if name_mode else "email"
     cards_by_id = {card["id"]: card for card in snapshot["cards"]}
+    symbols = SymbolIndex(snapshot)
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
+             "/favicon.svg": ("favicon.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
              "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
              "/statement.js": ("statement.js", "text/javascript; charset=utf-8"),
              "/statement-api.js": ("statement-api.js", "text/javascript; charset=utf-8"),
              "/statement-identity.js": ("statement-identity.js", "text/javascript; charset=utf-8"),
+             "/statement-save.js": ("statement-save.js", "text/javascript; charset=utf-8"),
+             "/statement-navigation.js": ("statement-navigation.js", "text/javascript; charset=utf-8"),
+             "/statement-symbols.js": ("statement-symbols.js", "text/javascript; charset=utf-8"),
              "/statement-graph.js": ("statement-graph.js", "text/javascript; charset=utf-8"),
              "/directory-tree.js": ("directory-tree.js", "text/javascript; charset=utf-8"),
              "/review-labels.js": ("review-labels.js", "text/javascript; charset=utf-8"),
@@ -56,7 +63,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
         static_payloads[path] = (data, media, etag)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "KIP126Review/1"
+        server_version = "FormaliscopeReview/1"
 
         def _headers(self, code: int, content_type: str, size: int, *, etag: str | None = None,
                      extra_headers: dict[str, str] | None = None):
@@ -98,7 +105,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
                 return None
 
         def _viewer(self) -> str | None:
-            return auth.session_email(self._session_token())
+            return auth.session_reviewer(self._session_token())
 
         def _is_admin(self, viewer):
             if name_mode:
@@ -207,6 +214,19 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: AuthStor
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
                 self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial))
+                return
+            if path == '/api/symbol':
+                values = parse_qs(parsed.query)
+                try:
+                    result = symbols.resolve(values.get('card_id', [''])[0], values.get('name', [''])[0],
+                                             int(values.get('line', ['0'])[0]), int(values.get('column', ['0'])[0]),
+                                             values.get('scope', ['declaration'])[0])
+                except KeyError:
+                    self._json(404, {'error': '审核对象不存在'})
+                except (ValueError, TypeError) as error:
+                    self._json(400, {'error': str(error)})
+                else:
+                    self._json(200, result)
                 return
             if path == '/api/module':
                 module = parse_qs(parsed.query).get('file', [''])[0]
@@ -406,5 +426,5 @@ def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port:
     server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth,
                              preview=preview, admin_emails=admin_emails,
                              trust_proxy_ip=os.environ.get('REVIEW_TRUST_PROXY_IP', '').strip() == '1'))
-    print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)
+    print(f"Formaliscope review: http://{host}:{server.server_port}/", flush=True)
     server.serve_forever()

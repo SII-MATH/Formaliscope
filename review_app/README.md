@@ -9,11 +9,14 @@
 | `build.py` / `statements.py` | Blueprint 与 Statement 提取、源码版本、内容指纹和快照校验 |
 | `enrichment.py` | 手动 Agent 旁文件校验、源码依据绑定、生成候选补充快照 |
 | `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |
-| `name_auth.py` / `auth.py` / `preview.py` | 正式姓名身份、兼容邮箱验证码与本机预览 |
+| `session_store.py` / `name_auth.py` / `auth.py` / `preview.py` | 共享会话、正式姓名身份、兼容邮箱验证码与本机预览 |
 | `server.py` | HTTP 路由、资源、会话、授权和 API 适配 |
-| `storage.py` / `preflight.py` | 原子安装、在线备份及无写入部署预检 |
+| `storage.py` / `data_lock.py` / `preflight.py` | 安装与备份共用锁、在线备份和保留策略、无写入部署预检 |
+| `snapshot_artifacts.py` | 排他写入候选证据，不覆盖已有制品或运行数据 |
 | `static/statement.js` | 详情、列表、筛选与页面交互 |
 | `static/statement-api.js` / `statement-identity.js` / `statement-graph.js` | API 请求、身份交互和候选依赖图 |
+| `static/statement-save.js` / `statement-navigation.js` | 串行自动保存、失败重试、返回与阅读状态恢复 |
+| `symbols.py` / `static/statement-symbols.js` | 快照内名称与局部绑定定位、定义追溯交互 |
 | `static/directory-tree.js` / `review-labels.js` | 目录树与统一标签、状态筛选规则 |
 | `static/latex-renderer.js` / `lean-renderer.js` | 本地数学公式渲染与安全转义后的 Lean 高亮 |
 | `../statement_workflow/` | 独立 Agent 任务、上下文隔离、校验、重试与产物契约 |
@@ -21,14 +24,15 @@
 ## 构建与本地演示
 
 ```bash
-python3 -m review_app build --statements --source /path/to/KIP126 --data-dir .review
+python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
+python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .review
 python3 -m review_app preflight --preview --data-dir .review
 python3 -m review_app serve --preview --port 8876 --data-dir .review
 ```
 
 预览只监听 loopback，不发送验证码。姓名和恢复凭证隔离演示记录。只有 Statement 快照能使用预览身份；这个模式不能公开到生产。`--source-commit` 仅用于本机归档预览，它不能证明归档与提交一致，生产预检拒绝新生成的 `archive-unverified` 来源。
 
-生产从干净 Git 检出生成 `build --statements --require-clean`。早期 Blueprint 模式仍可用 `build --source /path/to/KIP126` 构建；它读取 `blueprint/src/content.tex` 的章节和 `\lean{...}`。已有 Blueprint 部署可显式运行 `preflight --legacy-blueprint`，不会把旧节点 ID 与 Statement ID 混用。
+生产从干净 Git 检出生成 `build --statements --require-clean --output <新文件>`。早期 Blueprint 模式仍可用 `build --source /path/to/KIP126 --output <新文件>` 构建；它读取 `blueprint/src/content.tex` 的章节和 `\lean{...}`。已有 Blueprint 部署可显式运行 `preflight --legacy-blueprint`，不会把旧节点 ID 与 Statement ID 混用。构建只产候选包；激活统一走 `install-snapshot`。兼容的 `build --data-dir` 仅用于空候选目录，不能覆盖已有快照或运行数据库。
 
 ## 手动 Agent 数据接入
 
@@ -57,8 +61,12 @@ python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data
 
 打开网页不会运行 Lake 或重新扫描源码。清单和详情分开获取；详情有内容指纹 ETag，人工进度与历史不缓存。数据库启用 WAL、短事务和 busy timeout，提交携带 UUID 以避免网络重试重复写入。
 
+选择审阅结论立即自动保存；备注停止输入 650 毫秒后保存。切换条目、审核范围或身份前等待当前修改保存，失败时保留输入并提供重试。成功提交直接更新当前记录和列表进度。工具栏“返回”与浏览器前进/后退恢复此前的筛选、视图、完整文件展开状态和阅读位置。
+
+Lean 代码中的名称可点击追溯定义。定位仅使用当前快照：唯一匹配跳转至声明，局部参数和绑定定位到源码，多个候选让用户选择；外部依赖或无法确定的名称给出说明。这是保守的源码索引，不执行 Lean elaboration，复杂模式绑定仍可能无法定位。
+
 前端数学使用本地 MathJax 包（Apache 2.0，见 `static/MATHJAX-LICENSE.txt`）；Lean 高亮在转义 HTML 字符后执行。资源不依赖 CDN。静态资源由服务启动时读取，因此更新代码或快照后需要重启。
 
 公开服务设置 HTTPS `REVIEW_PUBLIC_ORIGIN`，路径前缀设置 `REVIEW_COOKIE_PATH`，由代理剥去前缀再转发 loopback 服务。部署前运行 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；返回 ready=false 时命令失败，且不初始化数据库、不创建密钥、不发邮件。启动后 `GET /healthz` 无需登录，只报告就绪状态及 schema 版本，不返回条目、用户或路径。
 
-完整测试命令见 [根 README](../README.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有 [性能报告](PERFORMANCE.md) 基于早期 Blueprint 规模，新 Statement 规模需要部署演练时重新测量。
+完整测试命令见 [根 README](../README.md)，存储职责见 [STORAGE.md](STORAGE.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有 [性能报告](PERFORMANCE.md) 基于早期 Blueprint 规模，新 Statement 规模需要部署演练时重新测量。

@@ -4,13 +4,15 @@ import argparse
 import json
 import os
 from pathlib import Path
-import tempfile
+import shlex
+import sqlite3
 
-from .build import normalize_snapshot, write_snapshot
+from .build import compare_snapshots, normalize_snapshot, write_snapshot
 from .database import database_schema_version, initialize
 from .judgments import backfill_review_basis
 from .server import serve
-from .storage import create_backup, install_snapshot
+from .snapshot_artifacts import candidate_output_path, write_candidate_artifact
+from .storage import create_backup, install_snapshot, verify_backup
 
 
 def main():
@@ -18,11 +20,14 @@ def main():
     default_data_dir = Path(os.environ.get("REVIEW_DATA_DIR", app_root / ".review"))
     parser = argparse.ArgumentParser(description="KIP126 Blueprint correspondence review")
     sub = parser.add_subparsers(dest="command", required=True)
-    build = sub.add_parser("build", help="rebuild immutable evidence snapshot")
+    build = sub.add_parser("build", help="build a new evidence candidate; install-snapshot activates it")
     build.add_argument("--source", type=Path, required=True,
                        help="path to a separate KIP126 source checkout")
-    build.add_argument("--data-dir", type=Path, default=default_data_dir,
-                       help="persistent data directory (or REVIEW_DATA_DIR)")
+    build_output = build.add_mutually_exclusive_group(required=True)
+    build_output.add_argument("--output", type=Path,
+                              help="new candidate artifact outside reviewed source and runtime data")
+    build_output.add_argument("--data-dir", type=Path,
+                              help="compatibility: new candidate directory; existing snapshot or review data is refused")
     build.add_argument("--require-clean", action="store_true",
                        help="refuse a reviewed-source checkout with local changes")
     build.add_argument('--statements', action='store_true', help='index all KIP126 and KIPBase declarations for Statement review')
@@ -40,6 +45,11 @@ def main():
                         help="persistent data directory (or REVIEW_DATA_DIR)")
     backup.add_argument("--output", type=Path, required=True,
                         help="directory that will contain timestamped backups")
+    backup.add_argument("--keep", type=int,
+                        help="retain this many verified v2 backups for this data directory; default keeps all")
+    verification = sub.add_parser("verify-backup", help="read-only v2 backup verification before transfer or restore")
+    verification.add_argument("--directory", type=Path, required=True,
+                              help="complete v2 timestamped backup directory")
     install = sub.add_parser("install-snapshot", help="validate and install a reviewed-source snapshot")
     install.add_argument("--file", type=Path, required=True, help="snapshot artifact to install")
     install.add_argument("--data-dir", type=Path, default=default_data_dir,
@@ -72,6 +82,17 @@ def main():
             operation.add_argument('--reviewer', required=True, help='exact existing internal reviewer key')
             operation.add_argument('--admin', action='store_true', help='explicitly grant operator role')
     args = parser.parse_args()
+    if args.command == "verify-backup":
+        try:
+            directory = args.directory.expanduser().absolute()
+            manifest = verify_backup(directory)
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+            parser.error(str(exc))
+        print(json.dumps({'valid': True, 'directory': str(directory),
+                          'schema': manifest['schema'],
+                          'database_schema_version': manifest['database_schema_version'],
+                          'snapshot_digest': manifest['snapshot_digest']}, ensure_ascii=False))
+        return
     if args.command in {'validate-enrichment', 'enrich-snapshot'}:
         from .enrichment import enrich_snapshot, validate_enrichment
         try:
@@ -79,31 +100,48 @@ def main():
             annotation = json.loads(args.file.read_text(encoding='utf-8'))
             count = len(validate_enrichment(annotation, base))
             if args.command == 'enrich-snapshot':
-                output = args.output.expanduser().resolve()
-                if output.exists() or output in {args.snapshot.resolve(), args.file.resolve()}:
-                    raise ValueError('--output must be a new file, separate from the input artifacts')
                 candidate = enrich_snapshot(base, annotation)
-                output.parent.mkdir(parents=True, exist_ok=True)
-                temporary = None
-                try:
-                    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=output.parent,
-                                                     prefix='.enrichment-', delete=False) as artifact:
-                        temporary = Path(artifact.name)
-                        json.dump(candidate, artifact, ensure_ascii=False)
-                        artifact.write('\n')
-                        artifact.flush()
-                        os.fsync(artifact.fileno())
-                    # Hard-link installation refuses a racing overwrite too.
-                    os.link(temporary, output)
-                finally:
-                    if temporary is not None:
-                        temporary.unlink(missing_ok=True)
+                output = write_candidate_artifact(candidate, args.output,
+                                                  input_artifacts=(args.snapshot, args.file))
                 print(json.dumps({'annotations': count, 'snapshot_digest': candidate['digest'],
-                                  'comparison': candidate['comparison'], 'output': str(output)}, ensure_ascii=False))
+                                  'comparison': candidate['comparison'], 'output': str(output),
+                                  'install_command': shlex.join(['python3', '-m', 'review_app', 'install-snapshot',
+                                                                 '--file', str(output), '--data-dir', '/path/to/review-data'])},
+                                 ensure_ascii=False))
             else:
                 print(json.dumps({'valid': True, 'annotations': count}, ensure_ascii=False))
         except (OSError, ValueError, KeyError, TypeError) as error:
             parser.exit(1, f'{error}\n')
+        return
+    if args.command == "build":
+        source = args.source.expanduser().resolve()
+        if not (source / "KIP126").is_dir() or (not args.statements and not (source / "blueprint/src/content.tex").is_file()):
+            parser.error(f"--source is not a KIP126 checkout: {source}")
+        requested_output = args.output if args.output is not None else args.data_dir / "snapshot.json"
+        try:
+            output = candidate_output_path(requested_output, source_tree=source)
+            if args.statements:
+                import re
+                from .statements import compile_statements
+                if args.source_commit and (not re.fullmatch('[0-9a-f]{40}', args.source_commit) or args.require_clean):
+                    parser.error('--source-commit requires an exact archive commit and cannot be combined with --require-clean')
+                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations)
+                if args.require_clean and result['source_dirty']:
+                    parser.error('reviewed source has uncommitted changes')
+                result['comparison'] = compare_snapshots(None, result)
+                write_candidate_artifact(result, output, source_tree=source)
+            else:
+                if args.source_commit:
+                    parser.error('--source-commit is only supported for --statements')
+                result = write_snapshot(source, output, require_clean=args.require_clean)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        print(f"{len(result['cards'])} review cards, {result['unlinked_nodes']} unlinked Blueprint nodes")
+        comparison = result["comparison"]
+        print("candidate content: " + ", ".join(f"{name}={count}" for name, count in comparison.items()))
+        print(f"candidate snapshot {result['digest']} -> {output}")
+        print('Next: ' + shlex.join(['python3', '-m', 'review_app', 'install-snapshot',
+                                     '--file', str(output), '--data-dir', '/path/to/review-data']))
         return
     data_dir = args.data_dir.expanduser().resolve()
     if args.command in {'create-admin', 'bind-recovery'}:
@@ -125,7 +163,7 @@ def main():
                 secret_file.write(recovery + '\n')
                 secret_file.flush()
                 os.fsync(secret_file.fileno())
-                reviewer = auth.session_email(token)
+                reviewer = auth.session_reviewer(token)
                 auth.logout(token)
         except (OSError, ValueError) as error:
             output.unlink(missing_ok=True)
@@ -133,40 +171,9 @@ def main():
         print(json.dumps({'reviewer': reviewer, 'name': args.name.strip(), 'recovery_file': str(output)}, ensure_ascii=False))
         return
     snapshot = data_dir / "snapshot.json"
-    if args.command == "build":
-        source = args.source.expanduser().resolve()
-        if not (source / "KIP126").is_dir() or (not args.statements and not (source / "blueprint/src/content.tex").is_file()):
-            parser.error(f"--source is not a KIP126 checkout: {source}")
-        try:
-            if args.statements:
-                import re
-                from .statements import compile_statements
-                if args.source_commit and (not re.fullmatch('[0-9a-f]{40}', args.source_commit) or args.require_clean):
-                    parser.error('--source-commit requires an exact archive commit and cannot be combined with --require-clean')
-                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations)
-                if args.require_clean and result['source_dirty']:
-                    parser.error('reviewed source has uncommitted changes')
-                from .build import compare_snapshots
-                previous = normalize_snapshot(json.loads(snapshot.read_text())) if snapshot.is_file() else None
-                result['comparison'] = compare_snapshots(previous, result)
-                snapshot.parent.mkdir(parents=True, exist_ok=True)
-                temp = snapshot.with_suffix('.tmp')
-                temp.write_text(json.dumps(result, ensure_ascii=False)+'\n', encoding='utf-8')
-                temp.chmod(0o600)
-                temp.replace(snapshot)
-            else:
-                if args.source_commit:
-                    parser.error('--source-commit is only supported for --statements')
-                result = write_snapshot(source, snapshot, require_clean=args.require_clean)
-        except ValueError as exc:
-            parser.error(str(exc))
-        print(f"{len(result['cards'])} review cards, {result['unlinked_nodes']} unlinked Blueprint nodes")
-        comparison = result["comparison"]
-        print("source update: " + ", ".join(f"{name}={count}" for name, count in comparison.items()))
-        print(f"snapshot {result['digest']} -> {snapshot}")
-    elif args.command == "serve":
+    if args.command == "serve":
         if not snapshot.exists():
-            parser.error(f"snapshot missing in {data_dir}; run build first with the same --data-dir")
+            parser.error(f"snapshot missing in {data_dir}; build a candidate and use install-snapshot first")
         if args.preview and json.loads(snapshot.read_text()).get('review_mode') != 'statement':
             parser.error('--preview requires a Statement snapshot; build with --statements')
         emails = args.admin_email + os.environ.get('REVIEW_ADMIN_EMAILS', '').split(',')
@@ -177,8 +184,8 @@ def main():
               preview=args.preview, admin_emails=admins)
     elif args.command == "backup":
         try:
-            destination = create_backup(data_dir, args.output.expanduser().resolve())
-        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            destination = create_backup(data_dir, args.output.expanduser().absolute(), keep=args.keep)
+        except (OSError, ValueError, sqlite3.Error) as exc:
             parser.error(str(exc))
         print(f"consistent backup -> {destination}")
     elif args.command == "install-snapshot":
@@ -198,13 +205,17 @@ def main():
         if not result['ready']:
             parser.exit(1)
     else:
+        from .data_lock import data_lock
         if not snapshot.is_file():
-            parser.error(f"snapshot missing in {data_dir}; install or build it before migrating")
-        before = database_schema_version(data_dir / "judgments.sqlite3")
-        initialize(data_dir / "judgments.sqlite3")
-        active_snapshot = normalize_snapshot(json.loads(snapshot.read_text(encoding="utf-8")))
-        backfilled = backfill_review_basis(data_dir / "judgments.sqlite3", active_snapshot)
-        after = database_schema_version(data_dir / "judgments.sqlite3")
+            parser.error(f"snapshot missing in {data_dir}; install it before migrating")
+        with data_lock(data_dir):
+            if not snapshot.is_file():
+                parser.error(f"snapshot missing in {data_dir}; install it before migrating")
+            before = database_schema_version(data_dir / "judgments.sqlite3")
+            initialize(data_dir / "judgments.sqlite3")
+            active_snapshot = normalize_snapshot(json.loads(snapshot.read_text(encoding="utf-8")))
+            backfilled = backfill_review_basis(data_dir / "judgments.sqlite3", active_snapshot)
+            after = database_schema_version(data_dir / "judgments.sqlite3")
         print(f"database schema: {before} -> {after}")
         print(f"review bases backfilled: {backfilled}")
 

@@ -20,7 +20,8 @@ HTTP 工作负载：16 个客户端同时开始，各打开 24 张卡片。每�
 复测命令（在仓库根目录）：
 
 ```bash
-python3 -m review_app build --source /path/to/KIP126
+python3 -m review_app build --source /path/to/KIP126 --output /tmp/blueprint-candidate.json
+python3 -m review_app install-snapshot --file /tmp/blueprint-candidate.json --data-dir .review
 python3 -m review_app.benchmark_http --clients 16 --cards 24 --repeat 5
 # 可选：安装 Playwright 和 Chromium 后
 python3 -m review_app.benchmark_browser

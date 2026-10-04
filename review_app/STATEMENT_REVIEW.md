@@ -7,7 +7,8 @@ KIP-12 的前端功能预览固定于 KIP126 `develop` 提交 `38554617a4465bbce
 需要 Python 3.10+，应用只使用标准库：
 
 ```sh
-python3 -m review_app build --statements --source /path/to/KIP126 --data-dir .statement-review
+python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
+python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .statement-review
 python3 -m review_app serve --preview --port 8876 --data-dir .statement-review
 ```
 

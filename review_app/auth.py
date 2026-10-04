@@ -13,14 +13,11 @@ import re
 import secrets
 import shutil
 import smtplib
-import sqlite3
 import ssl
 import subprocess
 import tempfile
-import threading
 import time
 import uuid
-from collections import OrderedDict
 from contextlib import closing
 from dataclasses import dataclass, field
 from email.message import EmailMessage
@@ -28,15 +25,15 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
+from .session_store import SESSION_CACHE_LIMIT, SESSION_LIFETIME, SessionStore
+
 CODE_LIFETIME = 600
-SESSION_LIFETIME = 12 * 3600
 MAX_CODE_ATTEMPTS = 5
 REQUEST_INTERVAL = 60
 EMAIL_HOURLY_LIMIT = 5
 IP_HOURLY_LIMIT = 30
 GLOBAL_MINUTE_LIMIT = 8
 GLOBAL_DAILY_LIMIT = 40  # The currently bound mailbox allows 50 sends/day.
-SESSION_CACHE_LIMIT = 4096
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 
@@ -128,8 +125,8 @@ def smtp_send(settings: AuthSettings, email: str, code: str) -> None:
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = email
-    message["Subject"] = "KIP126 审核台登录验证码"
-    message.set_content(f"你的 KIP126 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n")
+    message["Subject"] = "Formaliscope 审核台登录验证码"
+    message.set_content(f"你的 Formaliscope 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n")
     context = ssl.create_default_context()
     if settings.smtp_security == "ssl":
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10, context=context) as smtp:
@@ -148,69 +145,29 @@ def agently_send(email: str, code: str) -> None:
     """Use the locally authorized mailbox without placing the code in argv/logs."""
     with tempfile.TemporaryDirectory(prefix="kip126-otp-") as directory:
         body = Path(directory) / "body.txt"
-        body.write_text(f"你的 KIP126 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n",
+        body.write_text(f"你的 Formaliscope 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n",
                         encoding="utf-8")
         body.chmod(0o600)
         result = subprocess.run([
             "agently-cli", "message", "+send", "--to", email,
-            "--subject", "KIP126 审核台登录验证码", "--body-file", "./body.txt",
+            "--subject", "Formaliscope 审核台登录验证码", "--body-file", "./body.txt",
             "--body-format", "plain", "--confirmed",
         ], cwd=directory, capture_output=True, text=True, timeout=20, check=False)
     if result.returncode != 0:
         raise DeliveryError("configured mailbox rejected the message")
 
 
-class AuthStore:
+class AuthStore(SessionStore):
     def __init__(self, db_path: Path, settings: AuthSettings,
                  sender: Callable[[str, str], None] | None = None,
                  clock: Callable[[], float] = time.time):
-        self.db_path = db_path
+        super().__init__(db_path, clock=clock)
         self.settings = settings
         self.sender = sender or (agently_send if settings.mailer == "agently"
                                  else lambda email, code: smtp_send(settings, email, code))
-        self.clock = clock
-        self.lock = threading.Lock()
-        self.sessions: OrderedDict[str, tuple[str, int]] = OrderedDict()
-        self.pepper = self._load_pepper(db_path.parent / "auth-pepper")
-        self._initialize()
 
-    @staticmethod
-    def _load_pepper(path: Path) -> bytes:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            pass
-        else:
-            with os.fdopen(descriptor, "wb") as output:
-                output.write(secrets.token_bytes(32))
-        value = path.read_bytes()
-        if len(value) != 32:
-            raise ValueError("auth-pepper must contain exactly 32 bytes")
-        return value
-
-    def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.db_path, timeout=5, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        return db
-
-    def _initialize(self) -> None:
-        with closing(self._connect()) as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS login_challenges (
-                id TEXT PRIMARY KEY, email TEXT NOT NULL, code_digest TEXT NOT NULL,
-                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 0, used_at INTEGER
-            )""")
-            db.execute("CREATE INDEX IF NOT EXISTS login_challenges_email ON login_challenges(email, created_at)")
-            db.execute("""CREATE TABLE IF NOT EXISTS login_requests (
-                email TEXT NOT NULL, ip_digest TEXT NOT NULL, created_at INTEGER NOT NULL
-            )""")
-            db.execute("CREATE INDEX IF NOT EXISTS login_requests_email ON login_requests(email, created_at)")
-            db.execute("CREATE INDEX IF NOT EXISTS login_requests_ip ON login_requests(ip_digest, created_at)")
-            db.execute("""CREATE TABLE IF NOT EXISTS login_sessions (
-                token_digest TEXT PRIMARY KEY, email TEXT NOT NULL,
-                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
-            )""")
+    def _session_allowed(self, reviewer: str) -> bool:
+        return self.settings.permits(reviewer)
 
     def _code_digest(self, challenge_id: str, code: str) -> str:
         return hmac.new(self.pepper, f"{challenge_id}:{code}".encode(), hashlib.sha256).hexdigest()
@@ -279,49 +236,8 @@ class AuthStore:
                         (MAX_CODE_ATTEMPTS, now, row["id"]))
                     db.execute("COMMIT")
                     return None
-                token = secrets.token_urlsafe(32)
-                token_digest = hashlib.sha256(token.encode()).hexdigest()
-                expires_at = now + SESSION_LIFETIME
                 db.execute("UPDATE login_challenges SET used_at=? WHERE id=?", (now, row["id"]))
-                db.execute("INSERT INTO login_sessions VALUES (?, ?, ?, ?)",
-                           (token_digest, email, now, expires_at))
+                token = self._insert_session(db, email, now)
                 db.execute("COMMIT")
-                self._cache_session(token_digest, email, expires_at)
+                self._remember_session(token, email, now)
                 return token
-
-    def _cache_session(self, digest: str, email: str, expires_at: int) -> None:
-        """Caller holds self.lock. This server has exactly one serving process."""
-        self.sessions[digest] = (email, expires_at)
-        self.sessions.move_to_end(digest)
-        if len(self.sessions) > SESSION_CACHE_LIMIT:
-            self.sessions.popitem(last=False)
-
-    def session_email(self, token: str | None) -> str | None:
-        if not token or len(token) > 128:
-            return None
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        now = int(self.clock())
-        with self.lock:
-            cached = self.sessions.get(digest)
-            if cached:
-                email, expires_at = cached
-                if expires_at > now and self.settings.permits(email):
-                    self.sessions.move_to_end(digest)
-                    return email
-                self.sessions.pop(digest, None)
-                return None
-            with closing(self._connect()) as db:
-                row = db.execute("SELECT email, expires_at FROM login_sessions WHERE token_digest=? AND expires_at>?",
-                                 (digest, now)).fetchone()
-            if row and self.settings.permits(row["email"]):
-                self._cache_session(digest, row["email"], row["expires_at"])
-                return row["email"]
-            return None
-
-    def logout(self, token: str | None) -> None:
-        if token and len(token) <= 128:
-            digest = hashlib.sha256(token.encode()).hexdigest()
-            with self.lock:
-                with closing(self._connect()) as db:
-                    db.execute("DELETE FROM login_sessions WHERE token_digest=?", (digest,))
-                self.sessions.pop(digest, None)

@@ -61,3 +61,18 @@ mjx-container[jax="SVG"]{direction:ltr;position:relative;display:inline-block;ma
 #recovery-dialog form{display:grid;gap:12px}#recovery-dialog p{line-height:1.7}#account-recovery-code{width:100%;font:12px ui-monospace,monospace;margin-top:8px}#recovery-result label{display:block}#recovery-error{color:#9f4a35;font-size:12px}
 
 .source-version{max-width:65%;text-align:right}.source-version summary{cursor:pointer;font-size:10px;color:#758970}.source-version code{display:block;margin-top:8px;font:10px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}
+
+/* Keep the actual focus target inside the visible verdict option. */
+.verdicts label{position:relative;display:block}
+.verdicts input{inset:0;width:100%;height:100%;margin:0;padding:0;z-index:1}
+.decision-actions>span{min-height:1.5em}.decision-actions .save-error{color:#a34f3b}
+#back-card{white-space:nowrap;font-size:11px}
+.lean-code .lean-symbol{display:inline;border:0;border-radius:0;padding:0;margin:0;background:transparent;color:inherit;font:inherit;line-height:inherit;vertical-align:baseline}
+.lean-code .lean-symbol:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;color:#285e45}
+.lean-code .symbol-highlight{background:#e4edbd;box-shadow:0 0 0 2px #a9bf72;border-radius:2px}
+.symbol-panel{margin:12px 0 17px;padding:14px 18px;background:#f9fcf5;border:1px solid #d9e5cc;border-radius:8px;font-size:12px}
+.symbol-heading{display:flex;align-items:center;gap:10px;justify-content:space-between}.symbol-heading strong{font:600 12px ui-monospace,monospace;overflow-wrap:anywhere}
+.symbol-heading button{padding:2px 7px;border:0;background:transparent}.symbol-panel p{margin:9px 0 0;line-height:1.7;color:#647b59}
+.symbol-candidates{display:grid;gap:6px;margin-top:10px}.symbol-candidates button{text-align:left;overflow-wrap:anywhere}
+.symbol-candidates b{display:block;font:11px ui-monospace,monospace}.symbol-candidates small{display:block;margin-top:5px;color:#79916d;font-size:10px}
+@media(max-width:700px){.main-panel>.view-toolbar{gap:8px;flex-wrap:wrap}.view-toolbar .segmented button{padding:7px 9px}}

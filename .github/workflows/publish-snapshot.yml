@@ -49,7 +49,7 @@ jobs:
           set -Eeuo pipefail
           python3 -m review_app build \
             --source "$GITHUB_WORKSPACE/kip126" \
-            --data-dir "$RUNNER_TEMP/formaliscope-snapshot" \
+            --output "$RUNNER_TEMP/formaliscope-snapshot/snapshot.json" \
             --statements \
             --require-clean
           cp "$RUNNER_TEMP/formaliscope-snapshot/snapshot.json" snapshot.json

@@ -2,8 +2,14 @@
 set -Eeuo pipefail
 DATA_DIR="${REVIEW_DATA_DIR:-/var/lib/formaliscope}"
 OUTPUT="${REVIEW_BACKUP_DIR:-/var/backups/formaliscope}"
+KEEP="${REVIEW_BACKUP_KEEP:-30}"
 cd /opt/formaliscope/current
+COMMAND=(/usr/bin/python3 -m review_app)
 if [[ "$(id -u)" == 0 ]]; then
-  exec runuser -u formaliscope-review -- /usr/bin/python3 -m review_app backup --data-dir "$DATA_DIR" --output "$OUTPUT"
+  COMMAND=(runuser -u formaliscope-review -- "${COMMAND[@]}")
 fi
-exec /usr/bin/python3 -m review_app backup --data-dir "$DATA_DIR" --output "$OUTPUT"
+if BACKUP_HELP="$("${COMMAND[@]}" backup --help 2>/dev/null)" && [[ "$BACKUP_HELP" == *"--keep"* ]]; then
+  exec "${COMMAND[@]}" backup --data-dir "$DATA_DIR" --output "$OUTPUT" --keep "$KEEP"
+fi
+printf '%s\n' 'Current application does not support backup retention; creating a backup and keeping existing backups.' >&2
+exec "${COMMAND[@]}" backup --data-dir "$DATA_DIR" --output "$OUTPUT"

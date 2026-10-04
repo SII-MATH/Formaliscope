@@ -23,6 +23,7 @@ sudo install -d -o formaliscope-review -g formaliscope-review -m 0700 \
 sudo install -d -o root -g formaliscope-review -m 0750 /etc/formaliscope
 sudo install -d -o root -g root -m 0755 /opt/formaliscope/releases
 sudo install -o root -g formaliscope-review -m 0640 deploy/review.env.example /etc/formaliscope/review.env
+sudo install -o root -g formaliscope-review -m 0640 deploy/backup.env.example /etc/formaliscope/backup.env
 ```
 
 配置 `REVIEW_AUTH_MODE=name`、HTTPS Origin 和 Cookie 路径，不需要邮箱服务、学生名单或密码。管理员由服务账号在候选应用目录执行下列命令创建；凭证文件只读给本人，勿打包或上传：
@@ -39,7 +40,7 @@ sudo -u formaliscope-review python3 -m review_app create-admin \
 
 ```bash
 python3 -m review_app build --statements --require-clean \
-  --source /srv/KIP126 --data-dir /tmp/formaliscope-artifact
+  --source /srv/KIP126 --output /tmp/formaliscope-artifact/snapshot.json
 ```
 
 应用包必须包含 `review_app/`、`statement_workflow/schema/` 及其本地静态资源。只复制 `review_app/` 会丢失 enrichment v1 运行契约。安装应用包到 `/opt/formaliscope/releases/<app-commit>`，先创建 `current` 链接，再以服务账号安装经过校验的候选快照：
@@ -89,19 +90,25 @@ Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已�
 
 1. 在新 release 目录运行全部应用、Workflow、模块和 schema 导入回归，校验制品 checksum。
 2. 记录当前应用提交、快照 digest、数据库 schema 及 `current` 目标；创建在线备份并确认异机副本可读取。
-3. 先对当前快照执行 `migrate`，再安装新快照。旧快照用于为早期判断补齐稳定依据，不能先覆盖。
+3. 先停止审核服务，再用新代码对当前快照执行 `migrate`，之后才安装新快照。schema 7 会重命名会话列，迁移时旧进程不能继续读写。旧快照用于为早期判断补齐稳定依据，不能先覆盖。
 4. 检查 `unchanged/changed/added/removed`，在实际服务身份下运行预检。
 5. 原子切换 `current`，重启服务；检查 `/healthz`、公开入口与登录。确认后启用拉取 timer。
 
 ```bash
-sudo /usr/local/sbin/formaliscope-review-backup
+# 使用旧 current 的 CLI 先做备份，不向旧版本传入新参数。
+cd /
+sudo -u formaliscope-review env PYTHONPATH="$(readlink -f /opt/formaliscope/current)" \
+  python3 -m review_app backup --data-dir /var/lib/formaliscope --output /var/backups/formaliscope
+sudo systemctl stop formaliscope-review.service
+# migrate 应在新候选 release 目录执行。
+cd /opt/formaliscope/releases/<new-commit>
 sudo -u formaliscope-review python3 -m review_app migrate --data-dir /var/lib/formaliscope
 sudo ln -sfn /opt/formaliscope/releases/<new-commit> /opt/formaliscope/current.new
 sudo mv -Tf /opt/formaliscope/current.new /opt/formaliscope/current
 sudo systemctl restart formaliscope-review.service
 ```
 
-这些命令应由指定 release 提供 Python 模块；不要在其他 checkout 下误运行。发布脚本以 `formaliscope-review` 身份做迁移和快照写入，避免 root 创建的 0600 数据文件使服务无法读取。
+备份命令应从 `/` 执行，确保 `PYTHONPATH` 指定旧 current；迁移命令由新候选 release 提供模块。不要在其他 checkout 下误运行。发布脚本以 `formaliscope-review` 身份做迁移和快照写入，避免 root 创建的 0600 数据文件使服务无法读取。迁移失败时保留服务停用和备份，确认数据库兼容性后再恢复；不能自动重启只支持旧 schema 的代码。
 
 ## 备份、恢复与回滚
 
@@ -111,7 +118,19 @@ sudo systemctl restart formaliscope-review.service
 sudo /usr/local/sbin/formaliscope-review-backup
 ```
 
-时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份移除验证码、会话、限流与预览凭证，保留姓名身份、角色和恢复摘要；恢复后用原恢复码重新登录。`auth-pepper` 不在应用备份中，恢复时可以重新生成。明文恢复码文件不在备份或应用包中，用户自行保存。异机备份应加密并设置保留周期、容量告警及定期恢复演练。
+时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份与快照安装共用数据目录的 `.data.lock`；快照只读取一次，清单记录该副本及数据库的 SHA-256 和大小。备份移除验证码、会话、限流与预览凭证，保留姓名身份、角色和恢复摘要；恢复后用原恢复码重新登录。`auth-pepper` 不在应用备份中，恢复时可以重新生成。明文恢复码文件不在备份或应用包中，用户自行保存。
+
+每日 helper 默认保留最近 30 份已验证的 v2 备份。可在 `/etc/formaliscope/backup.env` 设置 `REVIEW_BACKUP_KEEP`；该文件由 backup service 读取，直接运行 helper 时需显式导出环境变量。保留数量必须为正整数；只有新备份成功完成后才清理。旧 v1 备份、其他数据目录的备份、符号链接、不完整目录和未知文件不自动删除，升级后的历史备份需单独评估。直接运行 `python3 -m review_app backup --data-dir ... --output ...` 默认不清理；加 `--keep 30` 才启用数量保留。helper 与旧应用组合时自动退回旧版备份命令，保留全部历史。
+
+新 v2 备份在传输前和异机解密后可只读核对：
+
+```bash
+python3 -m review_app verify-backup --directory /var/backups/formaliscope/<timestamp>
+```
+
+该命令不要求原数据目录存在，不创建身份或密钥。旧 v1 没有文件摘要与目录范围，仍按既有 SQLite 完整性和快照校验步骤恢复，不进入自动保留清理。
+
+异机目的地尚未配置。当前已准备配置模板和完整备份格式，后续传输任务应只读取已经完成的时间戳目录，加密复制到指定服务器或对象存储，核对远端摘要，并在空目录演练恢复后再制定远端保留策略。不要复制运行中的 SQLite 主文件作为异机备份，不要带上登录会话、密钥或明文恢复码。详细约定见 [存储设计](STORAGE.md)。
 
 发现 readiness 或登录失败时，先暂停 `formaliscope-app-pull.timer` 和 `formaliscope-snapshot-pull.timer`，停止服务，保存失败现场。区分两类恢复：
 
@@ -122,7 +141,7 @@ sudo /usr/local/sbin/formaliscope-review-backup
 
 ## 容量与待部署确认
 
-当前 develop 示例快照约 41 MB，含 6,222 条声明与 1,421 个文件；早期“255 张卡片、约 0.5 MB”的容量估算不适用于 Statement 模式。若 1,000 人各保存一次全库判断，量级约 622 万条；历史重判会继续增加记录。
+当前 KIP126 示例快照约 41 MB，含 6,222 条声明与 1,421 个文件；早期“255 张卡片、约 0.5 MB”的容量估算不适用于 Statement 模式。若 1,000 人各保存一次全库判断，量级约 622 万条；历史重判会继续增加记录。
 
 上线前按实际审阅人数、摘要长度、备份频率与保留期测量数据库、备份和磁盘余量，重新做列表/依赖图/并发写入演练。监控磁盘、写入延迟、数据库锁等待、备份生成及完整性检查；需要多写实例时再规划 PostgreSQL。
 

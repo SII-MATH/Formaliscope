@@ -13,6 +13,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .snapshot_artifacts import candidate_output_path, write_candidate_artifact
+
 NODE_ENVIRONMENTS = "definition theorem lemma proposition corollary remark example construction".split()
 NODE_RE = re.compile(
     r"\\begin\{(" + "|".join(NODE_ENVIRONMENTS) + r")\}(?:\[([^]]*)\])?(.*?)\\end\{\1\}",
@@ -296,19 +298,11 @@ def _git_dirty(repo: Path) -> bool:
 
 
 def write_snapshot(repo: Path, output: Path, *, require_clean: bool = False) -> dict:
+    """Build a new candidate artifact; install_snapshot activates review evidence."""
+    output = candidate_output_path(output, source_tree=repo)
     payload = compile_snapshot(repo)
     if require_clean and payload["source_dirty"]:
         raise ValueError("reviewed source checkout has uncommitted or untracked changes")
-    previous = None
-    if output.is_file():
-        try:
-            previous = normalize_snapshot(json.loads(output.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            previous = None
-    payload["comparison"] = compare_snapshots(previous, payload)
-    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.chmod(0o600)
-    temporary.replace(output)
+    payload["comparison"] = compare_snapshots(None, payload)
+    write_candidate_artifact(payload, output, source_tree=repo)
     return payload

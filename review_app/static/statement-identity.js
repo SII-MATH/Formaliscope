@@ -60,8 +60,9 @@
       catch(error){$('name-error').textContent=error.message;}
       finally{$('resume-button').disabled=false;}
     };
-    $('profile-button').onclick=()=>{$('account-menu').open=false;show('edit');};
-    $('recovery-button').onclick=()=>{
+    $('profile-button').onclick=async()=>{if(!await mayNavigate())return;$('account-menu').open=false;show('edit');};
+    $('recovery-button').onclick=async()=>{
+      if(!await mayNavigate())return;
       $('account-menu').open=false;$('recovery-result').hidden=true;$('generate-recovery').hidden=false;
       $('account-recovery-code').value='';$('recovery-error').textContent='';
       $('recovery-help').textContent='原恢复码将失效，其他设备上的登录也会退出。当前浏览器继续保留身份。';
@@ -89,7 +90,7 @@
     $('close-recovery').onclick=()=>{$('recovery-dialog').close();clearRecovery();};
     $('recovery-dialog').addEventListener('close',clearRecovery);
     $('logout').onclick=async()=>{
-      if(!mayNavigate())return;
+      if(!await mayNavigate())return;
       try{await api.post('./api/auth/logout',{});identity=null;onLogout();unauthorized();}
       catch(error){$('save-global').textContent=error.message;}
     };

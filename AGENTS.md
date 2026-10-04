@@ -1,8 +1,9 @@
 # Formaliscope 工作约定
 
-- 日常开发默认在 `dev` 分支，跟踪 `origin/dev`；普通修改提交和推送到 dev。
+- 应用仓库只保留 `main` 和 `dev` 两个分支。日常开发默认在 `dev` 分支，跟踪 `origin/dev`；普通修改提交和推送到 dev。
 - 用户要求发版时，将已验证的 dev 合并到 main。main 更新会自动触发 GitHub Actions 测试、打包、发布；不要把每次开发修改直接推到 main。
 - 正式应用 Release 从 `v0.0.1` 开始自动增加 patch。重跑复用 commit 对应版本，已发布附件不可覆盖。证据快照仍使用独立的 `snapshot-*`。
 - 用户数据、数据库、恢复码、auth-pepper 与源码快照不提交到 Git、不进入应用发布包。KIP126 被审源码与应用仓库分开维护。
+- 构建只产生新的候选快照，运行证据只通过 `install-snapshot` 切换；表结构只通过有编号的数据库迁移更新。备份和快照安装共用数据目录锁。
 - 行为改变运行对应回归，发版前完成全部 Python 测试、前端模块检查及部署脚本语法检查。具体命令见 README；Linux systemd 验证由 CI 执行。
 - 发布 GitHub Release 与部署正式服务器是分别执行的动作。不要把发布成功报告成目标服务器已上线。
