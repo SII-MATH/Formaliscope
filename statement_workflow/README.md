@@ -1,131 +1,76 @@
-# Statement 审阅 Agent Workflow
+# Statement 补充数据契约与导入
 
-现有 Formaliscope 仓库的独立模块，与 `review_app/` 并列。Python 3.10+ 标准库即可运行。前端与工作流通过快照和分析 JSON 交换数据，工作流不依赖页面服务、不写人工审阅数据库、不改 KIP126 源码。
+`statement_workflow/schema/` 保存 Formaliscope 的声明补充数据契约。当前生成入口是 [仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)，操作步骤、子 Agent prompt、复核 prompt 和收集脚本统一在该 Skill 中维护。
 
-当前入口：[仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)。固定快照 → 按配置调用子 Agent 分组生成中文回译和字段 → 脚本校验 → 仅低置信度主 Agent 复核 → enrichment 与候选快照。模型和推理等级由 [config.json](../.agents/skills/formaliscope-enrich/config.json) 指定，prompt 不固定模型；每批保存配置副本，续做读取本批副本。该 Skill 不调用下方旧进程 Workflow 的强制逐条 audit。
+## 当前流程
 
-`confidence` 是每条子 Agent 自报的 0–1 分值，默认只有 `< 0.8` 触发语义复核；`0.8` 本身直接汇总。不按角色、优先度、依赖、复杂度、未解释对象或抽样追加触发。完整字段与来源校验仍全量执行，机械失败与语义复核分开。
+固定源码快照与选定范围 → 按配置调用子 Agent 分组生成中文回译及字段 → 脚本校验 → 低置信度主 Agent 复核 → 合并 enrichment → 生成候选快照 → 显式安装 → 用户审阅。
 
-为了保持已确认的应用 v1 schema，置信度放在 `formaliscope-agent-batch.v1` 外层映射，主 Agent 复核另存 `formaliscope-enrichment-review.v1`。收集脚本兼容旧的 `formaliscope-luna-batch.v1` 文件，新输出统一使用模型无关的格式名。Skill 的 `collect.py` 检查范围完整性、分值和现有 enrichment 契约，输出可直接导入的 `enrichment.json`、未复核队列和保留原分值/模型来源的报告。任何主 Agent 结果仍是机器草稿，不自动成为人的已审阅判断。
+模型和推理等级从 [config.json](../.agents/skills/formaliscope-enrich/config.json) 读取，prompt 不固定模型。每批保存配置副本，续做时沿用该副本。子 Agent 只依据冻结快照中的 Lean 代码回译，不使用已有中文正文、Blueprint 或人的判断来推断含义。
 
-下方 `engine.py` 保留为旧自动执行器骨架，流程为固定快照 → 独立上下文包 → Agent 盲读回译 → 新上下文审计 → 规则分级 → analysis.json；模型执行入口和 analysis→enrichment 转换仍未接通。它的必经 audit 和 `AGENT.md` 逐条执行约定不适用于当前 Skill 路径。
+语义复核仅由子 Agent 自报的 `confidence < threshold` 触发，默认阈值为 `0.8`；分值等于阈值时直接汇总。角色、优先度、依赖数量、复杂度、`unresolved` 和抽样均不参与路由。格式、源码和证据校验仍覆盖每条结果。
 
-## 当前选择：手动 Agent 补全与统一 schema
+置信度存在 `formaliscope-agent-batch.v1` 外层，主 Agent 复核记录另存 `formaliscope-enrichment-review.v1`，不改变应用的 enrichment v1。收集脚本兼容旧的 `formaliscope-luna-batch.v1` 输入，新输出统一使用模型无关的格式名。原始结果、分值和实际模型来源保留；主 Agent 复核仍是机器处理，不等于人工已审阅。
 
-当前先由协作 Agent 按用户指定的目录或条目分批读取源码、补字段、保存结果，不要求部署模型执行器或启动全库任务。自动 Workflow 保留为后续扩展。
+## 审阅范围
 
-交换契约 [statement-enrichment.v1.schema.json](schema/statement-enrichment.v1.schema.json)（JSON Schema 2020-12）保持已确认的 v1：手动 Agent 的补充数据按 declaration_id 与冻结快照关联；现有人工数据库和 analysis.v1 不迁移。已提供校验、新快照生成及前端消费；只有显式安装生成的候选快照才改变线上展示。
+6,222 是示例源码快照的索引数量，不是自动生成任务或人工必审数量。只为用户选定的目录、文件或声明产出 annotation；按需查阅的定义和实例用于上下文，不自动成为补全或复核目标。
 
-| 字段 | 含义与填写方 |
+按文件或相关数学主题分组，各组目标去重，结果逐声明保存。共享上下文时仍以每条声明本身为准，不能从邻近声明补出它没有的前提或结论。源码引用候选图可能遗漏字段、实例或混入证明引用；没有定位到引用不能解释为没有语义依赖。
+
+## 补充字段
+
+[statement-enrichment.v1.schema.json](schema/statement-enrichment.v1.schema.json) 是 JSON Schema 2020-12 交换契约。Agent 不改写提取的 Lean 名称、种类、位置和源码，展示仍以 Lean 短名为主标题。
+
+| 字段 | 含义 |
 | --- | --- |
-| 现有快照的 id / declaration / kind / module_file / lean | 提取器产生的 Lean 名称、种类、位置和源码；Agent 不改写。展示统一以 Lean 短名为主标题，title_zh 为可选副标题。 |
-| declaration_id / basis | 关联条目，绑定源码提交、快照摘要和完整声明 SHA-256；context_fingerprint 可为 null，此时没有经验证的语义上下文缓存绑定。 |
-| title_zh | Agent 补中文阅读标题；未填写为 null，不拿原始 Lean 名称假充中文。 |
-| summary_zh | Agent 的阅读摘要；不等同于语义回译，不能自动放入 readback。 |
-| readback | 只据 Lean 上下文生成的中文陈述，含 LaTeX、证据引用和无法解释的对象。Agent 只能填 none 或 draft；没有上下文时保持 none，草稿有缺口时列 unresolved。 |
-| classification | 一个候选数学角色和多个候选主题，附中文理由及证据；使用当前标签 ID 的末段。角色允许 unclassified，主题允许空数组。 |
-| priority | p0 / p1 / p2 或 null；有分级就必须有理由和证据。null 表示尚未分级，不能自动当作低优先度。 |
-| evidence | 此次实际读取的源码片段及文件行号；其他 evidence_ids 只引用本列表。 |
-| provenance | agent_manual、实际模型、生成时间、政策版本、上下文完整程度；记录此次是谁、基于什么生成。 |
-| 人工审阅状态 | 从当前用户、当前审阅依据的有效判断派生；继续保存于 review_app，不属于 Agent 输出字段。 |
+| `declaration_id` / `basis` | 关联条目，绑定源码提交、基础快照摘要和完整声明 SHA-256；当前 `context_fingerprint` 必须为 null。 |
+| `title_zh` | 中文阅读副标题；未填写为 null，不拿 Lean 名称假充中文。 |
+| `summary_zh` | 中文阅读摘要，不能自动作为语义回译。 |
+| `readback` | 中文数学陈述、LaTeX、证据和未解释对象；只能为 none 或 draft。 |
+| `classification` | 候选数学角色和主题，附中文理由及证据；角色允许 unclassified，主题允许空数组。 |
+| `priority` | p0 / p1 / p2 或 null；非空时必须有理由和证据，null 不代表低优先度。 |
+| `evidence` | 实际读取的源码片段、文件及行号；其他 evidence_ids 只引用本条证据列表。 |
+| `provenance` | 实际生成模型、时间、政策版本及上下文完整程度；method 为 agent_manual。 |
+| 人工审阅状态 | 保存在 review_app 的个人数据库，由当前身份与版本匹配判断派生，不属于 Agent 输出。 |
 
-数学角色：model、literature、computed、target、transport、derivation、challenge、infrastructure、unclassified。主题：spectral、adams、sphere、comparison。关注程度统一使用优先度，不增加风险标签。
+数学角色：model、literature、computed、target、transport、derivation、challenge、infrastructure、unclassified。主题：spectral、adams、sphere、comparison。关注程度使用优先度，不增加风险标签。
 
-一次手动补全流程：选范围 → 固定快照与源码 → 仅从 Lean 生成回译 → 按目录/上下文补分类与优先度 → 校验并保存旁文件 → 通过导入适配器展示 → 用户审阅。原文/已有中文标题仅能用于后续对照，不能带入独立回译输入。结构是逐条输出，执行可以按相关主题分批，不需要创建 6,000 个子 Agent。
+## 校验与候选快照
 
-导入器核对 source_commit / snapshot_digest / source_sha256 与冻结快照一致、declaration_id 唯一、证据 ID 唯一及引用有效、行号范围和实际片段一致。完整 snapshot_digest 绑定所有源码模块，改变上下文后旧旁文件不能重新导入。仅 source_sha256 无法证明依赖未变。本版没有经 Lean 验证的上下文适配器，因此 context_fingerprint 必须为 null，context_completeness 只允许 unknown / partial；complete 在 schema 中保留给后续适配器，目前导入拒绝。
+Skill 的 `collect.py` 校验目标集合、分值、源码及证据，生成 `enrichment.json`、`review-queue.json` 和 `report.json`。高置信度和已完成主 Agent 复核的条目进入 enrichment；未复核的低分条目保留在队列。批次产物放在被 Git 忽略的 `.statement-enrichment/`。
 
-```sh
-python3 -m review_app validate-enrichment --snapshot .statement-review/snapshot.json --file /path/to/enrichment.json
-python3 -m review_app enrich-snapshot --snapshot .statement-review/snapshot.json --file /path/to/enrichment.json --output /path/to/candidate-snapshot.json
-```
+应用导入器核对 source_commit / snapshot_digest / source_sha256、声明与证据 ID 的唯一性、引用有效性，以及证据原文和行号与冻结源码一致。基础快照摘要绑定所有源码模块，改变上下文后旧旁文件不能重新导入。
 
-两条命令均不改数据库，不覆盖输入，第二条拒绝已有输出路径。候选新快照通过 [部署流程](../review_app/DEPLOYMENT.md) 的备份/安装/重启步骤应用。只有新回译正文改变时，相关内容指纹变化，旧判断继续留在历史；仅中文副标题或标签改变不会把已审条目清空。未补回译时保留现有有效正文和出处，阅读摘要始终独立展示。priority.level=null 对应未分级，不自动贴 P2。现有 Workflow 的 analysis.v1 尚未自动转换为本格式。
-
-本版不由 Agent 输出 verified、人的 verdict 或自动确认数学正确；回译已核验须有单独的人工核验记录。禁止将未回译的阅读摘要升级成回译草稿。
-
-默认不配置模型，也不自动对全库调用。已实现任务导出/结果导入、命令适配器调用、超时、分阶段失败和重试上限、验证、缓存和当前产物导出。每次 run 默认最多处理一条需要执行 Agent 的声明，已完成的条目不会占用本次额度。
-
-审阅范围和任务粒度的最新方向见 [范围修订](design/REVIEW_SCOPE.md)：6,222 是源码索引，正式审阅应围绕 M/A(M)/C(M)/T(M) 的数学边界建立集合，Agent 按相关主题组工作。当前骨架仍按单声明执行，主题组支持尚待实现。
-
-## 目录
-
-```text
-statement_workflow/
-  workflow.json             流程参数及 Agent 执行入口
-  AGENT.md                  Agent 输入、输出和上下文隔离契约
-  engine.py                 任务、缓存、验证、分级和产物
-  __main__.py               命令入口
-  prompts/readback.txt      盲读回译规则
-  prompts/audit.txt         覆盖与意图对照规则
-  design/                   完整管线设计与后续分级政策草案
-  test_workflow.py           协议及恢复回归测试
-```
-
-## 用现有 Agent 执行导出的任务
-
-在仓库根目录运行，snapshot.json 使用当前 Statement 构建产物：
+在仓库根目录运行：
 
 ```sh
-python3 -m statement_workflow prepare --snapshot .statement-review/snapshot.json --output .statement-workflow/pilot
-python3 -m statement_workflow run --output .statement-workflow/pilot --export-only
+python3 -m review_app validate-enrichment --snapshot /path/to/snapshot.json --file /path/to/enrichment.json
+python3 -m review_app enrich-snapshot --snapshot /path/to/snapshot.json --file /path/to/enrichment.json --output /path/to/new-candidate-snapshot.json
 ```
 
-未指定声明时只选择主目标和它的直接候选引用。可重复传 `--declaration <完整 Lean 名称或 statement ID>` 精确选择条目。无主目标时必须指定声明。
+两个命令不改数据库、不覆盖输入，第二个拒绝已有输出路径。候选快照按 [部署流程](../review_app/DEPLOYMENT.md) 备份、安装并重启服务后生效。Skill 不自动安装或部署。
 
-批次的 `tasks/<id>/readback.job.json` 是 Agent 要接收的完整任务。由一个新的 Agent 会话处理，保存符合任务 instructions 的 JSON 结果，再导入：
+对同一基础快照进行 enrichment 时，回译正文变化才改变相应的审阅依据指纹，旧判断留在历史。中文副标题或标签变化不会清空已审条目；未补回译时保留现有正文及出处，阅读摘要独立展示。更新 Lean 源码时按新快照的内容指纹判断有效性。
 
-```sh
-python3 -m statement_workflow import-result --output .statement-workflow/pilot --stage readback --result /path/to/readback-result.json
-```
+## 当前边界
 
-导入成功会生成同目录的 `audit.job.json`，交给另一个全新上下文的 Agent 会话：
+- 当前上下文来自源码候选，尚未接入 Lean 语义导出器；导入要求 `context_fingerprint=null`，上下文完整度只接受 unknown / partial，拒绝 complete。
+- Agent 不输出 verified 或人的 verdict，也不把阅读摘要升级成回译草稿；无法解释的对象保留 unresolved。
+- 批次由 Codex 会话发起，网页服务负责消费候选快照，不在服务器后台自动生成回译。
+- 协议与导入回归使用合成夹具；真实数学标注及页面展示仍需按实际批次验收。
 
-```sh
-python3 -m statement_workflow import-result --output .statement-workflow/pilot --stage audit --result /path/to/audit-result.json
-```
+## 兼容实验接口
 
-两个阶段结果有效后，在条目目录和批次根目录生成 `analysis.json`。批次根目录只导出当前任务和当前执行器版本的完整结果；消费端应读这里，避免误读条目目录中保留的旧历史文件。
+`engine.py`、`__main__.py`、`workflow.json` 和 `prompts/` 保留早期 `python3 -m statement_workflow` 实验接口，其协议见 [旧执行器契约](AGENT.md)。它按单声明执行 readback / audit，支持任务导出、结果导入、缓存和重试；当前 Skill 不调用这套接口。
 
-可选 `prepare --references /path/to/references.json`：映射 statement ID 到 `{source_sha256,text,source}`。指纹必须绑定当前声明完整源码，内容和出处不能为空。reference 只进入 audit，不进入 readback。
-
-## 接入自动 Agent 执行器
-
-复制 workflow.json 为本地配置，设置：
-
-```json
-{
-  "agent_command": ["/absolute/path/to/python3", "/absolute/path/to/agent_adapter.py"],
-  "agent_revision": "provider-model-prompt-settings.v1"
-}
-```
-
-上面是应替换的两个字段，其余配置字段保留，不是完整配置。适配器需按 AGENT.md 实现 stdin/stdout 协议，内部启动全新的 Agent 会话，保证 stdout 只有 JSON。命令作为 argv 执行，不经过 shell；运行目录是 statement_workflow。适配器可在原有 Agent 工具之上包装，不要求另建服务或仓库。
-
-```sh
-python3 -m statement_workflow --config /path/to/local-workflow.json run --output .statement-workflow/pilot --limit 1
-```
-
-重复运行会恢复缺失或失败阶段；单阶段最多尝试三次，之后继续其他条目，不反复消耗。更新执行器实现、模型或设置时必须更新 agent_revision，它会使旧阶段缓存失效。reference/上下文/prompt 改变也会使相关任务 ID 改变；流程策略变化要求准备新批次。
-
-prepare 不覆盖已有批次。要分析新源码提交，准备另一个批次目录。目前不同批次间尚未共用生成缓存，避免把设计中更细的缓存优化误认为已经实现。
-
-## 当前实现边界
-
-- 输入是现有 Statement 源码快照；现有候选引用图可能漏字段投影、实例或包含证明引用。每个上下文明确标记 unknown，不冒充 Lean 编译环境。
-- expected_toolchain 默认固定为当前 KIP126 的 Lean 4.32.2，纳入任务指纹。这是工作流配置的预期版本，当前适配器不调用 Lean 验证它；正式提取器还需记录实际工具链及验证结果。
-- 去除注释，剥离 theorem/lemma 的证明体；定义保留实际实现和字符串。不能可靠剥离的陈述直接拒绝，避免把原始意图带入盲读任务。此定位方法仍不是 Lean parser。
-- 骨架分级只给 P0 主目标、P1 直接候选、P2 其他选中条目。源码上下文未核验时危险度为 unknown；有证据的 Agent 疑点为 R2，仍需人复核。模型自称确认不会自动升级为 R3。
-- `design/triage-policy-proposed.json` 是下一阶段完整政策，尚未由当前分级引擎完整实现。R1/R3、目标传递影响路径、实际字段实例化与 Lean 核验适配器仍待实现。
-- 没有模型或 Agent 适配器默认实现，本次没有进行真实回译调用。测试使用明确标记的进程协议夹具，不代表数学效果。
-- 分析产物已可独立生成；自动接入前端展示和人工重审指纹尚待实现，当前网页仍使用原有预览数据。
+旧接口默认 `agent_command=null`，没有模型适配器；输出 `statement-analysis.v1`，尚未转换为应用消费的 enrichment。其双阶段审计和旧分级不作为当前 Skill 的要求。
 
 ## 验证
 
 ```sh
-python3 -m unittest statement_workflow.test_workflow
+python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
+python3 -m unittest review_app.test_enrichment
 ```
 
-测试覆盖任务隔离、上下文变化、失败后恢复、已缓存条目不占额度、执行器版本失效、旧结果不进入当前导出、证据与身份验证、缺参考时拒绝符合原意结论、源码绑定参考和人工结果隔离。
-
-Prove2Me 的公开流程将逐项回译交给独立子 Agent，再写回 readback/readback_model，供人逐项比较；没有规定必须逐条串行执行。参见 [Captain read-backs](https://github.com/prove2me/prove2me_workspace/blob/main/references/mission_captain.md#read-backs-independent-testimony-for-the-audit) 与 [Auditor](https://github.com/prove2me/prove2me_workspace/blob/main/references/mission_auditor.md)。这里只借鉴任务独立性，不依赖其平台。
+测试覆盖批次完整性、阈值边界、实际模型来源、非法分值、证据绑定、原分值保留、候选快照与人工记录隔离，以及旧实验接口兼容性。

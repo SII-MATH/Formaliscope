@@ -2,7 +2,7 @@
 
 KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [Statement enrichment v1](statement_workflow/schema/statement-enrichment.v1.schema.json)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
 
-仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
+仓库包含网页服务 `review_app/`、声明补充数据的 [契约与导入说明](statement_workflow/README.md)，以及下述仓库 Skill。补全按选定目录或声明分批执行，早期 Blueprint 对照模式继续保留。
 
 当前补全入口是仓库内的 [$formaliscope-enrich](.agents/skills/formaliscope-enrich/SKILL.md)：一组模型无关的子 Agent prompt、低置信度复核 prompt 与机械收集脚本。模型与推理等级统一由 [config.json](.agents/skills/formaliscope-enrich/config.json) 指定，按相关组输出中文回译及现有 enrichment 字段。默认只有自报 `confidence < 0.8` 的条目进入主 Agent 复核；高分和已复核条目合并为候选快照，仍作为机器草稿。无需额外模型服务，置信度及复核记录保存在批次旁文件。
 

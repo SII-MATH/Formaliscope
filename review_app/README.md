@@ -19,7 +19,8 @@
 | `symbols.py` / `static/statement-symbols.js` | 快照内名称与局部绑定定位、定义追溯交互 |
 | `static/directory-tree.js` / `review-labels.js` | 目录树与统一标签、状态筛选规则 |
 | `static/latex-renderer.js` / `lean-renderer.js` | 本地数学公式渲染与安全转义后的 Lean 高亮 |
-| `../statement_workflow/` | 独立 Agent 任务、上下文隔离、校验、重试与产物契约 |
+| `../.agents/skills/formaliscope-enrich/` | 配置模型、分组补全、低置信度复核与批次结果收集 |
+| `../statement_workflow/schema/` | enrichment v1 数据契约；同目录其他执行器文件属于兼容实验入口 |
 
 ## 构建与本地演示
 
@@ -34,7 +35,9 @@ python3 -m review_app serve --preview --port 8876 --data-dir .review
 
 生产从干净 Git 检出生成 `build --statements --require-clean --output <新文件>`。早期 Blueprint 模式仍可用 `build --source /path/to/KIP126 --output <新文件>` 构建；它读取 `blueprint/src/content.tex` 的章节和 `\lean{...}`。已有 Blueprint 部署可显式运行 `preflight --legacy-blueprint`，不会把旧节点 ID 与 Statement ID 混用。构建只产候选包；激活统一走 `install-snapshot`。兼容的 `build --data-dir` 仅用于空候选目录，不能覆盖已有快照或运行数据库。
 
-## 手动 Agent 数据接入
+## Agent 补充数据接入
+
+[仓库 Skill](../.agents/skills/formaliscope-enrich/SKILL.md) 是当前补全入口，按 [模型配置](../.agents/skills/formaliscope-enrich/config.json) 调用子 Agent，并依据自报置信度安排主 Agent 复核。`collect.py` 生成下述命令消费的 `enrichment.json`；操作细节见 Skill，字段约定见 [补充数据说明](../statement_workflow/README.md)。
 
 [enrichment v1 schema](../statement_workflow/schema/statement-enrichment.v1.schema.json) 是冻结的数据契约。先固定基础快照，再按选定目录逐批填写。缺失内容使用 null、none 或空数组；读不到的对象保留 unresolved，Agent 只能生成回译草稿。
 

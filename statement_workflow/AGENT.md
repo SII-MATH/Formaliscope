@@ -1,6 +1,6 @@
-# Statement 审阅 Agent 契约
+# 旧实验执行器 Agent 契约
 
-本文件描述由 Workflow 调用的 Agent 角色，不修改仓库开发代理的权限或任务。
+本文件仅描述 `engine.py` / `python3 -m statement_workflow` 兼容实验接口调用的 Agent 角色。当前补全使用 [仓库 Skill](../.agents/skills/formaliscope-enrich/SKILL.md)，其分组执行与置信度复核规则独立于此处的逐条双阶段协议。此契约不修改仓库开发代理的权限或任务。
 
 一个 Agent 角色，按 `stage` 使用两种任务：
 
