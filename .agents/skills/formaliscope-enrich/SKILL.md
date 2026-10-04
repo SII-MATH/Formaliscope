@@ -1,11 +1,13 @@
 ---
 name: formaliscope-enrich
-description: "在 Formaliscope 中按指定目录或声明调用 Luna 子 Agent，生成中文 Lean 回译、阅读标题、标签与优先度；仅按 Luna 自报置信度安排主 Agent 复核，输出可校验的补充数据与候选快照。用于补全审阅数据，不用于修改 Lean 证明或部署服务。"
+description: "在 Formaliscope 中按指定目录或声明调用配置文件指定的子 Agent，生成中文 Lean 回译、阅读标题、标签与优先度；仅按子 Agent 自报置信度安排主 Agent 复核，输出可校验的补充数据与候选快照。用于补全审阅数据，不用于修改 Lean 证明或部署服务。"
 ---
 
 # Formaliscope 中文回译与字段补全
 
-在现有 Codex 会话内执行。调度由主 Agent 发起，回译与字段填写交给 `gpt-6-luna` 子 Agent；机械校验和合并交给脚本。第一版无需模型 API、独立服务或全库执行器。
+在现有 Codex 会话内执行。调度由主 Agent 发起，回译与字段填写交给配置指定的子 Agent；机械校验和合并交给脚本。第一版无需模型 API、独立服务或全库执行器。
+
+模型选择唯一来自 [config.json](config.json) 的 `worker.model`，推理等级来自 `worker.reasoning_effort`。用户提供其他配置路径时读取该文件；否则读取此默认配置。检查配置的 schema 为 `formaliscope-enrichment-config.v1`、模型为非空字符串、推理等级为当前工具支持的值或 null。主 Agent 复核继续使用当前会话的实际模型。
 
 ## 选择范围与准备批次
 
@@ -25,17 +27,17 @@ description: "在 Formaliscope 中按指定目录或声明调用 Luna 子 Agent�
 }
 ```
 
-这里的字符串需替换为实际值。阈值默认 `0.8`，只在用户指定时修改。
+这里的字符串需替换为实际值。阈值默认 `0.8`，只在用户指定时修改。把本批使用的模型配置复制为同目录的 `agent-config.json`；续做批次时读取该副本，避免默认配置的后续修改改变已开始的任务。用户要求换模型重新生成时准备新批次。
 
-## Luna 分组生成
+## 子 Agent 分组生成
 
-读取 [Luna prompt](references/luna-prompt.md)。向每个子 Agent 提供这个 prompt、仓库绝对路径、冻结快照绝对路径、该组精确声明 ID 和唯一结果文件路径。
+读取 [子 Agent prompt](references/worker-prompt.md)。向每个子 Agent 提供这个 prompt、仓库绝对路径、冻结快照绝对路径、该组精确声明 ID 和唯一结果文件路径。
 
-显式指定 `model="gpt-6-luna"`，采用独立上下文（可用 `fork_turns="none"`），按当前工具的并发额度分批启动。不要把主会话历史、已有中文草稿或人的判断带入任务。工具无法指定 Luna 时说明限制，不用其他模型冒充。支持推理等级时可用 `high`。
+启动子 Agent 时，显式将本批配置的 `worker.model` 传给工具的 `model` 参数，将非 null 的 `worker.reasoning_effort` 传给工具的推理等级参数；为 null 时省略该参数，采用工具的默认行为。采用独立上下文，使用 `spawn_agent` 时必须指定 `fork_turns="none"`，以便模型配置生效。按当前工具的并发额度分批启动。不要把主会话历史、已有中文草稿或人的判断带入任务。配置模型或推理等级不可用时说明限制，不静默改用其他设置。
 
 子 Agent 可查阅冻结快照中的 Lean 定义和实例，并记录实际证据；独立上下文不代表文件系统隔离。每组只写自己的结果文件。没有用户要求时不做论文或作者意图对齐。
 
-结果外层为 `formaliscope-luna-batch.v1`，内部直接使用既有 `statement-enrichment.v1`；逐条的 `confidence` 存在外层映射，不更改应用 schema。
+结果外层为 `formaliscope-agent-batch.v1`，内部直接使用既有 `statement-enrichment.v1`；逐条的 `confidence` 存在外层映射，不更改应用 schema。`provenance.model` 记录实际执行模型，不用配置值冒充实际来源。
 
 ## 校验、路由与按需复核
 
@@ -52,9 +54,9 @@ python3 .agents/skills/formaliscope-enrich/scripts/collect.py \
 
 `--result` 可重复。脚本检查完整声明集合、源码和证据、字段及有限数值分值，生成 `enrichment.json`、`review-queue.json`、`report.json`。格式或来源错误是机械失败，可让原子 Agent 修正；默认最多修正一次，仍失败记录未完成，不静默丢条目。
 
-语义复核的唯一触发条件是 **原始 Luna `confidence < threshold`**；`confidence >= threshold` 直接汇总，默认阈值下 `0.8` 本身直接汇总。不得添加条目角色、重要程度、依赖数量、复杂度、`unresolved` 或随机抽检等触发条件。优先度仍是填写给审阅台的字段，不参与复核路由。
+语义复核的唯一触发条件是 **原始子 Agent `confidence < threshold`**；`confidence >= threshold` 直接汇总，默认阈值下 `0.8` 本身直接汇总。不得添加条目角色、重要程度、依赖数量、复杂度、`unresolved` 或随机抽检等触发条件。优先度仍是填写给审阅台的字段，不参与复核路由。
 
-队列非空时，主 Agent 读取 [复核 prompt](references/review-prompt.md)，只复核队列条目，保存独立 `review.json`。保留原始 Luna 结果与分值；不得靠提高分值代替复核。
+队列非空时，主 Agent 读取 [复核 prompt](references/review-prompt.md)，只复核队列条目，保存独立 `review.json`。保留原始子 Agent 结果与分值；不得靠提高分值代替复核。
 
 再用同一组原始 `--result` 加 `--review /absolute/path/review.json`，写入另一个全新的 `--output` 目录。脚本合并高置信度及已复核条目，未复核条目继续留在队列。`report.json` 区分直接汇总、主 Agent 已复核、待复核；主 Agent 的模型与时间单独记录。
 

@@ -47,7 +47,7 @@ class SkillBatchTests(unittest.TestCase):
                               'line_start': card['lean']['line'],
                               'line_end': card['lean']['line'] + len(card['lean']['source'].splitlines()) - 1,
                               'excerpt': card['lean']['source']}],
-                'provenance': {'method': 'agent_manual', 'model': 'fixture-luna',
+                'provenance': {'method': 'agent_manual', 'model': 'fixture-worker',
                                'created_at': '2026-10-04T08:00:00+08:00',
                                'policy_version': 'manual-enrichment.v1', 'context_completeness': 'unknown'}})
         self.ids = [row['declaration_id'] for row in self.annotations]
@@ -55,7 +55,7 @@ class SkillBatchTests(unittest.TestCase):
                          'source_commit': self.snapshot['source_commit'],
                          'snapshot_digest': self.snapshot['digest'], 'threshold': 0.8,
                          'declaration_ids': self.ids}
-        self.result = {'schema': 'formaliscope-luna-batch.v1',
+        self.result = {'schema': 'formaliscope-agent-batch.v1',
                        'enrichment': {'schema': 'statement-enrichment.v1', 'annotations': self.annotations},
                        'confidence': dict(zip(self.ids, (0.79, 0.8, 0.81)))}
         self.snapshot_path = self.write('snapshot.json', self.snapshot)
@@ -102,7 +102,7 @@ class SkillBatchTests(unittest.TestCase):
     def test_multi_result_merge_and_review_keep_original_score_and_models(self):
         self.result['enrichment']['annotations'] = self.annotations[:1]
         self.result['confidence'] = {self.ids[0]: 0.79}
-        second = self.write('second.json', {'schema': 'formaliscope-luna-batch.v1',
+        second = self.write('second.json', {'schema': 'formaliscope-agent-batch.v1',
                             'enrichment': {'schema': 'statement-enrichment.v1', 'annotations': self.annotations[1:]},
                             'confidence': {self.ids[1]: 0.8, self.ids[2]: 0.81}})
         review = self.review()
@@ -111,12 +111,29 @@ class SkillBatchTests(unittest.TestCase):
         report = self.collect(results=[self.result_path, second], reviews=[review_path])
         entry = report['entries'][0]
         self.assertEqual((entry['confidence'], entry['route']), (0.79, 'reviewed'))
-        self.assertEqual((entry['original_model'], entry['review_model']), ('fixture-luna', 'fixture-main-agent'))
+        self.assertEqual((entry['original_model'], entry['review_model']), ('fixture-worker', 'fixture-main-agent'))
         self.assertEqual(entry['reviewed_at'], review['reviewed_at'])
         accepted = helper._read(self.output / 'enrichment.json')
         self.assertEqual(accepted['annotations'][0], review['annotation'])
         self.assertEqual(helper._read(self.output / 'review-queue.json')['confidence'], {})
         self.assertEqual(helper._read(self.result_path)['confidence'][self.ids[0]], 0.79)
+
+    def test_generic_and_legacy_results_merge_without_restricting_worker_models(self):
+        self.result['enrichment']['annotations'] = self.annotations[:1]
+        self.result['confidence'] = {self.ids[0]: 0.79}
+        self.annotations[0]['provenance']['model'] = 'fixture-configured-model'
+        self.annotations[1]['provenance']['model'] = 'fixture-previous-model'
+        legacy = self.write('legacy.json', {
+            'schema': 'formaliscope-luna-batch.v1',
+            'enrichment': {'schema': 'statement-enrichment.v1', 'annotations': self.annotations[1:]},
+            'confidence': {self.ids[1]: 0.8, self.ids[2]: 0.81}})
+        report = self.collect(results=[self.result_path, legacy])
+        self.assertEqual([row['route'] for row in report['entries']], ['pending', 'direct', 'direct'])
+        self.assertEqual(report['entries'][0]['original_model'], 'fixture-configured-model')
+        self.assertEqual(report['entries'][1]['original_model'], 'fixture-previous-model')
+        queue = helper._read(self.output / 'review-queue.json')
+        self.assertEqual(queue['schema'], 'formaliscope-agent-batch.v1')
+        self.assertEqual(queue['confidence'], {self.ids[0]: 0.79})
 
     def test_user_configured_threshold_controls_the_same_single_routing_rule(self):
         self.manifest['threshold'] = 0.81

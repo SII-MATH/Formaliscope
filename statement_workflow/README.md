@@ -2,11 +2,11 @@
 
 现有 Formaliscope 仓库的独立模块，与 `review_app/` 并列。Python 3.10+ 标准库即可运行。前端与工作流通过快照和分析 JSON 交换数据，工作流不依赖页面服务、不写人工审阅数据库、不改 KIP126 源码。
 
-当前入口：[仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)。固定快照 → Luna 按相关组生成中文回译和字段 → 脚本校验 → 仅低置信度主 Agent 复核 → enrichment 与候选快照。该 Skill 不调用下方旧进程 Workflow 的强制逐条 audit。
+当前入口：[仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)。固定快照 → 按配置调用子 Agent 分组生成中文回译和字段 → 脚本校验 → 仅低置信度主 Agent 复核 → enrichment 与候选快照。模型和推理等级由 [config.json](../.agents/skills/formaliscope-enrich/config.json) 指定，prompt 不固定模型；每批保存配置副本，续做读取本批副本。该 Skill 不调用下方旧进程 Workflow 的强制逐条 audit。
 
-`confidence` 是每条 Luna 自报的 0–1 分值，默认只有 `< 0.8` 触发语义复核；`0.8` 本身直接汇总。不按角色、优先度、依赖、复杂度、未解释对象或抽样追加触发。完整字段与来源校验仍全量执行，机械失败与语义复核分开。
+`confidence` 是每条子 Agent 自报的 0–1 分值，默认只有 `< 0.8` 触发语义复核；`0.8` 本身直接汇总。不按角色、优先度、依赖、复杂度、未解释对象或抽样追加触发。完整字段与来源校验仍全量执行，机械失败与语义复核分开。
 
-为了保持已确认的应用 v1 schema，置信度放在 `formaliscope-luna-batch.v1` 外层映射，主 Agent 复核另存 `formaliscope-enrichment-review.v1`。Skill 的 `collect.py` 检查范围完整性、分值和现有 enrichment 契约，输出可直接导入的 `enrichment.json`、未复核队列和保留原分值/模型来源的报告。任何主 Agent 结果仍是机器草稿，不自动成为人的已审阅判断。
+为了保持已确认的应用 v1 schema，置信度放在 `formaliscope-agent-batch.v1` 外层映射，主 Agent 复核另存 `formaliscope-enrichment-review.v1`。收集脚本兼容旧的 `formaliscope-luna-batch.v1` 文件，新输出统一使用模型无关的格式名。Skill 的 `collect.py` 检查范围完整性、分值和现有 enrichment 契约，输出可直接导入的 `enrichment.json`、未复核队列和保留原分值/模型来源的报告。任何主 Agent 结果仍是机器草稿，不自动成为人的已审阅判断。
 
 下方 `engine.py` 保留为旧自动执行器骨架，流程为固定快照 → 独立上下文包 → Agent 盲读回译 → 新上下文审计 → 规则分级 → analysis.json；模型执行入口和 analysis→enrichment 转换仍未接通。它的必经 audit 和 `AGENT.md` 逐条执行约定不适用于当前 Skill 路径。
 

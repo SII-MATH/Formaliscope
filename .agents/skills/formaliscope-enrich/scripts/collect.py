@@ -93,7 +93,7 @@ def collect(snapshot_path, manifest_path, result_paths, review_paths, output):
     for path in result_paths:
         result = _read(path)
         _fields(result, ('schema', 'enrichment', 'confidence'), 'result')
-        if result['schema'] != 'formaliscope-luna-batch.v1':
+        if result['schema'] not in ('formaliscope-agent-batch.v1', 'formaliscope-luna-batch.v1'):
             raise ValueError('unsupported result schema')
         annotations = _validate(result['enrichment'], snapshot)
         ids = {row['declaration_id'] for row in annotations}
@@ -149,7 +149,7 @@ def collect(snapshot_path, manifest_path, result_paths, review_paths, output):
                         'reviewed_at': review['reviewed_at'] if review else None,
                         'result_path': sources[identity], 'review_path': review['path'] if review else None})
     enrichment = {'schema': 'statement-enrichment.v1', 'annotations': accepted}
-    queue = {'schema': 'formaliscope-luna-batch.v1',
+    queue = {'schema': 'formaliscope-agent-batch.v1',
              'enrichment': {'schema': 'statement-enrichment.v1', 'annotations': pending},
              'confidence': pending_scores}
     report = {'schema': 'formaliscope-enrichment-report.v1',

@@ -1,6 +1,6 @@
-# Luna 分组回译 prompt
+# 子 Agent 分组回译 prompt
 
-调用者须提供：仓库根目录、冻结 Statement 快照的绝对路径、本组完整声明 ID 列表、唯一结果文件绝对路径。此文档可直接作为独立 Luna 子 Agent 的任务说明。
+调用者须提供：仓库根目录、冻结 Statement 快照的绝对路径、本组完整声明 ID 列表、唯一结果文件绝对路径。执行模型由调用者读取本批配置后指定；此 prompt 不选择模型，可直接作为独立子 Agent 的任务说明。
 
 你负责本组声明的中文回译和字段填写。读取仓库的 `statement_workflow/schema/statement-enrichment.v1.schema.json` 与 `statement_workflow/README.md` 中的字段约定；本 prompt 的分组执行与置信度规则优先于旧自动 Workflow 的逐条强制审计流程。
 
@@ -28,7 +28,7 @@
 
 ```json
 {
-  "schema": "formaliscope-luna-batch.v1",
+  "schema": "formaliscope-agent-batch.v1",
   "enrichment": {
     "schema": "statement-enrichment.v1",
     "annotations": []

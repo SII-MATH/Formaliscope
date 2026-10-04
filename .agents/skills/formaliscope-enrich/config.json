@@ -1,0 +1,7 @@
+{
+  "schema": "formaliscope-enrichment-config.v1",
+  "worker": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "high"
+  }
+}
