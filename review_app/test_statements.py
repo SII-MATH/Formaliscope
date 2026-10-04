@@ -103,6 +103,34 @@ class StatementDocumentationTests(unittest.TestCase):
             '/-! Heading /- nested heading -/ -/\n/-- ' + doc +
             ' -/\ndef value : Nat := 1\n', doc)
 
+    def test_ordinary_comments_after_documentation_are_transparent(self):
+        doc = 'Declaration documentation.'
+        for separator in ('\n-- Ordinary comment.\n',
+                          '\n-- /-- fake -/ /-! fake section -/ "quoted"\n',
+                          '\n/- Ordinary comment. -/\n',
+                          '\n/- Outer /- nested -/ comment. -/\n',
+                          ' /- Comment with "a string" and /-- nested doc -/. -/ ',
+                          '\n-- Line comment.\n/- Block comment. -/\n'):
+            with self.subTest(separator=separator):
+                self.assert_documentation(
+                    '/-- ' + doc + ' -/' + separator + 'def value : Nat := 1\n', doc)
+
+    def test_only_last_documentation_survives_ordinary_comments(self):
+        self.assert_documentation(
+            '/-- Earlier documentation. -/\n/- Ordinary comment. -/\n'
+            '/-- Current documentation. -/\n-- Another ordinary comment.\n'
+            'def value : Nat := 1\n', 'Current documentation.')
+
+    def test_ordinary_comments_do_not_hide_syntax_boundaries(self):
+        for intervening in ('/-! New section -/\n/- Ordinary comment. -/',
+                            '#check "/-- fake documentation -/"\n-- Ordinary comment.',
+                            '#check "/- ordinary comment -/"\n/- Another comment. -/',
+                            '"/- ordinary comment -/"'):
+            with self.subTest(intervening=intervening):
+                self.assert_documentation(
+                    '/-- Previous documentation. -/\n' + intervening +
+                    '\ndef value : Nat := 1\n', '')
+
     def test_long_documentation_has_no_thirty_line_lookback(self):
         doc = '\n'.join(f'Documentation line {number}.' for number in range(80))
         self.assert_documentation('/--\n' + doc + '\n-/\ndef value : Nat := 1\n', doc)

@@ -31,7 +31,7 @@ def mask_comments(text: str) -> str:
 
 
 def _mask_source(text: str) -> tuple[str, list[tuple[int, int]]]:
-    """Mask source and retain the spans of complete, top-level block comments."""
+    """Mask source and retain complete top-level block and line comment spans."""
     result = list(text)
     comments = []
     comment_start = 0
@@ -67,6 +67,7 @@ def _mask_source(text: str) -> tuple[str, list[tuple[int, int]]]:
             end = text.find('\n', i)
             if end == -1:
                 end = len(text)
+            comments.append((i, end))
             result[i:end] = ' ' * (end-i)
             i = end
             continue
@@ -81,6 +82,20 @@ def _mask_source(text: str) -> tuple[str, list[tuple[int, int]]]:
     return ''.join(result), comments
 
 
+def _ordinary_comment_gap(text: str, start: int, end: int,
+                          comments: list[tuple[int, int]], comment_ends: list[int]) -> bool:
+    """Check original source so strings and documentation stay syntax boundaries."""
+    position = start
+    for index in range(bisect_right(comment_ends, start), len(comments)):
+        left, right = comments[index]
+        if left >= end:
+            break
+        if right > end or text[position:left].strip() or text.startswith(('/--', '/-!'), left):
+            return False
+        position = right
+    return not text[position:end].strip()
+
+
 def source_declarations(repo: Path) -> list[dict]:
     records = []
     for root in ('KIP126', 'KIPBase'):
@@ -89,6 +104,10 @@ def source_declarations(repo: Path) -> list[dict]:
             masked_text, comments = _mask_source(text)
             original, masked = text.splitlines(), masked_text.splitlines()
             comment_ends = [end for _, end in comments]
+            documentation = [(start, end) for start, end in comments
+                             if text.startswith(('/--', '/-!'), start)]
+            documentation_ends = [end for _, end in documentation]
+            previous_documentation = -1
             line_offsets = []
             position = 0
             for line in text.splitlines(keepends=True):
@@ -117,14 +136,18 @@ def source_declarations(repo: Path) -> list[dict]:
                 # Lean's _root_ prefix explicitly escapes the current namespace.
                 fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
                 # A section heading (/-!) is a separate command, not declaration
-                # documentation. Select one complete /-- block, with no code
-                # between it and the declaration; never merge adjacent blocks.
+                # documentation. Ordinary comments are whitespace; real code,
+                # strings and other documentation remain attachment boundaries.
                 declaration_start = line_offsets[number] + len(line) - len(line.lstrip())
-                comment_index = bisect_right(comment_ends, declaration_start) - 1
+                comment_index = bisect_right(documentation_ends, declaration_start) - 1
                 doc = ''
-                if comment_index >= 0:
-                    start, end = comments[comment_index]
-                    if text.startswith('/--', start) and not text[end:declaration_start].strip():
+                if comment_index >= 0 and comment_index != previous_documentation:
+                    # Only the first following declaration can consume a doc;
+                    # avoid repeatedly scanning growing gaps for later declarations.
+                    previous_documentation = comment_index
+                    start, end = documentation[comment_index]
+                    if text.startswith('/--', start) and _ordinary_comment_gap(
+                            text, end, declaration_start, comments, comment_ends):
                         doc = text[start+3:end-2].strip()
                 found.append((fqn, kind, number, tuple(namespace), doc))
             for offset, (name, kind, first, ns, doc) in enumerate(found):
