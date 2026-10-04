@@ -192,13 +192,17 @@
     $("nl-location").textContent=c.statement_origin==="reading-summary"?"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。":c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":`${c.blueprint_file}:${c.blueprint_line}`;
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
     $("lean-location").textContent=c.lean?`${c.lean.file}:${c.lean.line} · 声明完整显示` : "源码尚未定位";
-    $("structure-panel").hidden=!c.fields?.length;
-    $("field-count").textContent=`${c.fields?.length||0} 个字段`;
-    $("structure-fields").innerHTML=(c.fields||[]).map(f=>`<div class="field"><b>${escape(f.name)}</b><code>${codeHtml(f.type)}</code></div>`).join("");
     $("module-panel").hidden=true;$("module-panel").open=false;$("toggle-module").textContent="查看完整文件";
     $("module-code").textContent="";++moduleSequence;
+    renderDependencies(c);
+  }
+  function renderDependencies(c){
     $("dependency-count").textContent=`(${c.dependencies.length})`;
-    $("dependencies").innerHTML=c.dependencies.map(id=>`<button data-id="${escape(id)}">${escape(byId.get(id)?.declaration||id)}</button>`).join("")||"没有定位到本仓库中的引用对象。";
+    $("dependencies").innerHTML=c.dependencies.map(id=>{
+      const target=byId.get(id),name=target?.declaration||id,state=labels.reviewState(target||{});
+      const status=verdictNames[state]||'未审阅',description=`${name} · 我的审阅：${status}`;
+      return `<button class="dependency-ref" data-id="${escape(id)}" data-review-state="${state}" title="${escape(description)}" aria-label="${escape(description)}">${escape(name)}${state==='pending'?'':`<span class="dependency-status"> · ${escape(status)}</span>`}</button>`;
+    }).join("")||"没有定位到本仓库中的引用对象。";
   }
   function renderReviewStatus(c){
     const current=reviewCurrent;
@@ -209,6 +213,7 @@
     $("history-count").textContent=`(${historyTotal})`;
     const row=byId.get(c.id);
     if(row){row.verdict=current?.verdict||null;row.stale=!!historyTotal&&!current;row._labels=labels.forCard(row);}
+    renderDependencies(c);
     return current;
   }
   function renderHistory(){

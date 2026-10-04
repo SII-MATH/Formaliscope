@@ -9,10 +9,11 @@ const vm=require("node:vm");
 // controlled orders without duplicating the controller's navigation logic.
 const clone=value=>JSON.parse(JSON.stringify(value));
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
-function fixture() {
+function fixture({configure=()=>{}}={}) {
   const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[];
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
+    assert.ok(!['structure-panel','structure-fields','field-count'].includes(id),'Removed structure panel elements are absent from the page');
     if(!elements.has(id))elements.set(id,{id,value:"",textContent:"",innerHTML:"",hidden:false,open:false,
       disabled:false,scrollTop:0,scrollLeft:0,offsetTop:0,style:{},dataset:{},classList:classes(),
       parentElement:{open:false},setAttribute(){},scrollIntoView(){},showModal(){this.open=true;},close(){this.open=false;},
@@ -27,6 +28,8 @@ function fixture() {
     priority:1,module_file:`Test/${id}.lean`,fingerprint:`fp-${id}`,fingerprint_scheme:"kip126-review-legacy.v1",
     fingerprints:{"kip126-review-legacy.v1":`fp-${id}`},dependencies:[],statement:id,
     lean:{file:`Test/${id}.lean`,line:1,source:`def ${id} := 1`}}));
+  configure(cards,records,drafts);
+  const currentReview=id=>(records.get(id)||[]).find(row=>row.fingerprint===cards.find(card=>card.id===id)?.fingerprint)||null;
   const stack=[{url:"https://review.example/#A",state:null}];let cursor=0,nextToken=0;
   const browserHistory={
     replaceState(state,_,url){stack[cursor]={state:clone(state),url:String(url)};},
@@ -40,10 +43,12 @@ function fixture() {
     async request(url){
       reads.push(url);
       if(url==="./api/config")return {preview:false};
-      if(url==="./api/catalog")return {cards:clone(cards),source_commit:"source",snapshot_digest:"snapshot"};
+      if(url==="./api/catalog")return {cards:clone(cards.map(card=>({...card,
+        verdict:currentReview(card.id)?.verdict||null,stale:!!records.get(card.id)?.length&&!currentReview(card.id)}))),
+        source_commit:"source",snapshot_digest:"snapshot"};
       if(url.startsWith("./api/review-state?")){
         const id=new URL(url,location.href).searchParams.get('id'),rows=records.get(id)||[],draft=drafts.get(id);
-        return {current:clone(rows[0]||null),draft:clone(draft?.pending?draft:null),
+        return {current:clone(currentReview(id)),draft:clone(draft?.pending?draft:null),
           draft_revision:draft?.revision||0,history_count:rows.length};
       }
       if(url.startsWith("./api/history?")){
@@ -68,7 +73,7 @@ function fixture() {
     requestAnimationFrame:callback=>setImmediate(callback),crypto:{randomUUID:()=>`token-${++nextToken}`},
     innerWidth:1200,scrollX:0,scrollY:0,scrollTo(){},
     addEventListener:(type,callback)=>listeners.set(type,callback),
-    StatementAPI:{create:()=>api},StatementIdentity:{create:()=>identity},
+    StatementAPI:{create:()=>api},StatementIdentity:{create:({restart,onLogout})=>Object.assign(identity,{restart,onLogout})},
     StatementGraph:{create:()=>({show(){},capture:()=>({}),restore(){}})},StatementSymbols:{create:()=>({clear(){}})},
     Stage3Lean:{toHtml:text=>text},Stage3Latex:{toHtml:text=>text,typeset(){}},MathJax:{typesetPromise(){}}};
   context.window=context;vm.createContext(context);
@@ -76,11 +81,12 @@ function fixture() {
     vm.runInContext(fs.readFileSync(path.join(__dirname,"static",filename),"utf8"),context,{filename});
   return {
     requests,stack,element,reads,records,drafts,
+    async switchReviewer(){records.clear();drafts.clear();identity.onLogout();identity.current={display_name:'Other'};await identity.restart();},
     get url(){return stack[cursor].url;},get title(){return element("card-title").textContent;},
     click(id){element("card-list").onclick({target:{closest:()=>({dataset:{id}})}});},
     back(){browserHistory.back();},forward(){browserHistory.forward();},
-    edit(){element("rationale").value="An opinion that must survive a failed save.";
-      radios.forEach(radio=>{radio.checked=radio.value==="aligned";});element("verdicts").onchange();},
+    edit(verdict="aligned"){element("rationale").value="An opinion that must survive a failed save.";
+      radios.forEach(radio=>{radio.checked=radio.value===verdict;});element("verdicts").onchange();},
     finish(index=0){const request=requests[index],row={...request.payload,id:`row-${index}`,reviewer:"Tester",
       created_at:`2026-10-04T00:00:0${index}.000Z`,fingerprint_scheme:"kip126-review-legacy.v1"};
       if(request.url.endsWith('drafts')){
@@ -161,9 +167,49 @@ async function lazyHistoryAndDraftRecovery(){
   f.element('review-history').ontoggle();await settle();assert.equal(f.reads.filter(url=>url.startsWith('./api/history?')).length,count);
 }
 
+function dependencyButton(f,id){
+  return f.element('dependencies').innerHTML.match(new RegExp(`<button[^>]*data-id="${id}"[^>]*>.*?</button>`))?.[0];
+}
+async function dependencyReviewStates(){
+  const f=fixture({configure(cards,records,drafts){
+    cards.push(...['D','E','F','G'].map(id=>({...clone(cards[1]),id,declaration:`Test.${id}`,fingerprint:`fp-${id}`})));
+    cards[0].dependencies=['B','C','D','E','F','G','unindexed'];
+    cards[0].kind='structure';cards[0].fields=[{name:'value',type:'Nat'}];
+    cards[0].lean.source='structure A where\n  value : Nat';
+    for(const [id,verdict] of [['B','aligned'],['C','uncertain'],['D','misaligned'],['E','aligned'],['F','partial']])
+      records.set(id,[{id:`review-${id}`,card_id:id,verdict,fingerprint:id==='E'?'old-version':`fp-${id}`}]);
+    drafts.set('G',{pending:true,revision:1,verdict:'aligned',rationale:'Not completed'});
+  }});await settle();
+  assert.match(f.element('lean-code').innerHTML,/structure A where\n  value : Nat/,'Structure fields remain in the complete declaration source');
+  for(const [id,state,text] of [['B','aligned','通过'],['C','uncertain','没看懂'],['D','misaligned','不通过'],['F','uncertain','没看懂']]){
+    assert.match(dependencyButton(f,id),new RegExp(`data-review-state="${state}"`));
+    assert.match(dependencyButton(f,id),new RegExp(`我的审阅：${text}`),'Review states are accessible without relying on color');
+    assert.match(dependencyButton(f,id),new RegExp(`dependency-status"> · ${text}`));
+  }
+  for(const id of ['E','G','unindexed']){
+    assert.match(dependencyButton(f,id),/data-review-state="pending"/,'Stale reviews, drafts and unknown references do not receive completed colors');
+    assert.doesNotMatch(dependencyButton(f,id),/dependency-status/);
+  }
+  await f.switchReviewer();await settle();
+  for(const id of ['B','C','D','E','F','G'])assert.match(dependencyButton(f,id),/data-review-state="pending"/,'Switching reviewers reloads only the new reviewer\'s results');
+}
+async function dependencyStatusAfterNavigation(){
+  const f=fixture({configure(cards){cards[0].dependencies=['B'];}});await settle();
+  assert.match(dependencyButton(f,'B'),/data-review-state="pending"/);
+  f.element('dependencies').onclick({target:{closest:()=>({dataset:{id:'B'}})}});await settle();
+  assert.equal(f.title,'B','Colored references retain dependency navigation');
+  f.edit('misaligned');await settle();f.finish();await settle();
+  assert.equal(f.element('status-badge').textContent,'未审阅','Saving a draft does not mark a reference as reviewed');
+  f.back();await settle();assert.equal(f.title,'B','Returning waits for completion of the review');
+  f.finish(1);await settle();assert.equal(f.title,'A');
+  assert.match(dependencyButton(f,'B'),/data-review-state="misaligned"/,'Returning to a deep dependency ancestor shows the newly completed review');
+  assert.match(dependencyButton(f,'B'),/dependency-status"> · 不通过/);
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
   await lazyHistoryAndDraftRecovery();
-  console.log("Statement page integration: mixed native/ordinary navigation, failed saves and latest-intent tests passed.");
+  await dependencyReviewStates();await dependencyStatusAfterNavigation();
+  console.log("Statement page integration: navigation, failed saves, draft recovery and personal dependency review states passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
