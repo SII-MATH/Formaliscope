@@ -5,13 +5,16 @@
   const verdictNames = {aligned:"通过", uncertain:"没看懂", misaligned:"不通过", partial:"部分对齐（历史）"};
   let catalog=[], byId=new Map(), selected=null, card=null, sequence=0, query="", page=0, view="list";
   let saving=false, dirty=false, moduleSequence=0, reviewHistory=[], navigationTurn=0;
+  let reviewCurrent=null,historyTotal=0,historyCursor=null,historyLoaded=false,historyLoading=false,historyTurn=0;
   const PAGE_SIZE=60;
   let mathLoading=false, mathTimer=null;
   const directories=window.StatementDirectories;
   let directory=new URL(location.href).searchParams.get('directory')||'', directoryNodes=new Map(), catalogInfo=null;
   const expandedDirectories=new Set(['']);
   const labels=window.ReviewLabels;
-  const selectedLabels=labels.normalizeSelection((new URL(location.href).searchParams.get('labels')||'').split(','));
+  // Project topics arrive with the catalog, so preserve linked topic filters
+  // until that configuration has been registered.
+  const selectedLabels=new Set((new URL(location.href).searchParams.get('labels')||'').split(',').filter(Boolean));
   let labelTab='content';
   const api=window.StatementAPI.create({onUnauthorized:()=>identities.unauthorized()});
   const json=api.request,post=api.post,evidence=api.evidence;
@@ -31,19 +34,8 @@
   function priorityScore(c){return c._labels?.includes('priority/p0')?3:c._labels?.includes('priority/p1')?2:c._labels?.includes('priority/p2')?1:0;}
   function renderProvenance(c){
     const analysis=c.enrichment,summary=$('label-provenance-summary');
-    summary.textContent=analysis?`角色／主题：Agent 候选标注 · 优先度：${analysis.priority?.level?'Agent 候选标注':'尚未标注'} · 状态：本人记录`:'角色／主题／优先度：索引规则候选 · 状态：本人记录';
-    const details=[];
-    if(analysis?.classification?.rationale_zh)details.push(`分类依据：${analysis.classification.rationale_zh}`);
-    if(analysis?.priority?.reason_zh)details.push(`优先度依据：${analysis.priority.reason_zh}`);
-    if(analysis?.provenance){
-      const source=analysis.provenance;
-      if(source.model)details.push(`生成模型：${source.model}`);
-      if(source.created_at)details.push(`生成时间：${new Date(source.created_at).toLocaleString('zh-CN')}`);
-      if(source.context_completeness)details.push(`上下文：${{unknown:'完整性待检查',partial:'仍有待补内容',complete:'已收集完整'}[source.context_completeness]}`);
-    }
-    for(const unresolved of analysis?.readback?.unresolved||[])details.push(`待解释对象 ${unresolved.object}：${unresolved.reason}`);
-    for(const item of analysis?.evidence||[])details.push(`依据位置：${item.file}:${item.line_start}${item.line_end!==item.line_start?`–${item.line_end}`:''}`);
-    $('enrichment-provenance').hidden=!details.length;$('enrichment-provenance').textContent=details.join('\n');
+    const priority=typeof analysis?.priority==='string'?analysis.priority:analysis?.priority?.level;
+    summary.textContent=analysis?`分类：Agent 候选标注 · 优先度：${priority?'已标注':'尚未分级'} · 审阅状态：本人记录`:'分类与优先度：索引规则候选 · 审阅状态：本人记录';
   }
   function labelChip(id,{button=false,count=null,remove=false}={}){
     const item=labels.definitions.get(id);if(!item)return '';
@@ -130,7 +122,7 @@
     return directoryRows().filter(c=>
       (scope!=="main" || c.role==="主定理" || c.role==="直接依赖") &&
       (scope!=="interface" || ['structure','class'].includes(c.kind) || c.module_file?.includes('Challenge')) &&
-      `${c.title} ${c.title_zh||''} ${c.reading_summary_zh||''} ${c.declaration} ${c.module_file} ${c.role} ${(c._labels||[]).map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase().includes(query)
+      `${c.title} ${c.title_zh||''} ${c.declaration} ${c.module_file} ${c.role} ${(c._labels||[]).map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase().includes(query)
     );
   }
   function sortRows(list){return list.sort((a,b)=>$("sort").value==="name" ? a.declaration.localeCompare(b.declaration) :
@@ -157,7 +149,11 @@
     if(index>=0){page=Math.floor(index/PAGE_SIZE);renderList();$("card-list").querySelector('.active')?.scrollIntoView({block:"nearest"});}
   }
   async function loadCatalog(){
-    const data=await json("./api/catalog");catalog=data.cards;byId=new Map(catalog.map(c=>[c.id,c]));
+    const data=await json("./api/catalog");
+    labels.configureTopics(data.enrichment_topics||[]);
+    const normalized=labels.normalizeSelection(selectedLabels);
+    selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
+    catalog=data.cards;byId=new Map(catalog.map(c=>[c.id,c]));
     for(const row of catalog)row._labels=labels.forCard(row);
     catalogInfo=data;directoryNodes=directories.buildTree(catalog);
     if(!directoryNodes.has(directory)){directory='';updateLocation();}
@@ -186,54 +182,85 @@
     renderCardLabels();
     $("statement-origin").textContent=c.statement_origin==="blueprint"?"Blueprint 原文":c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
     $("statement").innerHTML=window.Stage3Latex?.toHtml(c.statement)||escape(c.statement);math();
-    const summary=c.reading_summary_zh&&c.reading_summary_zh!==c.statement?c.reading_summary_zh:'';
-    $('reading-summary').hidden=!summary;$('reading-summary').textContent=summary?`阅读摘要：${summary}`:'';
     $("nl-location").textContent=c.statement_origin==="reading-summary"?"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。":c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":`${c.blueprint_file}:${c.blueprint_line}`;
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
     $("lean-location").textContent=c.lean?`${c.lean.file}:${c.lean.line} · 声明完整显示` : "源码尚未定位";
-    $("structure-panel").hidden=!c.fields?.length;
-    $("field-count").textContent=`${c.fields?.length||0} 个字段`;
-    $("structure-fields").innerHTML=(c.fields||[]).map(f=>`<div class="field"><b>${escape(f.name)}</b><code>${codeHtml(f.type)}</code></div>`).join("");
     $("module-panel").hidden=true;$("module-panel").open=false;$("toggle-module").textContent="查看完整文件";
     $("module-code").textContent="";++moduleSequence;
-    $("dependency-count").textContent=`(${c.dependencies.length})`;
-    $("dependencies").innerHTML=c.dependencies.map(id=>`<button data-id="${escape(id)}">${escape(byId.get(id)?.declaration||id)}</button>`).join("")||"没有定位到本仓库中的引用对象。";
+    renderDependencies(c);
   }
-  function renderReviewStatus(c,records){
-    const current=records.find(row=>matches(c,row));
+  function renderDependencies(c){
+    $("dependency-count").textContent=`(${c.dependencies.length})`;
+    $("dependencies").innerHTML=c.dependencies.map(id=>{
+      const target=byId.get(id),name=target?.declaration||id,state=labels.reviewState(target||{});
+      const status=verdictNames[state]||'未审阅',description=`${name} · 我的审阅：${status}`;
+      return `<button class="dependency-ref" data-id="${escape(id)}" data-review-state="${state}" title="${escape(description)}" aria-label="${escape(description)}">${escape(name)}${state==='pending'?'':`<span class="dependency-status"> · ${escape(status)}</span>`}</button>`;
+    }).join("")||"没有定位到本仓库中的引用对象。";
+  }
+  function renderReviewStatus(c){
+    const current=reviewCurrent;
     const badge=$("status-badge");
     badge.className=`status-badge ${current?current.verdict==="misaligned"?"rejected":current.verdict==="uncertain"||current.verdict==="partial"?"uncertain":"reviewed":""}`;
     badge.textContent=current?verdictNames[current.verdict]:"未审阅";
-    badge.title=!current&&records.length?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
-    $("history-count").textContent=`(${records.length})`;
-    $("history").innerHTML=records.map(row=>`<div class="history-item ${matches(c,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(c,row)?"":" · 旧版本"}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||"暂无审阅记录。";
+    badge.title=!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
+    $("history-count").textContent=`(${historyTotal})`;
     const row=byId.get(c.id);
-    if(row){row.verdict=current?.verdict||null;row.stale=!!records.length&&!current;row._labels=labels.forCard(row);}
+    if(row){row.verdict=current?.verdict||null;row.stale=!!historyTotal&&!current;row._labels=labels.forCard(row);}
+    renderDependencies(c);
     return current;
   }
-  function renderReview(c,records){
-    reviewHistory=records;const current=renderReviewStatus(c,records);
-    $("rationale").value=current?.rationale||"";
-    document.querySelectorAll('[name="verdict"]').forEach(input=>{input.checked=input.value===current?.verdict;input.disabled=false;});
+  function renderHistory(){
+    $("history").innerHTML=reviewHistory.map(row=>`<div class="history-item ${matches(card,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(card,row)?"":" · 旧版本"}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||(historyLoaded?"暂无审阅记录。":"展开后读取审阅历史。");
+    $('history-more').hidden=!historyCursor;$('history-more').disabled=historyLoading;
+    $('history-more').textContent='加载更多历史';
+  }
+  async function loadHistory(){
+    if(!card||historyLoading||(historyLoaded&&!historyCursor))return;
+    const current=card.id,turn=++historyTurn;historyLoading=true;
+    $('history-more').disabled=true;
+    if(!historyLoaded)$('history').textContent='正在读取审阅历史…';
+    try{
+      const data=await json(`./api/history?id=${encodeURIComponent(current)}&limit=25${historyCursor?`&cursor=${encodeURIComponent(historyCursor)}`:''}`);
+      if(turn!==historyTurn||current!==card?.id)return;
+      const ids=new Set(reviewHistory.map(row=>row.id));
+      reviewHistory.push(...data.history.filter(row=>!ids.has(row.id)));
+      historyCursor=data.next_cursor;historyLoaded=true;historyLoading=false;renderHistory();
+    }catch(error){
+      if(turn!==historyTurn||current!==card?.id)return;
+      historyLoading=false;$('history-more').hidden=false;$('history-more').disabled=false;
+      $('history-more').textContent='重试读取历史';if(!historyLoaded)$('history').textContent=error.message;
+    }
+  }
+  function resetHistory(){
+    ++historyTurn;reviewHistory=[];historyLoaded=false;historyLoading=false;historyCursor=null;
+    renderHistory();if($('review-history').open)loadHistory();
+  }
+  function renderReview(c,data){
+    reviewCurrent=data.current;historyTotal=data.history_count;renderReviewStatus(c);
+    const form=data.draft||reviewCurrent;
+    $("rationale").value=form?.rationale||"";
+    document.querySelectorAll('[name="verdict"]').forEach(input=>{input.checked=input.value===form?.verdict;input.disabled=false;});
     $("rationale").disabled=false;$("save").disabled=false;
-    saves.load(c,current);renderList();
+    saves.load(c,reviewCurrent,data.draft,data.draft_revision);resetHistory();renderList();
   }
   function renderSaveState(state){
     saving=state.saving;dirty=state.dirty;
     $('save-message').textContent=state.error?`${state.error} 修改仍保留在当前页面，可重试保存。`:
-      state.status==='saving'?'正在自动保存…':state.status==='pending'?'正在编辑，稍后自动保存…':
-      state.status==='saved'?'已自动保存':state.status==='idle'?'选择结论后自动保存；备注停止输入后保存。':'';
+      state.status==='saving'?(state.completing?'正在完成审阅…':'正在保存草稿…'):state.status==='pending'?'正在编辑，稍后保存草稿…':
+      state.status==='completed'?'已完成审阅':state.status==='saved'?'草稿已保存，尚未完成审阅':
+      state.status==='idle'?'草稿自动保存；完成审阅后更新进度。':'';
     $('save-message').classList.toggle('save-error',!!state.error);
-    $('save').textContent=state.error?'重试保存':'立即保存';
-    $('save').disabled=!state.cardId||state.saving||(!state.dirty&&!state.error);
+    $('save').textContent=state.error?'重试保存':'完成审阅';
+    $('save').disabled=!state.cardId||state.completing||(!state.canComplete&&!state.error);
+    $('rationale').disabled=!state.cardId||state.completing;
+    document.querySelectorAll('[name="verdict"]').forEach(input=>{input.disabled=!state.cardId||state.completing;});
   }
   function acceptJudgment(row){
     if(!card||row.card_id!==card.id)return;
-    if(!reviewHistory.some(item=>item.id===row.id)){
-      reviewHistory=[row,...reviewHistory].sort((a,b)=>b.created_at.localeCompare(a.created_at));
-    }
+    if(reviewCurrent?.id!==row.id)++historyTotal;
+    reviewCurrent=row;
     const listTop=$('card-list').scrollTop;
-    renderReviewStatus(card,reviewHistory);renderList();$('card-list').scrollTop=listTop;
+    renderReviewStatus(card);resetHistory();renderList();$('card-list').scrollTop=listTop;
     if(view==='graph'){const reading=graph.capture();renderGraph();graph.restore(reading);}
   }
   async function mayNavigate(){
@@ -249,7 +276,7 @@
     if(!force&&!await mayNavigate())return false;
     if(intent!==navigationTurn)return false;
     if(!restore&&!initial)navigation.remember(locationFor());
-    const turn=++sequence;selected=id;card=null;saves.load(null);reviewHistory=[];
+    const turn=++sequence;selected=id;card=null;saves.load(null);++historyTurn;historyLoading=false;reviewHistory=[];
     $('module-panel').hidden=true;$('module-panel').open=false;
     if(!restore){
       document.querySelector('.main-panel').scrollTop=0;
@@ -260,18 +287,18 @@
     document.querySelectorAll('[name="verdict"]').forEach(input=>{input.disabled=true;});
     $("review-card").hidden=true;$("empty").hidden=false;$("empty").querySelector("h2").textContent="正在打开条目…";
     try{
-      const statePromise=json(`./api/history?id=${encodeURIComponent(id)}`).then(data=>({data}),error=>({error}));
+      const statePromise=json(`./api/review-state?id=${encodeURIComponent(id)}`).then(data=>({data}),error=>({error}));
       const c=await evidence(id);if(turn!==sequence)return;renderEvidence(c);
       $("save-message").textContent="正在读取个人记录…";
       const state=await statePromise;if(turn!==sequence)return;
       if(state.error)throw state.error;
-      renderReview(c,state.data.history);
+      renderReview(c,state.data);
       if(!restore){document.querySelector('.main-panel').scrollTop=0;if(window.innerWidth<=700)window.scrollTo(0,document.querySelector('.main-panel').offsetTop);}
       if(!restore)navigation.remember(locationFor(id));
       return true;
     }catch(error){if(turn!==sequence)return;$("save-message").textContent=error.message;$("empty").querySelector("h2").textContent="条目加载失败";$("empty").querySelector("p").textContent=error.message;}
   }
-  async function save(){if(card)return saves.retry();}
+  async function save(){if(card)return saves.state.error?saves.retry():saves.complete();}
   function next(offset=1){
     let list=rows();const current=byId.get(selected);
     if(current&&!list.some(row=>row.id===selected)&&baseRows().includes(current)&&labels.matches(current._labels,selectedLabels,'status'))list=sortRows([...list,current]);
@@ -304,7 +331,8 @@
     if(state.moduleVisible)await showModule();
     if(turn!==sequence)return;
     $('module-panel').open=!!state.moduleOpen;
-    $('dependencies').parentElement.open=!!state.dependenciesOpen;$('history').parentElement.open=!!state.historyOpen;
+    $('dependencies').parentElement.open=!!state.dependenciesOpen;$('review-history').open=!!state.historyOpen;
+    if(state.historyOpen)loadHistory();
     if(state.graph)graph.restore?.(state.graph);
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
     if(turn!==sequence)return;
@@ -320,7 +348,7 @@
     const id=byId.has(fromHash)?fromHash:rows()[0]?.id;if(id){await openCard(id,true,{initial:true});locateList();}else $("empty").querySelector('h2').textContent="此快照暂无条目";
   }
   function resetSession(){
-    saves.reset();navigation.reset();symbols.clear();++navigationTurn;
+    saves.reset();navigation.reset();symbols.clear();++navigationTurn;++historyTurn;
     selected=null;card=null;catalog=[];byId.clear();api.clearEvidenceCache();++sequence;
     view='list';setView('list');$("review-card").hidden=true;$("card-list").innerHTML="";
     $("admin-link").hidden=true;$("graph-panel").hidden=true;$("reviewer-name").textContent="…";$("save-global").textContent="";
@@ -362,6 +390,8 @@
   $('back-card').onclick=()=>navigation.back();
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});
   $("save").onclick=save;$("next").onclick=()=>next();
+  $('review-history').ontoggle=()=>{if($('review-history').open)loadHistory();};
+  $('history-more').onclick=loadHistory;
   function editReview(immediate=false){saves.edit({verdict:document.querySelector('[name="verdict"]:checked')?.value||'',rationale:$('rationale').value},{immediate});}
   $('rationale').oninput=()=>editReview();$('verdicts').onchange=()=>editReview(true);
   $("copy-code").onclick=async()=>{try{await navigator.clipboard.writeText(card?.lean?.source||'');$("copy-code").textContent='已复制';setTimeout(()=>{$("copy-code").textContent='复制代码';},1500);}catch{$("save-global").textContent='可在代码区选中并复制。';}};

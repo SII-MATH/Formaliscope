@@ -1,0 +1,9 @@
+{
+  "schema": "formaliscope-offsite-backup-config.v1",
+  "ssh_host": "public-server",
+  "remote_backup_dir": "/var/backups/formaliscope",
+  "source_data_dir": "/var/lib/formaliscope",
+  "destination": "/Users/your-name/Documents/Projects/Formaliscope/.review-backups/hk-vps",
+  "key_file": "/Users/your-name/Documents/Projects/Formaliscope/.review-backups/keys/hk-vps.fernet",
+  "keep": 30
+}

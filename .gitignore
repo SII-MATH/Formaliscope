@@ -1,3 +1,4 @@
+.DS_Store
 .review/
 .review-backups/
 __pycache__/
@@ -6,3 +7,10 @@ __pycache__/
 .statement-workflow/
 .statement-review/
 .statement-enrichment/
+# Project-local installed copies; sources live in skills/<harness>/.
+.agents/skills/formaliscope-enrich
+.claude/skills/formaliscope-enrich
+.claude/agents/formaliscope-readback.md
+.claude/agents/formaliscope-expectation.md
+.kimi-code/skills/formaliscope-enrich
+.kimi-code/agents/formaliscope-enrich

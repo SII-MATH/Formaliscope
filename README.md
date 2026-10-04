@@ -1,10 +1,16 @@
 # Formaliscope · Statement 审阅台
 
-KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [Statement enrichment v1](statement_workflow/schema/statement-enrichment.v1.schema.json)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
+KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [字段标准 v2](statement_workflow/SCHEMA_V2.md)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
 
-仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
+v2 已接入 Skill、校验器与数据库迁移 9：Agent 填写标题、完整回译、角色、主题、优先度及内部预期判断，不填写摘要、未解释对象、证据或来源记录。两个自报置信度分开保存；内部判断不进入公共快照、审阅接口或人工进度。
+
+仓库包含网页服务 `review_app/`、声明补充数据的 [契约与导入说明](statement_workflow/README.md)，以及下述仓库 Skill。补全按选定目录或声明分批执行，早期 Blueprint 对照模式继续保留。
+
+回译 Skill 源文件按 Codex、Claude Code、Kimi Code 分别维护在 `skills/`，先按[安装说明](skills/README.md)安装当前 harness 的版本。三份配置的模型路由 ID 均为 `luna6`，由用户处理路由；推理等级和主题由各版本的 `config.json` 指定。先按冻结 Lean 分组回译，再用独立预期材料补内部判断；没有材料时填“不知道”。默认只有原始 `readback.confidence < 0.8` 的成功回译进入主 Agent 复核，判断置信度不增加路由条件；无法回译单列失败。准备与收集脚本自动记录来源、运行与原始分值，无需额外模型服务。
 
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
+
+Release 说明自动包含相对上一正式版本的 Changelog 和完整对比链接。中文版本摘要见 [CHANGELOG.md](CHANGELOG.md)。
 
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
@@ -34,13 +40,21 @@ python3 -m review_app validate-enrichment \
 python3 -m review_app enrich-snapshot \
   --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json \
   --output /tmp/enriched-snapshot.json
+python3 -m review_app import-agent-assessments \
+  --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json \
+  --data-dir /path/to/review-data
 ```
 
+前两个命令不写数据库，候选快照仅含公开回译与标签。最后一个命令是 v2 内部评估的显式入库：使用该批次的冻结基础快照，支持幂等重试与版本历史，不安装快照或写入人工判断。应先升级目标应用；旧版本不支持数据库迁移 9。旧 v1 补充文件仍可校验和生成候选，但不能作为 v2 内部评估导入。
+
 构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
+
+HK-VPS 的完整备份可加密拉取到本机项目下的 `.review-backups/hk-vps/`。目录、密钥和本机配置均被 Git 忽略；同步、校验与恢复步骤见 [本机异机备份](review_app/OFFSITE_BACKUP.md)。只有该工具另需 `deploy/requirements-offsite-backup.txt` 中的加密依赖，网页服务和回译工具仍使用 Python 标准库。
 
 完整验证：
 
 ```bash
+python3 -m pip install -r deploy/requirements-offsite-backup.txt
 python3 -m unittest discover -s review_app -t . -p 'test_*.py'
 python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 for script in review_app/static/*.js; do node --check "$script"; done

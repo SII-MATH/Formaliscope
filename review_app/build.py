@@ -59,13 +59,23 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
         "unlinked_nodes": snapshot.get("unlinked_nodes"),
         "cards": snapshot.get("cards"),
     }
-    for key in ('review_mode', 'review_contract', 'modules', 'source_origin'):
+    for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics'):
         if key in snapshot:
             protected[key] = snapshot[key]
     return _digest(protected)
 
 
 def validate_snapshot(snapshot: dict) -> None:
+    def reject_internal(value):
+        if isinstance(value, dict):
+            if 'expectation_assessment' in value:
+                raise ValueError('internal Agent assessments must not enter reviewer snapshots')
+            for item in value.values():
+                reject_internal(item)
+        elif isinstance(value, list):
+            for item in value:
+                reject_internal(item)
+    reject_internal(snapshot)
     schema = snapshot.get("schema")
     if schema not in {LEGACY_SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA}:
         raise ValueError(f"unsupported snapshot schema: {schema!r}")
@@ -75,6 +85,14 @@ def validate_snapshot(snapshot: dict) -> None:
     ids = [card.get("id") for card in cards]
     if any(not isinstance(card_id, str) or not card_id for card_id in ids) or len(ids) != len(set(ids)):
         raise ValueError("snapshot card IDs must be non-empty and unique")
+    from .enrichment_v2 import DEFAULT_TOPICS, validate_public_annotation, validate_topics
+    topics = validate_topics(snapshot.get('enrichment_topics', DEFAULT_TOPICS))
+    for card in cards:
+        enrichment = card.get('enrichment')
+        if isinstance(enrichment, dict) and enrichment.get('schema') == 'statement-enrichment.v2':
+            validate_public_annotation(enrichment, topics)
+            if enrichment['declaration_id'] != card['id']:
+                raise ValueError('public annotation declaration does not match its card')
     if snapshot.get("digest") != calculate_snapshot_digest(snapshot):
         raise ValueError("snapshot digest does not match its card content")
     if schema == SNAPSHOT_SCHEMA:

@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 VERSION = re.compile(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
 COMMIT = re.compile(r'[0-9a-f]{40}')
 ARCHIVE = re.compile(r'formaliscope-app-([0-9a-f]{40})\.tar\.gz')
 MANIFEST = 'formaliscope-app-manifest.json'
+REPOSITORY = re.compile(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]+')
 
 
 def version(tag):
@@ -102,6 +106,89 @@ def package(commit, tag, output, repo=Path('.')):
     return archive_name
 
 
+def previous_release(releases, tag):
+    """Use only published numbered versions below this run's version."""
+    current = version(tag)
+    if current is None:
+        raise ValueError('release notes require a vX.Y.Z version')
+    candidates = []
+    for item in pages(releases):
+        if not isinstance(item, dict):
+            raise ValueError('GitHub releases must be objects')
+        numbered = version(item.get('tag_name'))
+        if (numbered is not None and numbered < current and item.get('published_at')
+                and not item.get('draft') and not item.get('prerelease')):
+            candidates.append(item['tag_name'])
+    return max(candidates, key=version) if candidates else None
+
+
+def release_notes(releases, tag, commit, repository, repo=Path('.')):
+    """Render notes from the immutable Git range, including direct commits."""
+    if not isinstance(commit, str) or not COMMIT.fullmatch(commit):
+        raise ValueError('release notes require an exact commit')
+    if (not isinstance(repository, str) or not REPOSITORY.fullmatch(repository)
+            or repository.split('/')[1] in ('.', '..')):
+        raise ValueError('release notes require a GitHub owner/repository')
+    previous = previous_release(releases, tag)
+
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, encoding='utf-8').stdout.strip()
+
+    resolved = git('rev-parse', '--verify', f'{commit}^{{commit}}')
+    if resolved != commit:
+        raise ValueError('release notes require the SHA of a commit object')
+    base = None
+    if previous:
+        base = git('rev-parse', '--verify', f'refs/tags/{previous}^{{commit}}')
+        ancestor = subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', base, commit],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if ancestor.returncode == 1:
+            raise ValueError(f'previous release {previous} is not an ancestor of {commit}')
+        ancestor.check_returncode()
+    interval = f'{base}..{commit}' if base else commit
+    history = git('-c', 'log.showSignature=false', '-c', 'i18n.logOutputEncoding=UTF-8',
+                  'log', '--no-merges', '--topo-order', '--reverse',
+                  '--format=%H%x00%s', interval, '--')
+    url = f'https://github.com/{repository}'
+    lines = [f'Formaliscope {tag}', '', f'来源提交：[{commit}]({url}/commit/{commit})', '',
+             '## Changelog', '']
+    if previous:
+        lines.extend([f'自 [{previous}]({url}/releases/tag/{previous}) 以来的变更：', ''])
+    else:
+        lines.extend(['首个正式版本包含的变更：', ''])
+    for record in history.split('\n') if history else []:
+        sha, subject = record.split('\0', 1)
+        if not COMMIT.fullmatch(sha):
+            raise ValueError('invalid commit in release notes history')
+        subject = html.escape(' '.join(subject.split()), quote=False)
+        subject = re.sub(r'([\\`*_{}\[\]()#+.!|~@-])', r'\\\1', subject)
+        lines.append(f'- {subject} ([{sha[:7]}]({url}/commit/{sha}))')
+    if not history:
+        lines.append('- 无新增的非合并提交。')
+    full = f'{url}/compare/{previous}...{commit}' if previous else f'{url}/tree/{commit}'
+    lines.extend(['', f'[完整变更]({full})', ''])
+    return '\n'.join(lines)
+
+
+def write_release_notes(releases, tag, commit, repository, output, repo=Path('.')):
+    content = release_notes(releases, tag, commit, repository, repo)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n',
+                                         prefix=f'.{output.name}.', dir=output.parent,
+                                         delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+        os.replace(temporary, output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -121,6 +208,12 @@ def main():
     build.add_argument('--commit', required=True)
     build.add_argument('--version', required=True)
     build.add_argument('--output', type=Path, required=True)
+    notes = commands.add_parser('release-notes')
+    notes.add_argument('--releases', type=Path, required=True)
+    notes.add_argument('--version', required=True)
+    notes.add_argument('--commit', required=True)
+    notes.add_argument('--repository', required=True)
+    notes.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == 'next-tag':
@@ -131,8 +224,11 @@ def main():
         elif args.command == 'validate':
             validate_manifest(json.loads(args.manifest.read_text()), args.tag, args.archive_name,
                               args.commit, hashlib.sha256(args.archive_file.read_bytes()).hexdigest())
-        else:
+        elif args.command == 'package':
             print(package(args.commit, args.version, args.output))
+        else:
+            print(write_release_notes(json.loads(args.releases.read_text()), args.version,
+                                      args.commit, args.repository, args.output))
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 

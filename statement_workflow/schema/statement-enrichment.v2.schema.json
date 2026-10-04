@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Statement enrichment v2 — source-bound results with private assessments",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "statement-enrichment.v2"
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/annotation"
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "originals": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/annotation"
+      }
+    },
+    "reviews": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/review"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "run",
+    "annotations",
+    "sources",
+    "originals",
+    "reviews"
+  ],
+  "$defs": {
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "declaration_id": {
+          "type": "string",
+          "pattern": "^statement::.+",
+          "maxLength": 1024
+        },
+        "title_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "readback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text_zh": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "text_zh",
+            "confidence"
+          ]
+        },
+        "classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "role": {
+              "enum": [
+                "definition",
+                "input",
+                "comparison",
+                "computation",
+                "derivation",
+                "target",
+                "infrastructure",
+                null
+              ]
+            },
+            "topics": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "role",
+            "topics"
+          ]
+        },
+        "priority": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            null
+          ]
+        },
+        "expectation_assessment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "verdict": {
+              "enum": [
+                "aligned",
+                "misaligned",
+                "undetermined"
+              ]
+            },
+            "reason_zh": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "verdict",
+            "reason_zh",
+            "confidence"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "enum": [
+                      "misaligned",
+                      "undetermined"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason_zh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "declaration_id",
+        "title_zh",
+        "readback",
+        "classification",
+        "priority",
+        "expectation_assessment"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "reasoning_effort": {
+          "enum": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            null
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "policy_version": {
+          "const": "statement-fields.v2"
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "snapshot_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expectation_context_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/topic"
+          },
+          "maxItems": 100
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "run_id",
+        "model",
+        "reasoning_effort",
+        "created_at",
+        "policy_version",
+        "source_commit",
+        "snapshot_digest",
+        "expectation_context_digest",
+        "topics",
+        "threshold"
+      ]
+    },
+    "topic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "model",
+        "reviewed_at"
+      ]
+    },
+    "public_annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "statement-enrichment.v2"
+        },
+        "declaration_id": {
+          "type": "string",
+          "pattern": "^statement::.+",
+          "maxLength": 1024
+        },
+        "title_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "readback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "none",
+                "draft"
+              ]
+            },
+            "text_zh": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            }
+          },
+          "required": [
+            "status",
+            "text_zh"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "draft"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "text_zh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "text_zh": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "role": {
+              "enum": [
+                "definition",
+                "input",
+                "comparison",
+                "computation",
+                "derivation",
+                "target",
+                "infrastructure",
+                null
+              ]
+            },
+            "topics": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "role",
+            "topics"
+          ]
+        },
+        "priority": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            null
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "declaration_id",
+        "title_zh",
+        "readback",
+        "classification",
+        "priority"
+      ]
+    }
+  }
+}

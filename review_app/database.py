@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 7
+DB_SCHEMA_VERSION = 9
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -116,6 +116,57 @@ def _migration_7(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS preview_identities_reviewer ON preview_identities(reviewer)")
 
 
+def _migration_8(db: sqlite3.Connection) -> None:
+    # Keep one recoverable draft per reviewer and evidence version. Completed
+    # checkpoints retain their revision so an old browser cannot overwrite them.
+    db.execute("""CREATE TABLE review_drafts (
+        id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+        card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+        reviewer TEXT NOT NULL, verdict TEXT NOT NULL, rationale TEXT NOT NULL,
+        created_at TEXT NOT NULL, fingerprint_scheme TEXT NOT NULL,
+        review_basis_scheme TEXT NOT NULL, review_basis_fingerprint TEXT NOT NULL,
+        source_commit TEXT, snapshot_digest TEXT,
+        revision INTEGER NOT NULL, completed_revision INTEGER NOT NULL DEFAULT 0,
+        completion_request_id TEXT, judgment_id TEXT,
+        UNIQUE(reviewer, card_id, fingerprint)
+    )""")
+
+
+def _migration_9(db: sqlite3.Connection) -> None:
+    # Machine assessments remain private and do not become reviewer judgments.
+    # A run and its rows are immutable; retries compare their complete payloads.
+    db.execute("""CREATE TABLE agent_assessment_runs (
+        run_id TEXT PRIMARY KEY, model TEXT NOT NULL,
+        reasoning_effort TEXT, created_at TEXT NOT NULL,
+        policy_version TEXT NOT NULL, source_commit TEXT NOT NULL,
+        snapshot_digest TEXT NOT NULL, expectation_context_digest TEXT,
+        threshold REAL NOT NULL CHECK(threshold >= 0 AND threshold <= 1),
+        run_json TEXT NOT NULL, imported_at TEXT NOT NULL
+    )""")
+    db.execute("""CREATE TABLE agent_assessments (
+        run_id TEXT NOT NULL, declaration_id TEXT NOT NULL,
+        source_sha256 TEXT NOT NULL,
+        readback_sha256 TEXT, original_readback_sha256 TEXT,
+        readback_confidence REAL NOT NULL
+            CHECK(readback_confidence >= 0 AND readback_confidence <= 1),
+        expectation_verdict TEXT NOT NULL
+            CHECK(expectation_verdict IN ('aligned', 'misaligned', 'undetermined')),
+        expectation_reason_zh TEXT,
+        expectation_confidence REAL NOT NULL
+            CHECK(expectation_confidence >= 0 AND expectation_confidence <= 1),
+        original_json TEXT NOT NULL, annotation_json TEXT NOT NULL,
+        review_json TEXT, payload_sha256 TEXT NOT NULL,
+        PRIMARY KEY(run_id, declaration_id),
+        FOREIGN KEY(run_id) REFERENCES agent_assessment_runs(run_id),
+        CHECK(expectation_verdict = 'aligned' OR
+            (expectation_reason_zh IS NOT NULL AND length(trim(expectation_reason_zh)) > 0))
+    )""")
+    db.execute("""CREATE INDEX agent_assessments_declaration
+        ON agent_assessments(declaration_id, run_id)""")
+    db.execute("""CREATE INDEX agent_assessment_runs_basis
+        ON agent_assessment_runs(source_commit, snapshot_digest, expectation_context_digest)""")
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -124,6 +175,8 @@ MIGRATIONS = (
     (5, "reviewer-display-names", _migration_5),
     (6, "name-identities-and-recovery", _migration_6),
     (7, "unify-authentication-and-session-storage", _migration_7),
+    (8, "separate-review-drafts-from-history", _migration_8),
+    (9, "private-versioned-agent-assessments", _migration_9),
 )
 
 
