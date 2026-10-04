@@ -4,6 +4,8 @@ KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜�
 
 仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
 
+当前补全入口是仓库内的 [$formaliscope-enrich](.agents/skills/formaliscope-enrich/SKILL.md)：一组 Luna 子 Agent prompt、低置信度复核 prompt 与机械收集脚本。Luna 按相关组输出中文回译及现有 enrichment 字段，默认只有自报 `confidence < 0.8` 的条目进入主 Agent 复核；高分和已复核条目合并为候选快照，仍作为机器草稿。无需额外模型服务，置信度及复核记录保存在批次旁文件。
+
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
 
 Release 说明自动包含相对上一正式版本的 Changelog 和完整对比链接。中文版本摘要见 [CHANGELOG.md](CHANGELOG.md)。
