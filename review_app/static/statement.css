@@ -56,7 +56,7 @@ mjx-container[jax="SVG"]{direction:ltr;position:relative;display:inline-block;ma
 @media(max-width:700px){.sidebar-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.sidebar-head h1{font-size:17px}.mobile-find-toggle{display:block;padding:6px 10px;font-size:10px}.sidebar:not(.finder-open) .sidebar-setup,.sidebar:not(.finder-open) .queue-summary,.sidebar:not(.finder-open) .card-list,.sidebar:not(.finder-open) .pagination,.sidebar:not(.finder-open) .progress-dock{display:none}.sidebar .sidebar-setup{max-height:46dvh;overflow:auto}}
 
 /* Preserve the Lean identifier while presenting optional Chinese reading titles. */
-.row-subtitle{display:block;margin-top:4px;color:#657f68;font-size:10px;line-height:1.6;overflow-wrap:anywhere}.card-subtitle{margin:-5px 0 13px;color:#6e8574;font-size:13px;line-height:1.6;overflow-wrap:anywhere}.reading-summary{margin:16px 25px 0;padding:10px 12px;border-left:3px solid #d5e3ce;background:#f8faf5;color:#708368;font-size:11px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.enrichment-provenance{white-space:pre-wrap;overflow-wrap:anywhere}
+.row-subtitle{display:block;margin-top:4px;color:#657f68;font-size:10px;line-height:1.6;overflow-wrap:anywhere}.card-subtitle{margin:-5px 0 13px;color:#6e8574;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 
 #recovery-dialog form{display:grid;gap:12px}#recovery-dialog p{line-height:1.7}#account-recovery-code{width:100%;font:12px ui-monospace,monospace;margin-top:8px}#recovery-result label{display:block}#recovery-error{color:#9f4a35;font-size:12px}
 

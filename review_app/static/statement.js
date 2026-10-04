@@ -12,7 +12,9 @@
   let directory=new URL(location.href).searchParams.get('directory')||'', directoryNodes=new Map(), catalogInfo=null;
   const expandedDirectories=new Set(['']);
   const labels=window.ReviewLabels;
-  const selectedLabels=labels.normalizeSelection((new URL(location.href).searchParams.get('labels')||'').split(','));
+  // Project topics arrive with the catalog, so preserve linked topic filters
+  // until that configuration has been registered.
+  const selectedLabels=new Set((new URL(location.href).searchParams.get('labels')||'').split(',').filter(Boolean));
   let labelTab='content';
   const api=window.StatementAPI.create({onUnauthorized:()=>identities.unauthorized()});
   const json=api.request,post=api.post,evidence=api.evidence;
@@ -32,19 +34,8 @@
   function priorityScore(c){return c._labels?.includes('priority/p0')?3:c._labels?.includes('priority/p1')?2:c._labels?.includes('priority/p2')?1:0;}
   function renderProvenance(c){
     const analysis=c.enrichment,summary=$('label-provenance-summary');
-    summary.textContent=analysis?`角色／主题：Agent 候选标注 · 优先度：${analysis.priority?.level?'Agent 候选标注':'尚未标注'} · 状态：本人记录`:'角色／主题／优先度：索引规则候选 · 状态：本人记录';
-    const details=[];
-    if(analysis?.classification?.rationale_zh)details.push(`分类依据：${analysis.classification.rationale_zh}`);
-    if(analysis?.priority?.reason_zh)details.push(`优先度依据：${analysis.priority.reason_zh}`);
-    if(analysis?.provenance){
-      const source=analysis.provenance;
-      if(source.model)details.push(`生成模型：${source.model}`);
-      if(source.created_at)details.push(`生成时间：${new Date(source.created_at).toLocaleString('zh-CN')}`);
-      if(source.context_completeness)details.push(`上下文：${{unknown:'完整性待检查',partial:'仍有待补内容',complete:'已收集完整'}[source.context_completeness]}`);
-    }
-    for(const unresolved of analysis?.readback?.unresolved||[])details.push(`待解释对象 ${unresolved.object}：${unresolved.reason}`);
-    for(const item of analysis?.evidence||[])details.push(`依据位置：${item.file}:${item.line_start}${item.line_end!==item.line_start?`–${item.line_end}`:''}`);
-    $('enrichment-provenance').hidden=!details.length;$('enrichment-provenance').textContent=details.join('\n');
+    const priority=typeof analysis?.priority==='string'?analysis.priority:analysis?.priority?.level;
+    summary.textContent=analysis?`分类：Agent 候选标注 · 优先度：${priority?'已标注':'尚未分级'} · 审阅状态：本人记录`:'分类与优先度：索引规则候选 · 审阅状态：本人记录';
   }
   function labelChip(id,{button=false,count=null,remove=false}={}){
     const item=labels.definitions.get(id);if(!item)return '';
@@ -131,7 +122,7 @@
     return directoryRows().filter(c=>
       (scope!=="main" || c.role==="主定理" || c.role==="直接依赖") &&
       (scope!=="interface" || ['structure','class'].includes(c.kind) || c.module_file?.includes('Challenge')) &&
-      `${c.title} ${c.title_zh||''} ${c.reading_summary_zh||''} ${c.declaration} ${c.module_file} ${c.role} ${(c._labels||[]).map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase().includes(query)
+      `${c.title} ${c.title_zh||''} ${c.declaration} ${c.module_file} ${c.role} ${(c._labels||[]).map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase().includes(query)
     );
   }
   function sortRows(list){return list.sort((a,b)=>$("sort").value==="name" ? a.declaration.localeCompare(b.declaration) :
@@ -158,7 +149,11 @@
     if(index>=0){page=Math.floor(index/PAGE_SIZE);renderList();$("card-list").querySelector('.active')?.scrollIntoView({block:"nearest"});}
   }
   async function loadCatalog(){
-    const data=await json("./api/catalog");catalog=data.cards;byId=new Map(catalog.map(c=>[c.id,c]));
+    const data=await json("./api/catalog");
+    labels.configureTopics(data.enrichment_topics||[]);
+    const normalized=labels.normalizeSelection(selectedLabels);
+    selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
+    catalog=data.cards;byId=new Map(catalog.map(c=>[c.id,c]));
     for(const row of catalog)row._labels=labels.forCard(row);
     catalogInfo=data;directoryNodes=directories.buildTree(catalog);
     if(!directoryNodes.has(directory)){directory='';updateLocation();}
@@ -187,8 +182,6 @@
     renderCardLabels();
     $("statement-origin").textContent=c.statement_origin==="blueprint"?"Blueprint 原文":c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
     $("statement").innerHTML=window.Stage3Latex?.toHtml(c.statement)||escape(c.statement);math();
-    const summary=c.reading_summary_zh&&c.reading_summary_zh!==c.statement?c.reading_summary_zh:'';
-    $('reading-summary').hidden=!summary;$('reading-summary').textContent=summary?`阅读摘要：${summary}`:'';
     $("nl-location").textContent=c.statement_origin==="reading-summary"?"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。":c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":`${c.blueprint_file}:${c.blueprint_line}`;
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
     $("lean-location").textContent=c.lean?`${c.lean.file}:${c.lean.line} · 声明完整显示` : "源码尚未定位";

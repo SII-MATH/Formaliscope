@@ -9,11 +9,11 @@ const vm=require("node:vm");
 // controlled orders without duplicating the controller's navigation logic.
 const clone=value=>JSON.parse(JSON.stringify(value));
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
-function fixture({configure=()=>{}}={}) {
+function fixture({configure=()=>{},topics=[],initialURL='https://review.example/#A'}={}) {
   const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[];
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
-    assert.ok(!['structure-panel','structure-fields','field-count'].includes(id),'Removed structure panel elements are absent from the page');
+    assert.ok(!['structure-panel','structure-fields','field-count','reading-summary','enrichment-provenance'].includes(id),'Removed structure and enrichment detail elements are absent from the page');
     if(!elements.has(id))elements.set(id,{id,value:"",textContent:"",innerHTML:"",hidden:false,open:false,
       disabled:false,scrollTop:0,scrollLeft:0,offsetTop:0,style:{},dataset:{},classList:classes(),
       parentElement:{open:false},setAttribute(){},scrollIntoView(){},showModal(){this.open=true;},close(){this.open=false;},
@@ -30,7 +30,7 @@ function fixture({configure=()=>{}}={}) {
     lean:{file:`Test/${id}.lean`,line:1,source:`def ${id} := 1`}}));
   configure(cards,records,drafts);
   const currentReview=id=>(records.get(id)||[]).find(row=>row.fingerprint===cards.find(card=>card.id===id)?.fingerprint)||null;
-  const stack=[{url:"https://review.example/#A",state:null}];let cursor=0,nextToken=0;
+  const stack=[{url:initialURL,state:null}];let cursor=0,nextToken=0;
   const browserHistory={
     replaceState(state,_,url){stack[cursor]={state:clone(state),url:String(url)};},
     pushState(state,_,url){stack.splice(cursor+1);stack.push({state:clone(state),url:String(url)});++cursor;},
@@ -45,7 +45,7 @@ function fixture({configure=()=>{}}={}) {
       if(url==="./api/config")return {preview:false};
       if(url==="./api/catalog")return {cards:clone(cards.map(card=>({...card,
         verdict:currentReview(card.id)?.verdict||null,stale:!!records.get(card.id)?.length&&!currentReview(card.id)}))),
-        source_commit:"source",snapshot_digest:"snapshot"};
+        source_commit:"source",snapshot_digest:"snapshot",enrichment_topics:clone(topics)};
       if(url.startsWith("./api/review-state?")){
         const id=new URL(url,location.href).searchParams.get('id'),rows=records.get(id)||[],draft=drafts.get(id);
         return {current:clone(currentReview(id)),draft:clone(draft?.pending?draft:null),
@@ -206,10 +206,38 @@ async function dependencyStatusAfterNavigation(){
   assert.match(dependencyButton(f,'B'),/dependency-status"> · 不通过/);
 }
 
+async function configuredTopicsAndV2Labels(){
+  const f=fixture({topics:[{id:'topology',name:'拓扑学'},{id:'geometry',name:'几何学'}],
+    initialURL:'https://review.example/?labels=topic%2Ftopology#B',configure(cards){
+      for(const c of cards)c.enrichment={schema:'statement-enrichment.v2',title_zh:null,
+        readback:{status:'draft',text_zh:c.statement},classification:{role:null,topics:[]},priority:null};
+      cards[1].enrichment.classification={role:'derivation',topics:['topology']};
+      cards[1].reading_summary_zh='DELETED_SUMMARY_FIELD';
+    }});await settle();
+  assert.equal(f.title,'B');
+  assert.equal(new URL(f.url).searchParams.get('labels'),'topic/topology','A linked project topic survives the initial catalog load');
+  assert.match(f.element('card-list').innerHTML,/data-id="B"/);
+  assert.doesNotMatch(f.element('card-list').innerHTML,/data-id="[AC]"/,'Configured topics filter the real catalog');
+  assert.match(f.element('active-labels').innerHTML,/拓扑学/);
+  f.element('choose-labels').onclick();
+  assert.match(f.element('label-groups').innerHTML,/data-label="topic\/topology"/);
+  assert.match(f.element('label-groups').innerHTML,/data-label="topic\/geometry"/);
+  assert.doesNotMatch(f.element('label-groups').innerHTML,/topic\/(adams|comparison|spectral)/,'The dialog uses this project\'s collection rather than KIP126 defaults');
+  assert.match(f.element('card-labels').innerHTML,/中间推导/);
+  assert.doesNotMatch(f.element('card-labels').innerHTML,/priority\//,'A null v2 priority is not assigned a legacy tier');
+  assert.match(f.element('label-provenance-summary').textContent,/尚未分级/);
+  f.element('labels-dialog').close();f.element('reset-labels').onclick();
+  f.click('A');await settle();
+  assert.equal(f.element('card-labels').innerHTML,'','A v2 null role is not replaced by a heuristic definition label');
+  assert.match(f.element('more-card-labels').innerHTML,/回译草稿/);
+  assert.doesNotMatch(f.element('statement').innerHTML,/DELETED_SUMMARY_FIELD/);
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
   await lazyHistoryAndDraftRecovery();
   await dependencyReviewStates();await dependencyStatusAfterNavigation();
-  console.log("Statement page integration: navigation, failed saves, draft recovery and personal dependency review states passed.");
+  await configuredTopicsAndV2Labels();
+  console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

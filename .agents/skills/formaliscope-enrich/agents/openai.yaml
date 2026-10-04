@@ -1,4 +1,4 @@
 interface:
   display_name: "Formaliscope 中文回译"
-  short_description: "按配置选择子 Agent 模型，分批回译并填写字段，仅按自报置信度复核"
-  default_prompt: "使用 $formaliscope-enrich，读取模型配置，为指定目录生成中文回译与标签，按子 Agent 自报置信度安排复核并输出候选快照。"
+  short_description: "按配置分组回译、标签与内部预期评估，仅按回译置信度复核"
+  default_prompt: "使用 $formaliscope-enrich，冻结指定范围与模型配置，先保存纯 Lean 回译再填写内部预期判断，按原始回译置信度复核并输出候选快照。"

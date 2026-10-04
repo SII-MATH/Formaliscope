@@ -1,8 +1,8 @@
 # Statement 字段与填写标准 v2
 
-状态：2026-10-04 用户确认定稿，待实现。本文是下一版 Agent 输出、分类配置及内部评估的实现依据。
+状态：2026-10-04 用户确认定稿，已接入 Skill、校验器、候选快照和数据库迁移 9。本文是 Agent 输出、分类配置及内部评估的填写依据。
 
-当前 Skill、收集脚本和应用导入器仍使用 `statement-enrichment.v1`。本文不表示 v2 已接入，也不改变已生成的 v1 批次。实现时同步更新输出契约、prompt、收集与导入、标签配置、数据库迁移及对应回归，不把 v2 结果直接交给当前 v1 导入器。
+新批次使用 [Agent 输出契约](schema/statement-agent-batch.v2.schema.json) 和 [收集产物契约](schema/statement-enrichment.v2.schema.json)。既有 v1 批次继续按原契约校验，不自动转换。部署升级与候选快照安装仍分别显式执行。
 
 ## Agent 填写的字段
 
@@ -114,7 +114,7 @@ Agent 不再填写阅读摘要、`unresolved`、证据摘录、证据行号或 `
 
 ## 输出示例
 
-以下是单条 Agent 结果的结构示例，尚未接入当前 v1 收集器；ID 和内容仅作示例。批次包装、调度层运行记录以及数据库导入由后续实现处理。
+以下是单条 Agent 结果的结构示例；ID 和内容仅作示例。组输出包装为 `{"schema":"formaliscope-agent-batch.v2","annotations":[...]}`，不包含运行记录。
 
 ```json
 {
@@ -136,3 +136,9 @@ Agent 不再填写阅读摘要、`unresolved`、证据摘录、证据行号或 `
   }
 }
 ```
+
+`prepare.py` 自动保存批次配置、运行记录和可选预期上下文；`collect.py` 将接受结果包装为 `statement-enrichment.v2`，包含 `run`、`annotations`、`sources`、`originals`、`reviews`。这些字段保存运行记录、最终条目、源码 SHA-256、原始模型条目及主 Agent 复核来源，声明集合经过校验。它们是私密运行产物，不进入 Git 或公共快照。
+
+带预期上下文时，收集器核对第一阶段回译没有被第二阶段改写。缺少预期上下文时判断必须为不知道。调度层通过 `--executed-model` 确认实际执行模型；配置模型不符时拒绝收集。
+
+候选生成使用 `enrich-snapshot`，不写数据库。内部入库单独使用 `import-agent-assessments --snapshot <冻结基础快照> --file <收集产物> --data-dir <目标数据目录>`；快照安装使用 `install-snapshot`。新版应用的数据库迁移 9 创建内部评估表，旧应用应先升级再运行迁移或导入。

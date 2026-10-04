@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -40,6 +41,7 @@ def _validate(value, rule, root, path='$'):
     types = [types] if isinstance(types, str) else types
     checks = {'object': isinstance(value, dict), 'array': isinstance(value, list),
               'string': isinstance(value, str), 'integer': type(value) is int,
+              'number': type(value) in (int, float),
               'null': value is None}
     if types and not any(checks.get(kind, False) for kind in types):
         raise ValueError(f'{path}: expected {types}')
@@ -52,6 +54,8 @@ def _validate(value, rule, root, path='$'):
         for key, item in value.items():
             if key in properties:
                 _validate(item, properties[key], root, path+'.'+key)
+            elif isinstance(rule.get('additionalProperties'), dict):
+                _validate(item, rule['additionalProperties'], root, path+'.'+key)
     if isinstance(value, list):
         if len(value) < rule.get('minItems', 0) or len(value) > rule.get('maxItems', float('inf')):
             raise ValueError(f'{path}: invalid item count')
@@ -63,6 +67,8 @@ def _validate(value, rule, root, path='$'):
     if isinstance(value, str):
         if len(value.strip()) < rule.get('minLength', 0):
             raise ValueError(f'{path}: empty text')
+        if len(value) > rule.get('maxLength', float('inf')):
+            raise ValueError(f'{path}: text too long')
         if 'pattern' in rule and re.search(rule['pattern'], value) is None:
             raise ValueError(f'{path}: invalid format')
         if rule.get('format') == 'date-time':
@@ -72,8 +78,13 @@ def _validate(value, rule, root, path='$'):
                     raise ValueError()
             except ValueError as exc:
                 raise ValueError(f'{path}: timestamp needs a timezone') from exc
-    if type(value) is int and value < rule.get('minimum', float('-inf')):
-        raise ValueError(f'{path}: value below minimum')
+    if type(value) in (int, float):
+        if type(value) is float and not math.isfinite(value):
+            raise ValueError(f'{path}: value must be finite')
+        if value < rule.get('minimum', float('-inf')):
+            raise ValueError(f'{path}: value below minimum')
+        if value > rule.get('maximum', float('inf')):
+            raise ValueError(f'{path}: value above maximum')
     for part in rule.get('allOf', []):
         _validate(value, part, root, path)
     if 'if' in rule:
@@ -88,9 +99,14 @@ def _validate(value, rule, root, path='$'):
 
 def validate_enrichment(document: dict, snapshot: dict) -> list[dict]:
     """Check the contract plus identity, version and actual source evidence."""
+    if not isinstance(document, dict):
+        raise ValueError('enrichment must be an object')
     validate_snapshot(snapshot)
     if snapshot.get('review_mode') != 'statement':
         raise ValueError('enrichment requires a Statement snapshot')
+    if document.get('schema') == 'statement-enrichment.v2':
+        from .enrichment_v2 import validate_document
+        return validate_document(document, snapshot)
     schema = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
     _validate(document, schema, schema)
     cards = {card['id']: card for card in snapshot['cards']}
@@ -148,10 +164,17 @@ def enrich_snapshot(snapshot: dict, document: dict) -> dict:
     cards = {card['id']: card for card in result['cards']}
     for annotation in annotations:
         card = cards[annotation['declaration_id']]
-        card['enrichment'] = deepcopy(annotation)
+        if document['schema'] == 'statement-enrichment.v2':
+            from .enrichment_v2 import public_annotation
+            card['enrichment'] = public_annotation(annotation)
+            card.pop('reading_summary_zh', None)
+        else:
+            card['enrichment'] = deepcopy(annotation)
+            card['reading_summary_zh'] = annotation['summary_zh']
         card['title_zh'] = annotation['title_zh']
-        card['reading_summary_zh'] = annotation['summary_zh']
-        if annotation['readback']['status'] == 'draft':
+        text = annotation['readback']['text_zh']
+        if (document['schema'] == 'statement-enrichment.v2' and text is not None or
+                document['schema'] == 'statement-enrichment.v1' and annotation['readback']['status'] == 'draft'):
             card['statement'] = annotation['readback']['text_zh']
             card['statement_origin'] = 'backtranslation'
             card['blueprint_file'] = card['lean']['file']
@@ -162,6 +185,8 @@ def enrich_snapshot(snapshot: dict, document: dict) -> dict:
         card.update(nl_digest=nl, lean_digest=lean, fingerprint=fingerprint,
                     fingerprint_scheme=CURRENT_FINGERPRINT_SCHEME,
                     fingerprints={CURRENT_FINGERPRINT_SCHEME: fingerprint})
+    if document['schema'] == 'statement-enrichment.v2':
+        result['enrichment_topics'] = deepcopy(document['run']['topics'])
     result['generated_at'] = datetime.now(timezone.utc).isoformat()
     result['digest'] = calculate_snapshot_digest(result)
     result['comparison'] = compare_snapshots(snapshot, result)

@@ -70,7 +70,7 @@ def _catalog_enrichment(card: dict) -> dict:
     enrichment = card.get("enrichment")
     if enrichment is not None:
         fields["enrichment"] = {
-            **{key: enrichment[key] for key in ("classification", "priority", "provenance")
+            **{key: enrichment[key] for key in ("schema", "classification", "priority", "provenance")
                if key in enrichment},
             "readback": {"status": enrichment.get("readback", {}).get("status", "none")},
         }
@@ -109,6 +109,8 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
         "cards": cards,
         "review_mode": snapshot.get("review_mode", "blueprint"),
     }
+    from .enrichment_v2 import DEFAULT_TOPICS
+    payload['enrichment_topics'] = snapshot.get('enrichment_topics', DEFAULT_TOPICS)
     if initial_id is not None:
         if initial_id == "auto":
             initial_id = next((row["id"] for row in cards

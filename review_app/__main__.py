@@ -69,9 +69,17 @@ def main():
                                ('enrich-snapshot', 'build a separate candidate snapshot from checked Agent annotations')]:
         operation = sub.add_parser(command, help=help_text)
         operation.add_argument('--snapshot', type=Path, required=True)
-        operation.add_argument('--file', type=Path, required=True, help='statement-enrichment.v1 annotation file')
+        operation.add_argument('--file', type=Path, required=True, help='statement-enrichment.v1 or v2 annotation file')
         if command == 'enrich-snapshot':
             operation.add_argument('--output', type=Path, required=True, help='new candidate artifact; input is never overwritten')
+    assessments = sub.add_parser('import-agent-assessments',
+        help='explicitly store private v2 machine assessments; does not install a snapshot')
+    assessments.add_argument('--snapshot', type=Path, required=True,
+                             help='original frozen base snapshot used by the batch, not its enriched candidate')
+    assessments.add_argument('--file', type=Path, required=True,
+                             help='collected statement-enrichment.v2 result with original worker records')
+    assessments.add_argument('--data-dir', type=Path, required=True,
+                             help='explicit target persistent data directory; requires the schema 9 application')
     for command, description in [('create-admin', 'create an administrator with a private recovery file'),
                                  ('bind-recovery', 'bind an existing reviewer to name login without moving records')]:
         operation = sub.add_parser(command, help=description)
@@ -93,11 +101,23 @@ def main():
                           'database_schema_version': manifest['database_schema_version'],
                           'snapshot_digest': manifest['snapshot_digest']}, ensure_ascii=False))
         return
+    if args.command == 'import-agent-assessments':
+        from .agent_assessments import import_agent_assessments
+        from .enrichment_v2 import read_document
+        try:
+            base = read_document(args.snapshot)
+            document = read_document(args.file)
+            result = import_agent_assessments(args.data_dir, base, document)
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
+            parser.exit(1, f'{error}\n')
+        print(json.dumps(result, ensure_ascii=False))
+        return
     if args.command in {'validate-enrichment', 'enrich-snapshot'}:
         from .enrichment import enrich_snapshot, validate_enrichment
+        from .enrichment_v2 import read_document
         try:
-            base = json.loads(args.snapshot.read_text(encoding='utf-8'))
-            annotation = json.loads(args.file.read_text(encoding='utf-8'))
+            base = read_document(args.snapshot)
+            annotation = read_document(args.file)
             count = len(validate_enrichment(annotation, base))
             if args.command == 'enrich-snapshot':
                 candidate = enrich_snapshot(base, annotation)

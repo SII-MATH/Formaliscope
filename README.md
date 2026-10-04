@@ -1,12 +1,12 @@
 # Formaliscope · Statement 审阅台
 
-KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [Statement enrichment v1](statement_workflow/schema/statement-enrichment.v1.schema.json)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
+KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜索、标签筛选、声明详情、候选依赖图及独立人工审阅。主标题使用 Lean 名称，中文说明由 Agent 补全；回译、角色、主题和优先度遵循 [字段标准 v2](statement_workflow/SCHEMA_V2.md)。人工判断单独保存，Agent 草稿不会自动成为“通过”。
 
-下一版的 [字段与填写标准 v2](statement_workflow/SCHEMA_V2.md) 已确认定稿，运行实现仍为 v1。v2 精简 Agent 字段、明确分类与分级、分别记录回译和预期判断置信度；预期判断将单独存入数据库，不传给审阅者。
+v2 已接入 Skill、校验器与数据库迁移 9：Agent 填写标题、完整回译、角色、主题、优先度及内部预期判断，不填写摘要、未解释对象、证据或来源记录。两个自报置信度分开保存；内部判断不进入公共快照、审阅接口或人工进度。
 
 仓库包含网页服务 `review_app/`、声明补充数据的 [契约与导入说明](statement_workflow/README.md)，以及下述仓库 Skill。补全按选定目录或声明分批执行，早期 Blueprint 对照模式继续保留。
 
-当前补全入口是仓库内的 [$formaliscope-enrich](.agents/skills/formaliscope-enrich/SKILL.md)：一组模型无关的子 Agent prompt、低置信度复核 prompt 与机械收集脚本。模型与推理等级统一由 [config.json](.agents/skills/formaliscope-enrich/config.json) 指定，按相关组输出中文回译及现有 enrichment 字段。默认只有自报 `confidence < 0.8` 的条目进入主 Agent 复核；高分和已复核条目合并为候选快照，仍作为机器草稿。无需额外模型服务，置信度及复核记录保存在批次旁文件。
+当前补全入口是仓库内的 [$formaliscope-enrich](.agents/skills/formaliscope-enrich/SKILL.md)：模型与推理等级及项目主题由 [config.json](.agents/skills/formaliscope-enrich/config.json) 指定。先按冻结 Lean 分组回译，再用独立预期材料补内部判断；没有材料时填“不知道”。默认只有原始 `readback.confidence < 0.8` 的成功回译进入主 Agent 复核，判断置信度不增加路由条件；无法回译单列失败。准备与收集脚本自动记录来源、运行与原始分值，无需额外模型服务。
 
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
 
@@ -40,7 +40,12 @@ python3 -m review_app validate-enrichment \
 python3 -m review_app enrich-snapshot \
   --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json \
   --output /tmp/enriched-snapshot.json
+python3 -m review_app import-agent-assessments \
+  --snapshot /tmp/statement-artifact/snapshot.json --file /path/to/enrichment.json \
+  --data-dir /path/to/review-data
 ```
+
+前两个命令不写数据库，候选快照仅含公开回译与标签。最后一个命令是 v2 内部评估的显式入库：使用该批次的冻结基础快照，支持幂等重试与版本历史，不安装快照或写入人工判断。应先升级目标应用；旧版本不支持数据库迁移 9。旧 v1 补充文件仍可校验和生成候选，但不能作为 v2 内部评估导入。
 
 构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 

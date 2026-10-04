@@ -1,27 +1,27 @@
-# 主 Agent 低置信度复核 prompt
+# 主 Agent：低回译置信度复核
 
-调用者提供仓库根目录、冻结快照、脚本生成的 `review-queue.json` 和一个新的复核结果路径。
+调用者提供仓库根目录、冻结快照、脚本生成的 `review-queue.json`、主题配置和新的复核结果路径。
 
-只处理队列中的声明。它们进入队列的唯一原因是原始子 Agent 自报置信度低于本批阈值；不额外选择高置信度条目，不追加重要性、复杂度或抽样规则。
+只处理队列声明。唯一触发原因是原始 `readback.confidence < threshold`；不选择高分条目，不追加重要性、分类、预期判断、判断分值或抽样规则。正文 null 的生成失败另行记录，不以虚构正文结束任务。
 
-根据冻结快照中的 Lean 声明和必要定义，核对中文回译是否遗漏变量或前提、改变量词及逻辑方向、误解定义或扩大结论。以证据为依据，修正有依据的问题；无法解释的部分保留 `unresolved`，不要强行写成完整结论。没有明确指定的参考资料时，不推断论文或作者意图。
+根据冻结 Lean 声明和必要定义，核对回译是否遗漏对象、假设、量词及结构约束，改变逻辑方向或扩大结论。确认或修正有依据的问题。不要使用预期材料或人的结果反向改写忠实回译。
 
-逐条确认或修订完整 `statement-enrichment.v1` annotation。保持 `declaration_id` 和 `basis` 与原始结果一致。有回译的正文仍是 `draft`；仍无法回译时可以保留合法的 `none`，不为结束任务虚构正文。不写人的 verdict 或 verified。未改 annotation 时保留原生成来源；改写时在 annotation 的 `provenance` 记录实际改写模型与时间。复核者本身的实际模型和时间另记在以下 review 行中。
-
-保存独立 JSON 文件：
+保存 `formaliscope-enrichment-review.v2`，每条最多一项：
 
 ```json
 {
-  "schema": "formaliscope-enrichment-review.v1",
-  "reviews": []
+  "schema": "formaliscope-enrichment-review.v2",
+  "reviews": [
+    {
+      "declaration_id": "statement::Example.value",
+      "annotation": {},
+      "model": "实际复核模型",
+      "reviewed_at": "带时区的实际复核时间"
+    }
+  ]
 }
 ```
 
-每个 `reviews` 项包含：
+`annotation` 为完整确认/修订的 worker 条目。保持 ID、原始 `readback.confidence` 和整个 `expectation_assessment` 不变，不提高原分值、不重新做内部预期判断。若仍无法可靠回译，不把该条加入 reviews，继续待复核。复核不是人的审阅，不输出 verified。
 
-- `declaration_id`：队列里的精确 ID。
-- `annotation`：确认或修订后的完整 annotation。
-- `model`：实际执行此次复核的模型。
-- `reviewed_at`：带时区的实际复核时间。
-
-每条最多一项。尚未完成的条目不写入 reviews，脚本会继续把它列为待复核。不得修改原始子 Agent 文件或原始 confidence；下一次收集仍使用原始分值决定路由。
+只写分配的新复核文件，0600 权限，不修改原始结果。实际复核模型及时间单独记录；worker 不填写 provenance。收集器仍依据原始分值决定路由。

@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Formaliscope Agent batch v2 — model supplied fields only",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "formaliscope-agent-batch.v2"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/annotation"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema",
+    "annotations"
+  ],
+  "$defs": {
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "declaration_id": {
+          "type": "string",
+          "pattern": "^statement::.+",
+          "maxLength": 1024
+        },
+        "title_zh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "readback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text_zh": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "text_zh",
+            "confidence"
+          ]
+        },
+        "classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "role": {
+              "enum": [
+                "definition",
+                "input",
+                "comparison",
+                "computation",
+                "derivation",
+                "target",
+                "infrastructure",
+                null
+              ]
+            },
+            "topics": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "role",
+            "topics"
+          ]
+        },
+        "priority": {
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            null
+          ]
+        },
+        "expectation_assessment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "verdict": {
+              "enum": [
+                "aligned",
+                "misaligned",
+                "undetermined"
+              ]
+            },
+            "reason_zh": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "verdict",
+            "reason_zh",
+            "confidence"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "verdict": {
+                    "enum": [
+                      "misaligned",
+                      "undetermined"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason_zh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "declaration_id",
+        "title_zh",
+        "readback",
+        "classification",
+        "priority",
+        "expectation_assessment"
+      ]
+    }
+  }
+}
