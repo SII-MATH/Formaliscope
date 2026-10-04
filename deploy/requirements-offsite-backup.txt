@@ -1,0 +1,2 @@
+# Optional Mac/offsite backup helper only; the application remains stdlib-only.
+cryptography==50.0.1

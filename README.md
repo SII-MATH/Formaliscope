@@ -42,9 +42,12 @@ python3 -m review_app enrich-snapshot \
 
 构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 
+HK-VPS 的完整备份可加密拉取到本机项目下的 `.review-backups/hk-vps/`。目录、密钥和本机配置均被 Git 忽略；同步、校验与恢复步骤见 [本机异机备份](review_app/OFFSITE_BACKUP.md)。只有该工具另需 `deploy/requirements-offsite-backup.txt` 中的加密依赖，网页服务和回译工具仍使用 Python 标准库。
+
 完整验证：
 
 ```bash
+python3 -m pip install -r deploy/requirements-offsite-backup.txt
 python3 -m unittest discover -s review_app -t . -p 'test_*.py'
 python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 for script in review_app/static/*.js; do node --check "$script"; done

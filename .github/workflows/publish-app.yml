@@ -27,11 +27,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install offsite backup test dependency
+        run: python3 -m pip install -r deploy/requirements-offsite-backup.txt
+
       - name: Verify before publishing
         run: |
           python3 -m unittest discover -s review_app -t . -p 'test_*.py'
           python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
-          python3 -m py_compile review_app/*.py statement_workflow/*.py deploy/formaliscope_release.py
+          python3 -m py_compile review_app/*.py statement_workflow/*.py deploy/formaliscope_release.py deploy/formaliscope_offsite_backup.py
           for script in review_app/static/*.js; do node --check "$script"; done
           for test in review_app/test_*.cjs; do node "$test"; done
           bash -n deploy/formaliscope-app-pull deploy/formaliscope-snapshot-pull deploy/formaliscope-review-backup
