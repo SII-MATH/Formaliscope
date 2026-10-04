@@ -21,7 +21,8 @@ from .build import normalize_snapshot
 from .database import DB_SCHEMA_VERSION, MIGRATIONS, connect, database_schema_version, initialize
 from .judgments import (VERDICTS, WRITE_LOCK, _card_fingerprints, _judgment_matches,
                         admin_summary, backfill_review_basis, catalog, history,
-                        reviewer_export, reviewer_profile, submit, update_reviewer_profile)
+                        reviewer_export, reviewer_profile, submit, update_reviewer_profile,
+                        history_page, review_state, save_draft)
 
 MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
@@ -239,15 +240,32 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 if card is None:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                self._json(200, {"card": card, "history": history(db_path, card_id, viewer)},
+                records = (history_page(db_path, card_id, viewer) if snapshot.get('review_mode') == 'statement'
+                           else {"history": history(db_path, card_id, viewer)})
+                self._json(200, {"card": card, **records},
                            etag=None)  # History changes after a judgment.
+                return
+            if path == "/api/review-state":
+                card_id = parse_qs(parsed.query).get("id", [""])[0]
+                if card_id not in cards_by_id:
+                    self._json(404, {"error": "审核对象不存在"})
+                    return
+                self._json(200, review_state(snapshot, db_path, card_id, viewer))
                 return
             if path == "/api/history":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
                 if card_id not in cards_by_id:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                self._json(200, {"history": history(db_path, card_id, viewer)})
+                query = parse_qs(parsed.query)
+                try:
+                    result = history_page(db_path, card_id, viewer,
+                                          limit=int(query.get("limit", ["25"])[0]),
+                                          cursor=query.get("cursor", [None])[0])
+                except ValueError as error:
+                    self._json(400, {"error": str(error)})
+                    return
+                self._json(200, result)
                 return
             if path == "/api/evidence":
                 card_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -258,13 +276,19 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 self._json(200, card, etag='"' + card["fingerprint"] + '"')
                 return
             if path == "/api/export":
-                self._json(200, reviewer_export(snapshot, db_path, viewer))
+                mode = parse_qs(parsed.query).get("mode", ["history"])[0]
+                try:
+                    result = reviewer_export(snapshot, db_path, viewer, mode=mode)
+                except ValueError as error:
+                    self._json(400, {"error": str(error)})
+                    return
+                self._json(200, result)
                 return
             self._json(404, {"error": "页面不存在"})
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if path not in {"/api/auth/register", "/api/auth/recover", "/api/auth/recovery", "/api/judgments", "/api/auth/request-code",
+            if path not in {"/api/auth/register", "/api/auth/recover", "/api/auth/recovery", "/api/judgments", "/api/drafts", "/api/auth/request-code",
                             "/api/auth/verify-code", "/api/auth/logout", '/api/profile', '/api/preview/session', '/api/preview/resume'}:
                 self._json(404, {"error": "页面不存在"})
                 return
@@ -372,7 +396,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 code, result = update_reviewer_profile(db_path, viewer, payload.get('display_name'))
                 self._json(code, result)
                 return
-            code, result = submit(snapshot, db_path, viewer, payload)
+            writer = save_draft if path == '/api/drafts' else submit
+            code, result = writer(snapshot, db_path, viewer, payload)
             self._json(code, result)
 
     Handler.review_db_path = db_path

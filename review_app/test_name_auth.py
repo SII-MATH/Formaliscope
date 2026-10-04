@@ -13,6 +13,7 @@ import unittest
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
@@ -219,6 +220,50 @@ class NameHTTPTests(unittest.TestCase):
         status, headers, data = self.request('/api/auth/register', {'display_name': name, 'is_admin': True, 'reviewer': 'spoof'})
         self.assertEqual(status, 201)
         return headers['Set-Cookie'].split(';', 1)[0], data['recovery_code']
+
+    def test_drafts_completion_pagination_and_exports_use_authenticated_owner(self):
+        first, recovery = self.register()
+        second, _ = self.register()
+        path = '/api/review-state?id=' + self.card['id']
+        body = {'request_id': str(uuid.uuid4()), 'card_id': self.card['id'],
+                'fingerprint': self.card['fingerprint'], 'verdict': 'aligned',
+                'rationale': '第一行', 'revision': 0, 'reviewer': 'spoof'}
+        self.assertEqual(self.request('/api/drafts', body)[0], 401)
+        self.assertEqual(self.request(path)[0], 401)
+        self.assertEqual(self.request('/api/drafts', body, first, origin='https://other.example')[0], 403)
+        self.assertEqual(self.request('/api/drafts', body, first)[0], 200)
+        state = self.request(path, cookie=first)[2]
+        self.assertEqual(state['draft']['rationale'], '第一行')
+        self.assertEqual(state['history_count'], 0)
+        self.assertIsNone(self.request(path + '&reviewer=spoof', cookie=second)[2]['draft'])
+        self.assertEqual(self.request('/api/catalog', cookie=first)[2]['cards'][0]['verdict'], None)
+        finish = {**body, 'draft_revision': 1, 'request_id': str(uuid.uuid4())}
+        self.assertEqual(self.request('/api/judgments', finish, second)[0], 409)
+        self.assertEqual(self.request('/api/judgments', finish, first)[0], 201)
+        self.assertEqual(self.request('/api/judgments', finish, first)[0], 200)
+        self.assertEqual(self.request(path, cookie=first)[2]['history_count'], 1)
+        for i in range(30):
+            payload = {**body, 'rationale': str(i), 'request_id': str(uuid.uuid4())}
+            self.assertEqual(self.request('/api/judgments', payload, first)[0], 201)
+        page = self.request('/api/history?id=' + self.card['id'], cookie=first)[2]
+        self.assertEqual(len(page['history']), 25)
+        self.assertEqual(len(self.request('/api/card?id=' + self.card['id'], cookie=first)[2]['history']), 25)
+        older_path = '/api/history?id=' + self.card['id'] + '&cursor=' + quote(page['next_cursor'])
+        self.assertEqual(len(self.request(older_path, cookie=first)[2]['history']), 6)
+        self.assertEqual(self.request(older_path, cookie=second)[2]['history'], [])
+        for suffix in ('&limit=0', '&limit=101', '&limit=bad', '&cursor=bad'):
+            self.assertEqual(self.request('/api/history?id=' + self.card['id'] + suffix, cookie=first)[0], 400)
+        latest = self.request('/api/export?mode=latest', cookie=first)[2]
+        full = self.request('/api/export?mode=history', cookie=first)[2]
+        self.assertEqual(len(latest['judgments']), 1)
+        self.assertEqual(latest['judgments'][0]['rationale'], '29')
+        self.assertEqual(len(full['judgments']), 31)
+        self.assertEqual(self.request('/api/export?mode=latest', cookie=second)[2]['judgments'], [])
+        self.assertEqual(self.request('/api/export?mode=invalid', cookie=first)[0], 400)
+        self.request('/api/auth/logout', {}, first)
+        _, headers, _ = self.request('/api/auth/recover', {'recovery_code': recovery})
+        recovered = headers['Set-Cookie'].split(';', 1)[0]
+        self.assertEqual(self.request(path, cookie=recovered)[2]['history_count'], 31)
 
     def test_same_name_ownership_spoof_rename_and_recovery(self):
         first, key = self.register()

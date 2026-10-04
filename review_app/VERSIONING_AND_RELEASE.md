@@ -8,7 +8,7 @@
 | 数据库 | `schema_migrations.version` | 持久判断的表结构 |
 | 被审内容 | `source_commit` + `snapshot.digest` + `fingerprint_scheme` | 本次展示的 NL/Lean 证据 |
 
-当前代码的数据库 schema 为 7；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。schema 5 新增显示姓名表，6 新增姓名身份与恢复摘要，7 将全部认证表纳入统一迁移，并把会话与预览凭证的身份列统一为 `reviewer`，保留已有数据。手动 Agent 旁文件为 `statement-enrichment.v1`，具体数学正文变化仍沿用内容指纹规则；中文展示别名和标签不改原标题/陈述，不清空已审记录。
+当前代码的数据库 schema 为 8；当前快照格式为 `kip126-review-snapshot.v2`，同时兼容读取 v1；当前审核依据算法为 `kip126-review-content.v1`。schema 5 新增显示姓名表，6 新增姓名身份与恢复摘要，7 将全部认证表纳入统一迁移，并把会话与预览凭证的身份列统一为 `reviewer`，保留已有数据。schema 8 增加独立草稿表，自动保存不再追加历史，既有历史逐条保留。手动 Agent 旁文件为 `statement-enrichment.v1`，具体数学正文变化仍沿用内容指纹规则；中文展示别名和标签不改原标题/陈述，不清空已审记录。
 
 ## 1. KIP126 更新时如何沿用判断
 

@@ -50,10 +50,10 @@
         <details class="dependencies"><summary>引用的定义与定理 <span id="dependency-count"></span></summary><div id="dependencies"></div></details>
         <section class="decision-panel"><div class="decision-heading"><div><p class="eyebrow">YOUR REVIEW</p><h3>这份陈述的数学含义是否符合预期？</h3></div><small>只记录你的判断</small></div>
           <div id="verdicts" class="verdicts"><label><input type="radio" name="verdict" value="aligned"><span><b>✓ 通过</b><small>对象、条件与结论符合预期</small></span></label><label><input type="radio" name="verdict" value="uncertain"><span><b>？没看懂</b><small>需要更多解释或背景</small></span></label><label><input type="radio" name="verdict" value="misaligned"><span><b>× 不通过</b><small>存在语义差异或缺失前提</small></span></label></div>
-          <label class="rationale-label" for="rationale">审阅意见 <span>选填，可记录疑问或差异</span></label><textarea id="rationale" rows="3" maxlength="4000" placeholder="例如：这里的量词范围是否应限制到固定球面？"></textarea><div class="decision-actions"><span id="save-message" role="status"></span><button id="save" class="primary">保存判断</button><button id="next" class="secondary">下一条 →</button></div>
+          <label class="rationale-label" for="rationale">审阅意见 <span>选填，可记录疑问或差异</span></label><textarea id="rationale" rows="3" maxlength="4000" placeholder="例如：这里的量词范围是否应限制到固定球面？"></textarea><p class="pane-note">草稿自动保存；完成审阅或切换条目时，所选结论与完整意见记入历史。</p><div class="decision-actions"><span id="save-message" role="status"></span><button id="save" class="primary">完成审阅</button><button id="next" class="secondary">下一条 →</button></div>
         </section>
-        <details class="history"><summary>我的审阅历史 <span id="history-count"></span></summary><div id="history"></div></details>
-        <div class="review-footer"><span>内容更新后保留历史；变化的条目需要重新审阅。</span><a href="./api/export" download="formaliscope-my-review.json">导出我的记录 ↗</a></div>
+        <details id="review-history" class="history"><summary>我的审阅历史 <span id="history-count"></span></summary><div id="history"></div><div><button id="history-more" hidden>加载更多历史</button></div></details>
+        <div class="review-footer"><span>内容更新后保留历史；草稿不计入已完成结果。</span><a href="./api/export?mode=latest" download="formaliscope-my-latest-review.json">导出最新有效结果 ↗</a><a href="./api/export?mode=history" download="formaliscope-my-review-history.json">导出完整历史 ↗</a></div>
       </article>
     </section>
   </main>
