@@ -2,6 +2,8 @@
 
 `statement_workflow/schema/` 保存 Formaliscope 的声明补充数据契约。当前生成入口是 [仓库 Skill `$formaliscope-enrich`](../.agents/skills/formaliscope-enrich/SKILL.md)，操作步骤、子 Agent prompt、复核 prompt 和收集脚本统一在该 Skill 中维护。
 
+[字段与填写标准 v2](SCHEMA_V2.md) 已于 2026-10-04 确认定稿，包含精简 Agent 字段、七类角色、项目主题配置、双置信度和仅供内部使用的预期判断。v2 尚未接入运行实现；下文描述的 Skill、JSON Schema、校验和导入命令仍使用 v1，旧试跑批次也继续按 v1 校验。
+
 ## 当前流程
 
 固定源码快照与选定范围 → 按配置调用子 Agent 分组生成中文回译及字段 → 脚本校验 → 低置信度主 Agent 复核 → 合并 enrichment → 生成候选快照 → 显式安装 → 用户审阅。
