@@ -4,7 +4,7 @@ KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜�
 
 仓库包含网页服务 `review_app/` 和独立的 [Agent Workflow](statement_workflow/README.md)。当前先按选定目录由 Agent 分批补全，无需启动全库自动任务。早期 Blueprint 对照模式继续保留。
 
-日常开发在 `develop`（跟踪 `origin/develop`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。旧 `dev` 分支保留，仍运行 CI。
+应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
 
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
@@ -24,7 +24,7 @@ python3 -m review_app build --statements --require-clean \
   --source /path/to/KIP126 --output /tmp/statement-artifact/snapshot.json
 ```
 
-当前 develop 示例包含 6,222 条声明、1,421 个文件。这是源码索引规模，实际审阅对象由目录和标签筛选确定；依赖图基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
+当前 KIP126 示例快照包含 6,222 条声明、1,421 个文件。这是源码索引规模，实际审阅对象由目录和标签筛选确定；依赖图基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
 
 Agent 补充数据通过已冻结快照校验、生成候选快照：
 
@@ -46,3 +46,7 @@ python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 for script in review_app/static/*.js; do node --check "$script"; done
 for test in review_app/test_*.cjs; do node "$test"; done
 ```
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE)。随附 MathJax 的原有许可见 [MATHJAX-LICENSE.txt](review_app/static/MATHJAX-LICENSE.txt)。

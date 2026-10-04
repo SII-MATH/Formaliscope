@@ -125,8 +125,8 @@ def smtp_send(settings: AuthSettings, email: str, code: str) -> None:
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = email
-    message["Subject"] = "KIP126 审核台登录验证码"
-    message.set_content(f"你的 KIP126 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n")
+    message["Subject"] = "Formaliscope 审核台登录验证码"
+    message.set_content(f"你的 Formaliscope 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n")
     context = ssl.create_default_context()
     if settings.smtp_security == "ssl":
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10, context=context) as smtp:
@@ -145,12 +145,12 @@ def agently_send(email: str, code: str) -> None:
     """Use the locally authorized mailbox without placing the code in argv/logs."""
     with tempfile.TemporaryDirectory(prefix="kip126-otp-") as directory:
         body = Path(directory) / "body.txt"
-        body.write_text(f"你的 KIP126 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n",
+        body.write_text(f"你的 Formaliscope 审核台验证码是：{code}\n\n10 分钟内有效，只能使用一次。若非本人操作，请忽略此邮件。\n",
                         encoding="utf-8")
         body.chmod(0o600)
         result = subprocess.run([
             "agently-cli", "message", "+send", "--to", email,
-            "--subject", "KIP126 审核台登录验证码", "--body-file", "./body.txt",
+            "--subject", "Formaliscope 审核台登录验证码", "--body-file", "./body.txt",
             "--body-format", "plain", "--confirmed",
         ], cwd=directory, capture_output=True, text=True, timeout=20, check=False)
     if result.returncode != 0:

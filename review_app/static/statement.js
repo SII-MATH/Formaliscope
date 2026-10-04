@@ -350,7 +350,7 @@
     const manifest={schema:'statement-review-scope.v1',source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.snapshot_digest,directory,
       selection:directoryNodes.get(directory)?.file?'exact-file':'directory-with-descendants',declarations:directoryRows().map(c=>({id:c.id,declaration:c.declaration,file:c.module_file}))};
     const url=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,2)],{type:'application/json'}));
-    const link=document.createElement('a');link.href=url;link.download='kip126-review-scope.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const link=document.createElement('a');link.href=url;link.download='formaliscope-review-scope.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     $('save-global').textContent=`已导出当前目录的 ${manifest.declarations.length} 条声明及版本`;
   };
   $("filters").onclick=async event=>{const button=event.target.closest('[data-filter]');if(button&&await mayNavigate()){labels.setReviewScope(selectedLabels,button.dataset.filter);await refreshSelection();}};

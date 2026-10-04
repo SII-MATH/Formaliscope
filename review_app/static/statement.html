@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>KIP126 · Statement 审阅</title>
-  <link rel="stylesheet" href="./statement.css">
+  <title>Formaliscope · Statement 审阅</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./statement.css">
   <script src="./latex-renderer.js" defer></script><script src="./lean-renderer.js" defer></script>
   <script src="./directory-tree.js" defer></script>
   <script src="./review-labels.js" defer></script>
@@ -16,7 +16,7 @@
   <script src="./statement.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">K</span><span><b>KIP126</b><small>Statement 审阅工作台</small></span></a>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">F</span><span><b>Formaliscope</b><small>Statement 审阅工作台</small></span></a>
     <div class="top-actions"><span id="preview-badge" class="pill" hidden>前端预览</span><a id="admin-link" href="./admin" hidden>管理汇总 ↗</a><details id="account-menu" class="account-menu"><summary>审阅者 <b id="reviewer-name">…</b> ▾</summary><div><button id="profile-button">修改姓名</button><button id="recovery-button" hidden>重新生成恢复码</button><button id="logout">退出 / 切换审阅者</button></div></details></div>
   </header>
   <main class="workspace">
@@ -39,7 +39,7 @@
         <div class="graph-tools"><div><b>当前条目的引用关系</b><small>箭头由引用对象指向使用它的声明 · 源码引用候选</small></div><div class="graph-actions"><select id="graph-depth" aria-label="依赖图深度"><option value="1">一层依赖</option><option value="2">两层依赖</option></select><button id="zoom-out" aria-label="缩小依赖图">−</button><button id="zoom-in" aria-label="放大依赖图">＋</button><button id="center-graph">居中定位</button></div></div>
         <div id="graph-canvas" class="graph-canvas"><svg id="graph" aria-label="依赖关系节点图" role="img"></svg></div><div id="graph-caption" class="graph-caption"></div>
       </section>
-      <div id="empty" class="empty-state"><span>↔</span><h2>正在准备审阅队列</h2><p>读取 develop 分支中的真实 Lean 声明。</p></div>
+      <div id="empty" class="empty-state"><span>↔</span><h2>正在准备审阅队列</h2><p>读取当前快照中的真实 Lean 声明。</p></div>
       <article id="review-card" hidden>
         <div class="card-head"><div><p id="breadcrumb" class="eyebrow"></p><h2 id="card-title"></h2><p id="card-subtitle" class="card-subtitle" hidden></p><div id="meta" class="meta"></div></div><span id="status-badge" class="status-badge">未审阅</span></div>
         <div class="card-label-panel"><div id="card-labels" class="card-labels" aria-label="当前条目主要标签"></div><details class="label-provenance"><summary>全部标签与分类依据</summary><div id="more-card-labels" class="card-labels" aria-label="当前条目全部标签"></div><p id="label-provenance-summary">角色／主题／优先度：索引规则候选 · 状态：本人记录</p><p id="enrichment-provenance" class="enrichment-provenance" hidden></p></details></div>
@@ -53,12 +53,12 @@
           <label class="rationale-label" for="rationale">审阅意见 <span>选填，可记录疑问或差异</span></label><textarea id="rationale" rows="3" maxlength="4000" placeholder="例如：这里的量词范围是否应限制到固定球面？"></textarea><div class="decision-actions"><span id="save-message" role="status"></span><button id="save" class="primary">保存判断</button><button id="next" class="secondary">下一条 →</button></div>
         </section>
         <details class="history"><summary>我的审阅历史 <span id="history-count"></span></summary><div id="history"></div></details>
-        <div class="review-footer"><span>内容更新后保留历史；变化的条目需要重新审阅。</span><a href="./api/export" download="kip126-my-review.json">导出我的记录 ↗</a></div>
+        <div class="review-footer"><span>内容更新后保留历史；变化的条目需要重新审阅。</span><a href="./api/export" download="formaliscope-my-review.json">导出我的记录 ↗</a></div>
       </article>
     </section>
   </main>
   <dialog id="directory-dialog" class="directory-dialog"><div class="directory-dialog-head"><div><p class="eyebrow">REVIEW SCOPE</p><h2>选择审核目录</h2><p>选择目录会包含它的全部子目录；也可以只选一个 Lean 文件。</p></div><button id="close-directory" aria-label="关闭目录选择">×</button></div><label class="directory-search-label" for="directory-search">查找目录或文件</label><input id="directory-search" type="search" placeholder="例如 Main/Solution、Literature、SpectralSequence…"><div class="directory-tree-tools"><button id="all-directories">全部源码</button><details class="source-version"><summary>版本信息</summary><code id="directory-tree-version"></code></details></div><nav id="directory-tree" class="directory-tree" aria-label="源码目录层级"></nav><div class="directory-dialog-foot">只显示包含 Lean 声明的目录与文件。当前选择绑定到本页的源码提交。</div></dialog>
-  <dialog id="name-dialog"><form id="name-form"><span class="dialog-mark">K</span><p class="eyebrow">WELCOME TO KIP126</p><h2>开始独立审阅</h2><p id="name-help">填写姓名后，判断会保存到你的独立记录中。同名审阅者的记录也会分别保存。</p><label for="display-name">审阅者姓名</label><input id="display-name" required maxlength="60" autocomplete="name" placeholder="请输入你的姓名"><p id="name-error" role="alert"></p><button class="primary" type="submit">进入审阅工作台 →</button><div id="saved-identities" hidden><label for="resume-identity">或恢复这台浏览器中的预览身份</label><select id="resume-identity" aria-label="恢复预览身份"></select><button id="resume-button" type="button">恢复独立记录 →</button></div></form></dialog>
+  <dialog id="name-dialog"><form id="name-form"><span class="dialog-mark" aria-hidden="true">F</span><p class="eyebrow">WELCOME TO FORMALISCOPE</p><h2>开始独立审阅</h2><p id="name-help">填写姓名后，判断会保存到你的独立记录中。同名审阅者的记录也会分别保存。</p><label for="display-name">审阅者姓名</label><input id="display-name" required maxlength="60" autocomplete="name" placeholder="请输入你的姓名"><p id="name-error" role="alert"></p><button class="primary" type="submit">进入审阅工作台 →</button><div id="saved-identities" hidden><label for="resume-identity">或恢复这台浏览器中的预览身份</label><select id="resume-identity" aria-label="恢复预览身份"></select><button id="resume-button" type="button">恢复独立记录 →</button></div></form></dialog>
   <dialog id="recovery-dialog"><form id="recovery-form"><h2>重新生成恢复码</h2><p id="recovery-help">原恢复码将失效，其他设备上的登录也会退出。当前浏览器继续保留身份。</p><button id="generate-recovery" class="primary" type="submit">确认生成新恢复码</button><div id="recovery-result" hidden><label for="account-recovery-code">新恢复码（仅此次显示）</label><input id="account-recovery-code" readonly autocomplete="off" spellcheck="false"><p>请私下保存，勿分享给别人。</p><button id="copy-account-recovery" type="button">复制</button><button id="download-account-recovery" type="button">下载保存</button></div><p id="recovery-error" role="status"></p><button id="close-recovery" type="button">关闭</button></form></dialog>
   <dialog id="labels-dialog" class="labels-dialog"><div class="directory-dialog-head"><div><h2>标签筛选</h2><p>同组满足任意标签，跨组同时满足。计数随目录、搜索和其他组变化。</p></div><button id="close-labels" aria-label="关闭标签筛选">×</button></div><div id="label-tabs" class="label-tabs" role="group" aria-label="标签筛选类别"><button data-label-tab="content" aria-pressed="true" class="active">内容分类</button><button data-label-tab="review" aria-pressed="false">审阅与回译</button></div><div id="label-groups" class="label-groups"></div><div class="labels-dialog-foot"><button id="dialog-reset-labels">清除标签</button><span id="label-matched-count" role="status"></span><button id="apply-labels" class="primary">查看结果 →</button></div></dialog>
 </body></html>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Formaliscope</title>
+  <rect width="64" height="64" rx="17" fill="#214f40"/>
+  <path d="M16 15h32v11h-4l-2-7H28v12h10l2-5h4v15h-4l-2-6H28v12l6 2v3H15v-3l5-2V20l-4-2z" fill="#fff"/>
+</svg>

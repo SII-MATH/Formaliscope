@@ -3,7 +3,7 @@ name: Formaliscope CI
 on:
   pull_request:
   push:
-    branches: [develop, dev, main]
+    branches: [dev, main]
 
 permissions:
   contents: read

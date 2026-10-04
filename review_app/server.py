@@ -35,6 +35,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
     cards_by_id = {card["id"]: card for card in snapshot["cards"]}
     symbols = SymbolIndex(snapshot)
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
+             "/favicon.svg": ("favicon.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
              "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
              "/statement.js": ("statement.js", "text/javascript; charset=utf-8"),
@@ -62,7 +63,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
         static_payloads[path] = (data, media, etag)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "KIP126Review/1"
+        server_version = "FormaliscopeReview/1"
 
         def _headers(self, code: int, content_type: str, size: int, *, etag: str | None = None,
                      extra_headers: dict[str, str] | None = None):
@@ -425,5 +426,5 @@ def serve(snapshot_path: Path, db_path: Path, static_dir: Path, host: str, port:
     server = ReviewHTTPServer((host, port), make_handler(snapshot, db_path, static_dir, auth,
                              preview=preview, admin_emails=admin_emails,
                              trust_proxy_ip=os.environ.get('REVIEW_TRUST_PROXY_IP', '').strip() == '1'))
-    print(f"KIP126 review: http://{host}:{server.server_port}/", flush=True)
+    print(f"Formaliscope review: http://{host}:{server.server_port}/", flush=True)
     server.serve_forever()
