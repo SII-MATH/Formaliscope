@@ -2,7 +2,7 @@
 
 每次合并到 `main` 后，GitHub Actions 自动将上一正式版本至本次提交的变更清单和完整对比链接写入 Release 说明。直接提交和通过 PR 合并的修改都会纳入；草稿、预发行、旧 `app-*` 和证据 `snapshot-*` 不作为比较起点。
 
-下列为已整理的中文版本摘要，后续发布的完整变更明细见 [GitHub Releases](https://github.com/SII-MATH/Formaliscope/releases)。发布与服务器部署分别执行。
+每次发版前，人工阅读上一正式版本以来的提交和代码差异，按最终发布行为整理下列中文版本摘要，说明新增功能、改进、修复及必要的兼容性变化，再合并到 `main`。日常开发不要求逐提交功能记录，不设置 changelog 专用 CI 门禁。完整变更明细见 [GitHub Releases](https://github.com/SII-MATH/Formaliscope/releases)。发布与服务器部署分别执行。
 
 ## [v0.0.3] — 2026-10-04
 
