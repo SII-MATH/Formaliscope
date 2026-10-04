@@ -1,6 +1,6 @@
 # 主 Agent：低回译置信度复核
 
-由当前 Claude Code 主 Agent 执行，只复核收集器队列。复核模型路由 ID 须从 harness 状态确认，不推断底层供应商型号。
+由当前 Claude Code 主 Agent 在 Workflow 完成、全组收集校验之后执行，只复核收集器队列，不是 Workflow 每组默认追加的第三阶段。复核模型路由 ID 须从 harness 状态确认，不推断底层供应商型号。
 
 调用者提供仓库根目录、冻结快照、脚本生成的 `review-queue.json`、主题配置和新的复核结果路径。
 

@@ -9,4 +9,7 @@ __pycache__/
 # Project-local installed copies; sources live in skills/<harness>/.
 .agents/skills/formaliscope-enrich
 .claude/skills/formaliscope-enrich
+.claude/agents/formaliscope-readback.md
+.claude/agents/formaliscope-expectation.md
 .kimi-code/skills/formaliscope-enrich
+.kimi-code/agents/formaliscope-enrich
