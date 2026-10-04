@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .build import validate_snapshot
-from .statements import compile_statements
+from .statements import compile_statements, source_declarations
 from .server import ReviewHTTPServer, initialize, make_handler
 from .preview import PreviewAuthStore
 
@@ -54,6 +54,120 @@ class StatementBuildTests(unittest.TestCase):
             lean.write_text('def value : Nat := 2\n')
             with self.assertRaises(ValueError):
                 compile_statements(root,source_commit='a'*40,annotations=annotations)
+
+
+class StatementDocumentationTests(unittest.TestCase):
+    def build(self, text):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'KIPBase').mkdir()
+            (root / 'KIPBase/Documentation.lean').write_text(text, encoding='utf-8')
+            records = {row['name']: row for row in source_declarations(root)}
+            snapshot = compile_statements(root, source_commit='a' * 40)
+            validate_snapshot(snapshot)
+            cards = {card['declaration']: card for card in snapshot['cards']}
+            return records, cards
+
+    def assert_documentation(self, text, expected):
+        records, cards = self.build(text)
+        self.assertEqual(records['value']['doc'], expected)
+        summary = cards['value']['reading_summary']
+        self.assertEqual(cards['value']['statement'], summary)
+        self.assertEqual(cards['value']['statement_origin'], 'reading-summary')
+        if expected:
+            self.assertEqual(summary.split('\n\n', 1)[1], expected)
+        else:
+            self.assertNotIn('\n\n', summary)
+        return records, cards
+
+    def test_adjacent_section_and_declaration_documentation(self):
+        doc = ('对每个固定页和双次数，截断越过有限的过滤窗口后页对象稳定。\n'
+               '将这一标准稳定性记为明示桥接公理；它正是从截断逆系统组装无界谱序列所需的有限窗口定理。')
+        for separator in ('\n', '\n\n', ' '):
+            with self.subTest(separator=separator):
+                self.assert_documentation(
+                    '/-! ### Section 3: Stabilization -/' + separator +
+                    '/-- ' + doc + ' -/\naxiom value : True\n', doc)
+
+    def test_adjacent_documentation_selects_only_the_last_block(self):
+        for preceding in ('/- ordinary comment -/', '/-- earlier documentation -/'):
+            with self.subTest(preceding=preceding):
+                self.assert_documentation(
+                    preceding + '\n/-- Current documentation. -/\ndef value : Nat := 1\n',
+                    'Current documentation.')
+
+    def test_nested_comments_keep_the_complete_outer_documentation(self):
+        # Inner delimiters belong to the authored doc text, not neighboring blocks.
+        doc = 'Before /- nested /- deeper -/ comment -/ after.\nLast line.'
+        self.assert_documentation(
+            '/-! Heading /- nested heading -/ -/\n/-- ' + doc +
+            ' -/\ndef value : Nat := 1\n', doc)
+
+    def test_ordinary_comments_after_documentation_are_transparent(self):
+        doc = 'Declaration documentation.'
+        for separator in ('\n-- Ordinary comment.\n',
+                          '\n-- /-- fake -/ /-! fake section -/ "quoted"\n',
+                          '\n/- Ordinary comment. -/\n',
+                          '\n/- Outer /- nested -/ comment. -/\n',
+                          ' /- Comment with "a string" and /-- nested doc -/. -/ ',
+                          '\n-- Line comment.\n/- Block comment. -/\n'):
+            with self.subTest(separator=separator):
+                self.assert_documentation(
+                    '/-- ' + doc + ' -/' + separator + 'def value : Nat := 1\n', doc)
+
+    def test_only_last_documentation_survives_ordinary_comments(self):
+        self.assert_documentation(
+            '/-- Earlier documentation. -/\n/- Ordinary comment. -/\n'
+            '/-- Current documentation. -/\n-- Another ordinary comment.\n'
+            'def value : Nat := 1\n', 'Current documentation.')
+
+    def test_ordinary_comments_do_not_hide_syntax_boundaries(self):
+        for intervening in ('/-! New section -/\n/- Ordinary comment. -/',
+                            '#check "/-- fake documentation -/"\n-- Ordinary comment.',
+                            '#check "/- ordinary comment -/"\n/- Another comment. -/',
+                            '"/- ordinary comment -/"'):
+            with self.subTest(intervening=intervening):
+                self.assert_documentation(
+                    '/-- Previous documentation. -/\n' + intervening +
+                    '\ndef value : Nat := 1\n', '')
+
+    def test_long_documentation_has_no_thirty_line_lookback(self):
+        doc = '\n'.join(f'Documentation line {number}.' for number in range(80))
+        self.assert_documentation('/--\n' + doc + '\n-/\ndef value : Nat := 1\n', doc)
+
+    def test_documentation_retains_existing_character_limit(self):
+        doc = 'A long paragraph. ' * 400
+        self.assert_documentation('/-- ' + doc + ' -/\ndef value : Nat := 1\n', doc[:5000])
+
+    def test_section_and_ordinary_comments_are_not_declaration_docs(self):
+        for comment in ('/-! Section heading -/', '/- ordinary comment -/',
+                        '-- ordinary line comment',
+                        '/- outer /-- nested documentation -/ -/'):
+            with self.subTest(comment=comment):
+                self.assert_documentation(comment + '\n\ndef value : Nat := 1\n', '')
+
+    def test_documentation_does_not_cross_commands_or_declarations(self):
+        for intervening in ('def previous : Nat := 0', 'open Nat',
+                            'variable (n : Nat)', '/-! New section -/'):
+            with self.subTest(intervening=intervening):
+                self.assert_documentation(
+                    '/-- Previous documentation. -/\n' + intervening +
+                    '\n\ndef value : Nat := 1\n', '')
+
+    def test_comment_markers_in_strings_and_line_comments_are_ignored(self):
+        self.assert_documentation(
+            'def previous := "/-- fake documentation -/"\n'
+            '-- /-- another fake -/\ndef value : Nat := 1\n', '')
+
+    def test_same_line_doc_and_declaration_attributes(self):
+        for declaration in ('def value : Nat := 1', '@[simp] theorem value : True := by trivial'):
+            with self.subTest(declaration=declaration):
+                records, cards = self.assert_documentation(
+                    '/-- Current documentation. -/ ' + declaration + '\n',
+                    'Current documentation.')
+                self.assertEqual(records['value']['line'], 1)
+                self.assertEqual(cards['value']['lean']['source'],
+                                 '/-- Current documentation. -/ ' + declaration)
 
 
 class StatementHTTPTests(unittest.TestCase):
