@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import hashlib
 import json
+from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,14 @@ TOKEN = re.compile(r"[\w'₀-₉]+(?:\.[\w'₀-₉]+)*")
 
 def mask_comments(text: str) -> str:
     """Preserve offsets while masking nested block comments, strings and line comments."""
+    return _mask_source(text)[0]
+
+
+def _mask_source(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Mask source and retain the spans of complete, top-level block comments."""
     result = list(text)
+    comments = []
+    comment_start = 0
     i, depth, string = 0, 0, False
     while i < len(text):
         if depth:
@@ -37,6 +45,8 @@ def mask_comments(text: str) -> str:
                 continue
             if text.startswith('-/', i):
                 depth -= 1
+                if not depth:
+                    comments.append((comment_start, i + 2))
                 result[i:i+2] = '  '
                 i += 2
                 continue
@@ -49,6 +59,7 @@ def mask_comments(text: str) -> str:
                 string = False
         elif text.startswith('/-', i):
             depth = 1
+            comment_start = i
             result[i:i+2] = '  '
             i += 2
             continue
@@ -67,7 +78,7 @@ def mask_comments(text: str) -> str:
         if text[i] != '\n':
             result[i] = ' '
         i += 1
-    return ''.join(result)
+    return ''.join(result), comments
 
 
 def source_declarations(repo: Path) -> list[dict]:
@@ -75,7 +86,14 @@ def source_declarations(repo: Path) -> list[dict]:
     for root in ('KIP126', 'KIPBase'):
         for path in sorted((repo / root).rglob('*.lean')):
             text = path.read_text(encoding='utf-8')
-            original, masked = text.splitlines(), mask_comments(text).splitlines()
+            masked_text, comments = _mask_source(text)
+            original, masked = text.splitlines(), masked_text.splitlines()
+            comment_ends = [end for _, end in comments]
+            line_offsets = []
+            position = 0
+            for line in text.splitlines(keepends=True):
+                line_offsets.append(position)
+                position += len(line)
             namespace, scopes, found = [], [], []
             for number, line in enumerate(masked):
                 ns = re.match(r'^\s*namespace\s+([\w.]+)', line)
@@ -98,8 +116,18 @@ def source_declarations(repo: Path) -> list[dict]:
                 kind, name = match.groups()
                 # Lean's _root_ prefix explicitly escapes the current namespace.
                 fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
-                found.append((fqn, kind, number, tuple(namespace)))
-            for offset, (name, kind, first, ns) in enumerate(found):
+                # A section heading (/-!) is a separate command, not declaration
+                # documentation. Select one complete /-- block, with no code
+                # between it and the declaration; never merge adjacent blocks.
+                declaration_start = line_offsets[number] + len(line) - len(line.lstrip())
+                comment_index = bisect_right(comment_ends, declaration_start) - 1
+                doc = ''
+                if comment_index >= 0:
+                    start, end = comments[comment_index]
+                    if text.startswith('/--', start) and not text[end:declaration_start].strip():
+                        doc = text[start+3:end-2].strip()
+                found.append((fqn, kind, number, tuple(namespace), doc))
+            for offset, (name, kind, first, ns, doc) in enumerate(found):
                 last = found[offset+1][2] if offset+1 < len(found) else len(original)
                 # Do not include following namespace/section ends or the next docstring.
                 for stop in range(first+1, last):
@@ -117,17 +145,9 @@ def source_declarations(repo: Path) -> list[dict]:
                     for field_index, field in enumerate(found_fields):
                         end = found_fields[field_index+1].start() if field_index+1 < len(found_fields) else len(source)
                         fields.append((field[2], source[field.end():end].strip()))
-                comment_lines = []
-                start = first-1
-                while start >= 0 and first-start <= 30 and (not masked[start].strip()):
-                    comment_lines.append(original[start])
-                    start -= 1
-                comment = '\n'.join(reversed(comment_lines)).strip()
-                comment = re.sub(r'^.*?/\*', '', comment)
-                comment = re.sub(r'^/-[!-]?\s*|\s*-/\s*$', '', comment).strip()
                 records.append({'name': name, 'kind': kind, 'namespace': ns,
                                 'file': str(path.relative_to(repo)), 'line': first+1,
-                                'source': source, 'fields': fields, 'doc': comment[:5000],
+                                'source': source, 'fields': fields, 'doc': doc[:5000],
                                 'context': '\n'.join(original[:first]),
                                 'full_source': text})
     return records
