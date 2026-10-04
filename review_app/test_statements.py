@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import tempfile
 import threading
@@ -12,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from .build import validate_snapshot
 from .statements import compile_statements, source_declarations
-from .server import ReviewHTTPServer, initialize, make_handler
+from .server import ReviewHTTPServer, initialize, make_handler, accepts_gzip
 from .preview import PreviewAuthStore
 
 
@@ -190,19 +191,52 @@ class StatementHTTPTests(unittest.TestCase):
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
 
-    def request(self,path,body=None,cookie=None):
-        headers={'Origin':self.base}
+    def request(self,path,body=None,cookie=None,extra_headers=None):
+        headers={'Origin':self.base, **(extra_headers or {})}
         if body is not None:headers['Content-Type']='application/json'
         if cookie:headers['Cookie']=cookie
         req=Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,headers=headers)
         try:response=urlopen(req,timeout=5)
         except HTTPError as error:response=error
         with response:
-            raw=response.read();return response.status,dict(response.headers),json.loads(raw) if response.headers['Content-Type'].startswith('application/json') else raw
+            raw=response.read()
+            if response.headers.get('Content-Encoding')=='gzip':raw=gzip.decompress(raw)
+            return response.status,dict(response.headers),json.loads(raw) if response.headers['Content-Type'].startswith('application/json') else raw
 
     def login(self,name):
         status,headers,_=self.request('/api/preview/session',{'display_name':name})
         self.assertEqual(status,201);return headers['Set-Cookie'].split(';',1)[0]
+
+    def test_catalog_compression_preserves_evidence_and_identity_isolation(self):
+        self.card['title']='测试标题' * 400
+        first=self.login('First');second=self.login('Second')
+        payload={'request_id':str(uuid.uuid4()),'card_id':self.card['id'],'fingerprint':self.card['fingerprint'],
+                 'verdict':'aligned','rationale':'Private review'}
+        self.assertEqual(self.request('/api/judgments',payload,first)[0],201)
+        path='/api/catalog?initial=statement%3A%3AX'
+        plain=self.request(path,cookie=first)
+        request=Request(self.base+path,headers={'Cookie':first,'Accept-Encoding':'gzip'})
+        with urlopen(request,timeout=5) as response:
+            raw=response.read()
+            self.assertEqual(response.headers['Content-Encoding'],'gzip')
+            self.assertEqual(response.headers['Vary'],'Accept-Encoding')
+            self.assertEqual(response.headers['Cache-Control'],'no-store')
+            self.assertEqual(int(response.headers['Content-Length']),len(raw))
+        compressed=json.loads(gzip.decompress(raw))
+        self.assertEqual(compressed,plain[2]);self.assertLess(len(raw),len(gzip.decompress(raw)))
+        self.assertEqual(compressed['initial_evidence'],self.card,'Embedding preserves complete evidence and fingerprints')
+        other=self.request(path,cookie=second,extra_headers={'Accept-Encoding':'gzip'})[2]
+        self.assertIsNone(other['cards'][0]['verdict'],'Compressed responses are never shared between identities')
+        denied=self.request(path,cookie=first,extra_headers={'Accept-Encoding':'gzip;q=0, *;q=1'})
+        self.assertNotIn('Content-Encoding',denied[1]);self.assertEqual(denied[2],plain[2])
+        self.assertIsNone(self.request('/api/catalog?initial=unknown',cookie=first)[2]['initial_evidence'])
+        self.assertEqual(self.request(path,extra_headers={'Accept-Encoding':'gzip'})[0],401)
+
+    def test_gzip_quality_negotiation(self):
+        for value,expected in [('',False),('br',False),('gzip',True),('GZIP; q=0.5',True),
+                               ('gzip;q=0',False),('*;q=1',True),('gzip;q=0,*;q=1',False),
+                               ('gzip;q=invalid',False),('gzip;q=2',False),('gzip;q=nan',False)]:
+            with self.subTest(value=value):self.assertEqual(accepts_gzip(value),expected)
 
     def test_names_are_independent_and_only_admin_sees_summary(self):
         first=self.login('同名');second=self.login('同名')

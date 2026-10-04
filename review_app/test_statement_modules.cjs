@@ -16,6 +16,11 @@ async function testAPI(){
   await api.evidence('same');assert.equal(calls.length,1);
   for(const id of ['second','third']){const request=api.evidence(id);resolvers.shift()(response({id}));await request;}
   const evicted=api.evidence('same');assert.equal(calls.length,4);resolvers.shift()(response({id:'same'}));await evicted;
+  api.primeEvidence({id:'embedded',source:'from catalog'});
+  assert.equal((await api.evidence('embedded')).source,'from catalog');assert.equal(calls.length,4);
+  await api.evidence('same');
+  api.primeEvidence({id:'another'});
+  await api.evidence('same');assert.equal(calls.length,4,'Reading cached evidence refreshes its LRU position');
 
   const previous=api.evidence('during-logout');api.clearEvidenceCache();
   const next=api.evidence('during-logout');assert.notEqual(previous,next);
@@ -34,6 +39,11 @@ async function testAPI(){
   await assert.rejects(account.request('./api/auth/me'),/请登录/);assert.equal(unauthorized,1);
   await account.request('./api/history?id=same');await account.request('./api/history?id=same');
   assert.equal(historyCalls,2,'Personal review history is always fetched for the current identity');
+  let finishOld;
+  const switched=StatementAPI.create({onUnauthorized:()=>unauthorized++,fetch:()=>new Promise(resolve=>{finishOld=resolve;})});
+  const oldState=switched.request('./api/review-state?id=same');switched.clearEvidenceCache();
+  finishOld(response({error:'old session expired'},401));await assert.rejects(oldState,/old session expired/);
+  assert.equal(unauthorized,1,'An expired request from the previous identity cannot log out the new identity');
 }
 
 function testGraph(){
@@ -65,8 +75,8 @@ async function testIdentity(){
       showModal(){this.open=true;},close(){this.open=false;}});
     return elements.get(id);
   }
-  let account=null,mayNavigate=true,logoutCount=0,redirectCount=0,next=0;
-  const api={request:async()=>account,post:async(url,body)=>{
+  let account=null,mayNavigate=true,logoutCount=0,redirectCount=0,next=0,identityReads=0;
+  const api={request:async()=>{identityReads++;return account;},post:async(url,body)=>{
     requests.push(url);
     if(url.endsWith('/session')){
       account={email:`preview-${++next}`,display_name:body.display_name};
@@ -81,6 +91,9 @@ async function testIdentity(){
   const service=StatementIdentity.create({elements:$,api,escape:value=>value,storage,mayNavigate:()=>mayNavigate,
     onLogout:()=>logoutCount++,redirect:()=>redirectCount++,restart:()=>service.load()});
   const submit=async name=>{$('display-name').value=name;await $('name-form').listeners.submit({preventDefault(){},currentTarget:$('name-form')});};
+  const initial={email:'initial@example.test',display_name:'Initial',is_admin:false};
+  assert.equal(await service.initialize({preview:true},{initialIdentity:initial}),true);
+  assert.equal(service.current,initial);assert.equal(identityReads,0,'Bootstrap identity is reused without another request');
   assert.equal(await service.initialize({preview:true}),false);assert.equal($('name-dialog').open,true);
   await submit('同名审阅者');assert.equal(service.current.email,'preview-1');
   await $('profile-button').onclick();await submit('修改后的姓名');
@@ -95,6 +108,15 @@ async function testIdentity(){
   assert.equal(await service.initialize({preview:false}),false);await submit('生产审阅者');
   assert.equal(requests.at(-1),'./api/profile','Production identity uses the authenticated profile endpoint');
   await $('logout').onclick();assert.equal(redirectCount,1);
+  assert.equal(service.current,null,'Unauthorized clears the previous identity');
+  assert.equal(await service.initialize({preview:false},{initialIdentity:null}),false);
+  assert.equal(redirectCount,2,'A missing production session redirects even when the bootstrap probe was optional');
+  let finishIdentity;
+  api.request=()=>new Promise(resolve=>{finishIdentity=resolve;});
+  const explicitLogouts=logoutCount;
+  const pending=service.load();service.unauthorized();
+  finishIdentity(initial);assert.equal(await pending,null);assert.equal(service.current,null,'A late identity response cannot undo logout');
+  assert.equal(logoutCount,explicitLogouts,'Session expiry does not reset an unsaved opinion like explicit logout');
 }
 
 (async()=>{await testAPI();testGraph();await testIdentity();console.log('Statement API, identity isolation and dependency graph tests passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

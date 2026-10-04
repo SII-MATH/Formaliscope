@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import ipaddress
 import json
 import os
@@ -26,6 +27,21 @@ from .judgments import (VERDICTS, WRITE_LOCK, _card_fingerprints, _judgment_matc
 
 MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
+
+
+def accepts_gzip(value: str) -> bool:
+    qualities = {}
+    for item in value.lower().split(','):
+        name, *parameters = item.strip().split(';')
+        quality = 1.0
+        for parameter in parameters:
+            if parameter.strip().startswith('q='):
+                try:
+                    quality = float(parameter.strip()[2:])
+                except ValueError:
+                    quality = 0.0
+        qualities[name.strip()] = quality if 0 <= quality <= 1 else 0.0
+    return qualities.get('gzip', qualities.get('*', 0)) > 0
 
 
 def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionStore,
@@ -82,11 +98,16 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
             self.end_headers()
 
         def _json(self, code: int, payload: dict | list, *, etag: str | None = None,
-                  extra_headers: dict[str, str] | None = None):
+                  extra_headers: dict[str, str] | None = None, compress: bool = False):
             if etag and self.headers.get("If-None-Match") == etag:
                 self._headers(304, "application/json; charset=utf-8", 0, etag=etag)
                 return
-            data = json.dumps(payload, ensure_ascii=False).encode()
+            data = json.dumps(payload, ensure_ascii=False, separators=(',', ':') if compress else None).encode()
+            if compress:
+                extra_headers = {**(extra_headers or {}), 'Vary': 'Accept-Encoding'}
+                if len(data) >= 1024 and accepts_gzip(self.headers.get('Accept-Encoding', '')):
+                    data = gzip.compress(data, compresslevel=5, mtime=0)
+                    extra_headers['Content-Encoding'] = 'gzip'
             self._headers(code, "application/json; charset=utf-8", len(data), etag=etag,
                           extra_headers=extra_headers)
             try:
@@ -214,7 +235,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 return
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
-                self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial))
+                self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial), compress=True)
                 return
             if path == '/api/symbol':
                 values = parse_qs(parsed.query)

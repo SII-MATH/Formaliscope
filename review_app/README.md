@@ -77,4 +77,4 @@ Lean 代码中的名称可点击追溯定义。定位仅使用当前快照：唯
 
 公开服务设置 HTTPS `REVIEW_PUBLIC_ORIGIN`，路径前缀设置 `REVIEW_COOKIE_PATH`，由代理剥去前缀再转发 loopback 服务。部署前运行 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；返回 ready=false 时命令失败，且不初始化数据库、不创建密钥、不发邮件。启动后 `GET /healthz` 无需登录，只报告就绪状态及 schema 版本，不返回条目、用户或路径。
 
-完整测试命令见 [根 README](../README.md)，存储职责见 [STORAGE.md](STORAGE.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有 [性能报告](PERFORMANCE.md) 基于早期 Blueprint 规模，新 Statement 规模需要部署演练时重新测量。
+完整测试命令见 [根 README](../README.md)，存储职责见 [STORAGE.md](STORAGE.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。6,222 条声明的受控浏览器测量、优化前后指标及复测方法见 [Statement 加载性能报告](PERFORMANCE_STATEMENT.md)；早期 Blueprint 基线保留在 [历史性能报告](PERFORMANCE.md)。

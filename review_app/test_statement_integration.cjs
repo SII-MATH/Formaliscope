@@ -9,8 +9,9 @@ const vm=require("node:vm");
 // controlled orders without duplicating the controller's navigation logic.
 const clone=value=>JSON.parse(JSON.stringify(value));
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
-function fixture({configure=()=>{},topics=[],initialURL='https://review.example/#A'}={}) {
+function fixture({configure=()=>{},topics=[],initialURL='https://review.example/#A',initialEvidence=true,readHook=()=>{},evidenceHook=()=>{}}={}) {
   const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[];
+  let apiOptions;
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
     assert.ok(!['structure-panel','structure-fields','field-count','reading-summary','enrichment-provenance'].includes(id),'Removed structure and enrichment detail elements are absent from the page');
@@ -42,10 +43,13 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   const api={
     async request(url){
       reads.push(url);
+      const pending=readHook(url);if(pending)return pending;
       if(url==="./api/config")return {preview:false};
-      if(url==="./api/catalog")return {cards:clone(cards.map(card=>({...card,
+      if(url==="./api/auth/me")return clone(identity.current);
+      if(url.startsWith("./api/catalog"))return {cards:clone(cards.map(card=>({...card,
         verdict:currentReview(card.id)?.verdict||null,stale:!!records.get(card.id)?.length&&!currentReview(card.id)}))),
-        source_commit:"source",snapshot_digest:"snapshot",enrichment_topics:clone(topics)};
+        source_commit:"source",snapshot_digest:"snapshot",enrichment_topics:clone(topics),
+        initial_evidence:initialEvidence?clone(cards.find(c=>c.id===new URL(url,location.href).searchParams.get('initial'))||cards[0]):null};
       if(url.startsWith("./api/review-state?")){
         const id=new URL(url,location.href).searchParams.get('id'),rows=records.get(id)||[],draft=drafts.get(id);
         return {current:clone(currentReview(id)),draft:clone(draft?.pending?draft:null),
@@ -58,13 +62,18 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
       if(url.startsWith("./api/module?"))return {source:"def A := 1\ndef B := 1\ndef C := 1"};
       throw new Error(`Unexpected request: ${url}`);
     },
-    async evidence(id){return clone(cards.find(card=>card.id===id));},clearEvidenceCache(){},
+    async evidence(id){
+      if(evidenceCache.has(id))return clone(evidenceCache.get(id));
+      reads.push(`evidence:${id}`);const pending=evidenceHook(id);if(pending)return pending;
+      return clone(cards.find(card=>card.id===id));
+    },primeEvidence(card){evidenceCache.set(card.id,card);},clearEvidenceCache(){evidenceCache.clear();},
     post(url,payload){
       assert.ok(['./api/drafts','./api/judgments'].includes(url));
       return new Promise((resolve,reject)=>requests.push({url,payload:clone(payload),resolve,reject}));
     },
   };
-  const identity={current:{display_name:"Tester"},async initialize(){return true;},async load(){return this.current;}};
+  const evidenceCache=new Map();
+  const identity={current:{display_name:"Tester"},async initialize(){return true;},async load(){reads.push('identity:load');return this.current;},unauthorized(){this.current=null;}};
   const document={baseURI:location.href,activeElement:null,head:{appendChild(){}},getElementById:element,
     querySelectorAll:selector=>selector==='[name="verdict"]'?radios:[],
     querySelector:selector=>selector==='[name="verdict"]:checked'?radios.find(radio=>radio.checked):main,
@@ -73,7 +82,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
     requestAnimationFrame:callback=>setImmediate(callback),crypto:{randomUUID:()=>`token-${++nextToken}`},
     innerWidth:1200,scrollX:0,scrollY:0,scrollTo(){},
     addEventListener:(type,callback)=>listeners.set(type,callback),
-    StatementAPI:{create:()=>api},StatementIdentity:{create:({restart,onLogout})=>Object.assign(identity,{restart,onLogout})},
+    StatementAPI:{create:options=>{apiOptions=options;return api;}},StatementIdentity:{create:({restart,onLogout})=>Object.assign(identity,{restart,onLogout})},
     StatementGraph:{create:()=>({show(){},capture:()=>({}),restore(){}})},StatementSymbols:{create:()=>({clear(){}})},
     Stage3Lean:{toHtml:text=>text},Stage3Latex:{toHtml:text=>text,typeset(){}},MathJax:{typesetPromise(){}}};
   context.window=context;vm.createContext(context);
@@ -81,6 +90,8 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
     vm.runInContext(fs.readFileSync(path.join(__dirname,"static",filename),"utf8"),context,{filename});
   return {
     requests,stack,element,reads,records,drafts,
+    logout(){identity.onLogout();},
+    expire(){apiOptions.onUnauthorized();},
     async switchReviewer(){records.clear();drafts.clear();identity.onLogout();identity.current={display_name:'Other'};await identity.restart();},
     get url(){return stack[cursor].url;},get title(){return element("card-title").textContent;},
     click(id){element("card-list").onclick({target:{closest:()=>({dataset:{id}})}});},
@@ -233,11 +244,64 @@ async function configuredTopicsAndV2Labels(){
   assert.doesNotMatch(f.element('statement').innerHTML,/DELETED_SUMMARY_FIELD/);
 }
 
+async function initialEvidenceAndSelection(){
+  const linked=fixture({initialURL:'https://review.example/?directory=Test%2FA.lean#B'});await settle();
+  assert.equal(linked.title,'B','An explicit valid hash keeps priority over the directory scope');
+  assert.equal(linked.reads.filter(url=>url==='./api/auth/me').length,1);
+  assert.equal(linked.reads.includes('identity:load'),false,'Startup reuses the initialized identity');
+  assert.equal(linked.reads.includes('evidence:B'),false,'Matching initial evidence needs no separate request');
+  assert.ok(linked.reads.some(url=>url.startsWith('./api/review-state?')),'Personal state is still fetched independently');
+  const scoped=fixture({initialURL:'https://review.example/?directory=Test%2FB.lean'});await settle();
+  assert.equal(scoped.title,'B','The automatic evidence candidate cannot override directory selection');
+  assert.equal(scoped.reads.includes('evidence:B'),true,'A mismatched embedded candidate falls back to the selected evidence');
+  const filtered=fixture({initialURL:'https://review.example/?labels=priority%2Fp0',configure(cards){cards[1].main_target=true;}});await settle();
+  assert.equal(filtered.title,'B','Linked labels choose the matching row rather than the automatic evidence candidate');
+  assert.doesNotMatch(filtered.element('card-list').innerHTML,/data-id="[AC]"/);
+  const fallback=fixture({initialURL:'https://review.example/#unknown',initialEvidence:false});await settle();
+  assert.equal(fallback.title,'A');assert.equal(fallback.reads.includes('evidence:A'),true);
+  const malformed=fixture({initialURL:'https://review.example/#%E0%A4%A'});await settle();assert.equal(malformed.title,'A');
+}
+
+async function lateResponsesAndLogout(){
+  let resolveB,resolveStateB;
+  const f=fixture({evidenceHook:id=>id==='B'?new Promise(resolve=>{resolveB=resolve;}):null,
+    readHook:url=>url==='./api/review-state?id=B'?new Promise(resolve=>{resolveStateB=resolve;}):null});await settle();
+  f.click('B');await settle();f.click('C');await settle();assert.equal(f.title,'C');
+  resolveB({id:'B'});resolveStateB({current:{verdict:'misaligned'},history_count:1});await settle();
+  assert.equal(f.title,'C');assert.equal(f.element('status-badge').textContent,'未审阅','An older response cannot replace the current personal state');
+  let resolveCatalog;
+  const delayed=fixture({readHook:url=>url.startsWith('./api/catalog')?new Promise(resolve=>{resolveCatalog=resolve;}):null});await settle();
+  // Resetting on identity expiry invalidates an already pending catalog response.
+  delayed.logout();resolveCatalog({cards:[],initial_evidence:{id:'A'},source_commit:'old'});await settle();
+  assert.equal(delayed.element('review-card').hidden,true);assert.equal(delayed.element('card-list').innerHTML,'');
+  let resolveConfig;
+  const bootstrap=fixture({readHook:url=>url==='./api/config'?new Promise(resolve=>{resolveConfig=resolve;}):null});await settle();
+  bootstrap.logout();resolveConfig({preview:false});await settle();
+  assert.equal(bootstrap.reads.some(url=>url.startsWith('./api/catalog')),false,'An old bootstrap cannot restore a logged-out session');
+}
+
+async function indexedSearchAfterCompletion(){
+  const f=fixture();await settle();f.edit();await settle();f.finish();await settle();
+  const completion=f.element('save').onclick();await settle();f.finish(1);await completion;await settle();
+  f.element('search').value='通过';f.element('search').oninput({target:f.element('search')});
+  assert.match(f.element('card-list').innerHTML,/data-id="A"/,'Completing a review updates the cached search labels');
+  assert.doesNotMatch(f.element('card-list').innerHTML,/data-id="[BC]"/);
+}
+
+async function expiryKeepsFailedOpinion(){
+  const f=fixture();await settle();f.edit();await settle();f.expire();
+  f.requests[0].reject(new Error('Session expired'));await settle();
+  assert.equal(f.element('rationale').value,'An opinion that must survive a failed save.');
+  assert.match(f.element('save-message').textContent,/Session expired/,'An unauthorized save retains its error and unsaved input');
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
   await lazyHistoryAndDraftRecovery();
   await dependencyReviewStates();await dependencyStatusAfterNavigation();
   await configuredTopicsAndV2Labels();
+  await initialEvidenceAndSelection();await lateResponsesAndLogout();await indexedSearchAfterCompletion();
+  await expiryKeepsFailedOpinion();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
