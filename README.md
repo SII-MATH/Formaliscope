@@ -6,6 +6,8 @@ KIP-12 前端以 Lean 声明为条目，提供目录选择、名称与源码搜�
 
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
 
+Release 说明自动包含相对上一正式版本的 Changelog 和完整对比链接。中文版本摘要见 [CHANGELOG.md](CHANGELOG.md)。
+
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
 ```bash

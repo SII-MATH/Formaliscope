@@ -7,7 +7,7 @@
 | Workflow | 触发 | 发布前验证与产物 |
 | --- | --- | --- |
 | `ci.yml` | PR、dev/main push | 自动发现全部 review_app / statement_workflow 测试，检查全部前端模块和 Node 回归、Python/脚本语法及新旧 systemd 单元 |
-| `publish-app.yml` | main push | 重跑同一应用/Workflow/模块/schema 导入测试门槛，`git archive` 打包整个仓库，从 `v0.0.1` 开始自动递增补丁版本；打包、上传 SHA-256 和带版本/commit 的 manifest，全部完成后发布草稿 |
+| `publish-app.yml` | main push | 重跑同一应用/Workflow/模块/schema 导入测试门槛，`git archive` 打包整个仓库，从 `v0.0.1` 开始自动递增补丁版本；生成 Changelog、上传 SHA-256 和带版本/commit 的 manifest，全部完成后发布草稿 |
 | `publish-snapshot.yml` | 手动或 `kip126-updated` dispatch | 默认拉取 KIP126 的 develop，也可指定该源码仓库的固定 ref；从干净 KIP126 检出构建 `build --statements --require-clean`，验证模式、commit、digest，发布 `snapshot-<source-commit>` |
 
 证据发布在同一个全局队列串行执行，避免不同分支指向同一源码提交时同时更新同一标签。`deploy/formaliscope_snapshot_release.py` 先校验候选快照、SHA-256 与 manifest：新 Release 先建草稿，三份附件上传后重新下载、检查元数据与内容，通过后才公开。中断的草稿可重跑补齐；已上传的有效附件保留，`--clobber` 仅用于草稿中的未完成上传占位文件。
@@ -73,6 +73,10 @@ sudo systemctl enable --now formaliscope-app-pull.timer formaliscope-snapshot-pu
 本应用仓库只保留 `main` 和 `dev`。日常工作分支是 `dev`，本地跟踪 `origin/dev`。推送 dev 只执行 CI，合并到 main 才触发发布；main 也重跑完整验证，未通过不会发布。被审 KIP126 源码独立管理，snapshot 工作流中的 `kip_ref` 指向 KIP126 的分支或提交，不是本应用的开发分支。应用版本从 `v0.0.1` 开始，下一次 main 更新自动取最高已保留数字版本并增加 patch；手动建立新 minor/major 版本时后续 patch 从其继续递增。版本排序使用数字元组，不是字符串或发布日期。
 
 同一发布队列串行执行，最多排队 100 个任务，避免版本竞争。重跑相同 commit 复用原标签；已发布附件不覆盖，失败草稿可继续上传，完成后才发布。自动化使用仓库自带 GITHUB_TOKEN，无需新建写权限个人 token。Actions 页可见实际成功/失败，失败时可点 Re-run failed jobs。
+
+Release 说明包含 `Changelog`：发布脚本从低于本次版本的最高已发布稳定 `vX.Y.Z` 标签取起点，解析本地标签的固定提交，列出到本次精确提交之间的非 merge 提交、每条提交链接及完整对比链接。直接提交和 PR 内的实际修改都会纳入。草稿、预发行、旧 `app-*` 与 `snapshot-*` 不参与起点选择；没有上一版本时列出首版提交。若上一版本不是本次提交的祖先，发布明确报错，避免生成错误范围。
+
+说明先写入临时文件，再用于创建或更新草稿；附件齐全后才正式发布。草稿重跑可重新生成说明；已发布版本重跑直接复用，不改说明和附件。仓库的 [CHANGELOG.md](../CHANGELOG.md) 保存已整理的中文版本摘要，完整逐次记录以 GitHub Release 为准；CI 不为更新日志额外推送提交，也不会循环触发发版。
 
 main 发布应用包，不打包学生记录、数据库、恢复码或源码快照。证据仍独立用 `snapshot-*` 制品发布，应用版本号不改变所审 KIP126 的 commit。发布到 GitHub 不表示已部署至服务器；VPS 拉取 timer 只有运维启用后才自动更新。
 

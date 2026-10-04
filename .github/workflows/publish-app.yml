@@ -65,17 +65,27 @@ jobs:
         run: |
           set -Eeuo pipefail
           archive="formaliscope-app-$GITHUB_SHA.tar.gz"
+          existing_draft=0
           if gh release view "$TAG" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
             if python3 -c 'import json,sys; raise SystemExit(0 if not json.load(open(sys.argv[1]))["isDraft"] else 1)' "$RUNNER_TEMP/existing-release.json"; then
               echo "$TAG is already published; immutable assets left unchanged."
               exit 0
             fi
-          else
+            existing_draft=1
+          fi
+          python3 deploy/formaliscope_release.py release-notes \
+            --releases "$RUNNER_TEMP/releases.json" --version "$TAG" \
+            --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY" \
+            --output "$RUNNER_TEMP/release-notes.md"
+          if [[ "$existing_draft" == 0 ]]; then
             gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TAG" \
-              --notes "Formaliscope $TAG. Built and tested from commit $GITHUB_SHA."
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           gh release upload "$TAG" "$RUNNER_TEMP/app-release/$archive" \
             "$RUNNER_TEMP/app-release/$archive.sha256" \
             "$RUNNER_TEMP/app-release/formaliscope-app-manifest.json" --clobber
           gh release edit "$TAG" --draft=false --latest
           echo "Published [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_STEP_SUMMARY"
