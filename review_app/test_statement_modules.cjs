@@ -83,7 +83,7 @@ async function testIdentity(){
   const submit=async name=>{$('display-name').value=name;await $('name-form').listeners.submit({preventDefault(){},currentTarget:$('name-form')});};
   assert.equal(await service.initialize({preview:true}),false);assert.equal($('name-dialog').open,true);
   await submit('同名审阅者');assert.equal(service.current.email,'preview-1');
-  $('profile-button').onclick();await submit('修改后的姓名');
+  await $('profile-button').onclick();await submit('修改后的姓名');
   assert.equal(requests.at(-1),'./api/profile');assert.equal(service.current.email,'preview-1','Editing a name keeps the same account');
   mayNavigate=false;await $('logout').onclick();assert.equal(logoutCount,0,'Unsaved-opinion navigation guard also protects account switching');
   mayNavigate=true;await $('logout').onclick();await submit('修改后的姓名');

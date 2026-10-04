@@ -10,6 +10,9 @@
   <script src="./statement-api.js" defer></script>
   <script src="./statement-identity.js" defer></script>
   <script src="./statement-graph.js" defer></script>
+  <script src="./statement-save.js" defer></script>
+  <script src="./statement-navigation.js" defer></script>
+  <script src="./statement-symbols.js" defer></script>
   <script src="./statement.js" defer></script>
 </head>
 <body>
@@ -29,7 +32,7 @@
       <div class="progress-panel progress-dock"><div><span id="progress-heading">索引标注情况</span><b id="progress-label">—</b></div><div class="progress-track"><i id="progress-fill"></i></div><small id="progress-note">全库索引不代表全部必审。</small></div>
     </aside>
     <section class="main-panel">
-      <div class="view-toolbar"><div id="views" class="segmented" role="group" aria-label="浏览视图"><button data-view="list" class="active">☷ 条目详情</button><button data-view="graph">⌘ 依赖关系</button></div><span id="save-global" role="status"></span></div>
+      <div class="view-toolbar"><button id="back-card" disabled title="返回上一条目并恢复阅读位置">← 返回</button><div id="views" class="segmented" role="group" aria-label="浏览视图"><button data-view="list" class="active">☷ 条目详情</button><button data-view="graph">⌘ 依赖关系</button></div><span id="save-global" role="status"></span></div>
       <div id="label-outside-notice" class="scope-notice" hidden><span>当前条目不匹配标签筛选，保留详情供查看上下文。</span><button id="clear-outside-labels">清除标签筛选</button></div>
       <div id="scope-notice" class="scope-notice" hidden><span>当前条目位于所选目录之外，可查看引用上下文。</span><button id="show-card-directory">选择它所在的目录</button></div>
       <section id="graph-panel" class="graph-panel" hidden aria-label="依赖图">
@@ -43,6 +46,7 @@
         <section class="evidence natural"><div class="pane-head"><span class="pane-index">01</span><h3>自然语言与阅读依据</h3><span id="statement-origin" class="pill"></span></div><p id="reading-summary" class="reading-summary" hidden></p><div id="statement" class="statement"></div><div id="nl-location" class="source-location"></div></section>
         <section id="structure-panel" class="evidence" hidden><div class="pane-head"><span class="pane-index">02</span><h3>结构字段展开</h3><span id="field-count" class="pill"></span></div><p class="pane-note">展开当前 structure 的字段类型；实例代入后的语义陈述仍需核验。</p><div id="structure-fields" class="structure-fields"></div></section>
         <section class="evidence formal"><div class="pane-head"><span class="pane-index">LEAN</span><h3>完整声明源码</h3><button id="copy-code">复制代码</button><button id="toggle-module">查看完整文件</button></div><pre id="lean-code" class="lean-code lean"></pre><div id="lean-location" class="source-location"></div><details id="module-panel" hidden><summary>完整源文件（包含 import、namespace 和变量上下文）</summary><pre id="module-code" class="lean-code lean"></pre></details></section>
+        <aside id="symbol-panel" class="symbol-panel" hidden aria-label="定义追溯"></aside>
         <details class="dependencies"><summary>引用的定义与定理 <span id="dependency-count"></span></summary><div id="dependencies"></div></details>
         <section class="decision-panel"><div class="decision-heading"><div><p class="eyebrow">YOUR REVIEW</p><h3>这份陈述的数学含义是否符合预期？</h3></div><small>只记录你的判断</small></div>
           <div id="verdicts" class="verdicts"><label><input type="radio" name="verdict" value="aligned"><span><b>✓ 通过</b><small>对象、条件与结论符合预期</small></span></label><label><input type="radio" name="verdict" value="uncertain"><span><b>？没看懂</b><small>需要更多解释或背景</small></span></label><label><input type="radio" name="verdict" value="misaligned"><span><b>× 不通过</b><small>存在语义差异或缺失前提</small></span></label></div>

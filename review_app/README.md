@@ -15,6 +15,8 @@
 | `snapshot_artifacts.py` | 排他写入候选证据，不覆盖已有制品或运行数据 |
 | `static/statement.js` | 详情、列表、筛选与页面交互 |
 | `static/statement-api.js` / `statement-identity.js` / `statement-graph.js` | API 请求、身份交互和候选依赖图 |
+| `static/statement-save.js` / `statement-navigation.js` | 串行自动保存、失败重试、返回与阅读状态恢复 |
+| `symbols.py` / `static/statement-symbols.js` | 快照内名称与局部绑定定位、定义追溯交互 |
 | `static/directory-tree.js` / `review-labels.js` | 目录树与统一标签、状态筛选规则 |
 | `static/latex-renderer.js` / `lean-renderer.js` | 本地数学公式渲染与安全转义后的 Lean 高亮 |
 | `../statement_workflow/` | 独立 Agent 任务、上下文隔离、校验、重试与产物契约 |
@@ -58,6 +60,10 @@ python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data
 ## 请求、渲染与部署检查
 
 打开网页不会运行 Lake 或重新扫描源码。清单和详情分开获取；详情有内容指纹 ETag，人工进度与历史不缓存。数据库启用 WAL、短事务和 busy timeout，提交携带 UUID 以避免网络重试重复写入。
+
+选择审阅结论立即自动保存；备注停止输入 650 毫秒后保存。切换条目、审核范围或身份前等待当前修改保存，失败时保留输入并提供重试。成功提交直接更新当前记录和列表进度。工具栏“返回”与浏览器前进/后退恢复此前的筛选、视图、完整文件展开状态和阅读位置。
+
+Lean 代码中的名称可点击追溯定义。定位仅使用当前快照：唯一匹配跳转至声明，局部参数和绑定定位到源码，多个候选让用户选择；外部依赖或无法确定的名称给出说明。这是保守的源码索引，不执行 Lean elaboration，复杂模式绑定仍可能无法定位。
 
 前端数学使用本地 MathJax 包（Apache 2.0，见 `static/MATHJAX-LICENSE.txt`）；Lean 高亮在转义 HTML 字符后执行。资源不依赖 CDN。静态资源由服务启动时读取，因此更新代码或快照后需要重启。
 
