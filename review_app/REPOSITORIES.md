@@ -2,6 +2,8 @@
 
 Statement 模式可接入不同 Lean 工程，不要求源码目录名或命名空间为 KIP126。仓库身份、扫描路径、主目标和项目主题由 JSON 配置，源码位置和提交由构建参数确定。示例见 `repository-configs/kip126.json` 和 `repository-configs/cgwhmodelproof.json`；它们只包含接入配置，不包含被审源码或用户记录。
 
+CGWHModelProof 使用 [SII-MATH/CGWHModelProof](https://github.com/SII-MATH/CGWHModelProof) 的 Git 源码。接入时固定选定的提交，用 `--require-clean --expect-commit` 核对源码状态，不以聊天中的源码包或本机导入提交代替上游版本。
+
 ## 生成候选
 
 ```bash
