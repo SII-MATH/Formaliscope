@@ -1,0 +1,50 @@
+{
+  "id": "kip126",
+  "name": "KIP126",
+  "roots": [
+    "KIP126",
+    "KIPBase"
+  ],
+  "topics": [
+    {
+      "id": "spectral_sequence",
+      "name": "谱序列"
+    },
+    {
+      "id": "adams",
+      "name": "Adams 理论"
+    },
+    {
+      "id": "stable_homotopy",
+      "name": "稳定同伦论"
+    },
+    {
+      "id": "sphere",
+      "name": "球谱"
+    },
+    {
+      "id": "synthetic_homotopy",
+      "name": "合成同伦论"
+    },
+    {
+      "id": "steenrod",
+      "name": "Steenrod 代数"
+    },
+    {
+      "id": "homological_algebra",
+      "name": "分次与同调代数"
+    },
+    {
+      "id": "higher_algebra",
+      "name": "范畴与高阶代数"
+    },
+    {
+      "id": "kervaire",
+      "name": "Kervaire 问题"
+    }
+  ],
+  "main_targets": [
+    "KIP126.Solution.Final.H6SquarePermanent.h6_sq_permanent"
+  ],
+  "url": "https://github.com/SII-MATH/KIP126"
+}

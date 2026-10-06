@@ -52,13 +52,19 @@ def _file_metadata(path: Path) -> dict:
 
 def _validate_install_payload(payload: dict, allow_dirty_source: bool) -> None:
     validate_snapshot(payload)
+    from .repositories import COLLECTION_SCHEMA, datasets
+    if payload.get('schema') == COLLECTION_SCHEMA:
+        for item in datasets(payload):
+            _validate_install_payload(item, allow_dirty_source)
+        return
     if payload.get("source_dirty") and not allow_dirty_source:
         raise ValueError("refusing a snapshot built from a dirty reviewed-source checkout")
     if payload.get("source_origin") == "archive-unverified" and not allow_dirty_source:
         raise ValueError("unverified source archives are for preview; production requires a clean Git checkout")
 
 
-def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool = False) -> tuple[dict, dict[str, int]]:
+def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool = False,
+                     legacy_kip126_only: bool = False) -> tuple[dict, dict[str, int]]:
     """Validate and atomically install an immutable reviewed-source artifact."""
     # Reject an invalid artifact without creating a production directory. The
     # captured bytes are immutable even if the source path changes meanwhile.
@@ -70,6 +76,9 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
         previous = None
         if destination.is_file():
             previous = normalize_snapshot(json.loads(destination.read_bytes()))
+        if legacy_kip126_only and any(item and (item.get('repository') or item.get('datasets'))
+                                      for item in (previous, payload)):
+            raise ValueError('legacy KIP126 automatic updates cannot replace repository datasets; build and install a complete collection explicitly')
         comparison = compare_snapshots(previous, normalize_snapshot(payload))
         # Preserve v1 judgments while their only old fingerprint mapping is
         # still available; backup must not interleave with this migration.
@@ -79,6 +88,8 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
             from .judgments import backfill_review_basis
             initialize(database)
             backfill_review_basis(database, previous)
+            from .dataset_storage import preserve_legacy_records
+            preserve_legacy_records(database, previous, payload)
         payload["comparison"] = comparison
         descriptor, filename = tempfile.mkstemp(prefix=".snapshot.", suffix=".tmp", dir=data_dir)
         temporary = Path(filename)

@@ -170,13 +170,18 @@ class ReviewDraftTests(unittest.TestCase):
             for version, name, migration in MIGRATIONS[:7]:
                 migration(db)
                 db.execute('INSERT INTO schema_migrations VALUES (?, ?, ?)', (version, name, 'old'))
-        code, result = submit(self.snapshot, old_path, self.reviewer, self.payload('旧历史'))
-        self.assertEqual(code, 201)
-        before = history(old_path, self.card['id'], self.reviewer)
+        # Seed a genuine schema-7 record; the current writer requires schema 10.
+        from .judgments import _record
+        record = _record(self.snapshot, self.card, self.reviewer, self.payload('旧历史'))
+        record.pop('dataset_id')
+        with sqlite3.connect(old_path) as db:
+            columns = ','.join(record)
+            db.execute(f"INSERT INTO judgments ({columns}) VALUES ({','.join('?' for _ in record)})", list(record.values()))
         initialize(old_path)
-        self.assertEqual(history(old_path, self.card['id'], self.reviewer), before)
+        restored = history(old_path, self.card['id'], self.reviewer)[0]
+        self.assertEqual(restored, {key: value for key, value in record.items() if key not in {'card_id', 'request_id'}})
         initialize(old_path)
-        self.assertEqual(history(old_path, self.card['id'], self.reviewer)[0]['id'], result['judgment']['id'])
+        self.assertEqual(history(old_path, self.card['id'], self.reviewer)[0]['id'], record['id'])
         self.save('等待继续编辑', '')
         (self.db.parent / 'snapshot.json').write_text(json.dumps(self.snapshot))
         backup = create_backup(self.db.parent, self.root / 'backups')

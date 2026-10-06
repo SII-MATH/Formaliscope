@@ -2,11 +2,14 @@
 
 应用读取独立的 KIP126 源码检出并生成只读快照。Statement 模式索引 `KIP126/` 与 `KIPBase/` 中的完整声明，按目录、标签和搜索组织内容。Lean 名称作为主标题；中文副标题、独立回译和分类按 enrichment v2 补充。人工审阅使用“通过 / 没看懂 / 不通过”，与 Agent 内部预期判断分开保存。
 
+也可通过仓库配置接入其他 Lean 工程并组合多个源码版本；详见 [多仓库与版本](REPOSITORIES.md)。旧 KIP126 构建与快照继续兼容。
+
 ## 模块边界
 
 | 模块 | 职责 |
 | --- | --- |
 | `build.py` / `statements.py` | Blueprint 与 Statement 提取、源码版本、内容指纹和快照校验 |
+| `repositories.py` / `dataset_storage.py` | 仓库配置、独立数据集集合、旧记录复制与回退保留 |
 | `enrichment.py` / `enrichment_v2.py` | 字段校验、自动源码绑定、内部字段隔离、生成公开候选快照 |
 | `agent_assessments.py` | 显式事务导入私有模型判断，保存原始分值、运行版本与历史 |
 | `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |

@@ -102,9 +102,9 @@ class AgentAssessmentTests(unittest.TestCase):
             ledger = [tuple(row) for row in db.execute('SELECT * FROM schema_migrations')]
         initialize(database)
         with closing(connect(database)) as db:
-            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 9)
+            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], DB_SCHEMA_VERSION)
             for table in tables:
-                self.assertEqual([tuple(row) for row in db.execute(f'SELECT * FROM {table}')], before[table])
+                self.assertEqual([tuple(row)[:len(before[table][0])] for row in db.execute(f'SELECT * FROM {table}')], before[table])
             self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM schema_migrations WHERE version<=8')], ledger)
             migrated = list(db.iterdump())
         initialize(database)
@@ -199,6 +199,22 @@ class AgentAssessmentTests(unittest.TestCase):
         self.assertEqual(len(self.rows('agent_assessments')), 6)
         self.assertEqual({row['source_commit'] for row in self.rows('agent_assessment_runs')}, {'a' * 40, 'b' * 40})
 
+    def test_repository_versions_keep_independent_machine_runs(self):
+        from .repositories import dataset_id
+        snapshots = [compile_statements(self.source, source_commit=commit, repository={
+            'id': repository, 'name': repository, 'roots': ['KIP126'], 'topics': []})
+            for repository, commit in [('alpha', 'a' * 40), ('alpha', 'b' * 40), ('beta', 'a' * 40)]]
+        for number, snapshot in enumerate(snapshots):
+            import_agent_assessments(self.data, snapshot, self.batch(snapshot, f'repository-run-{number}'))
+        runs = self.rows('agent_assessment_runs')
+        self.assertEqual({row['dataset_id'] for row in runs}, {dataset_id(item) for item in snapshots})
+        self.assertEqual(len(self.rows('agent_assessments')), 6)
+        self.assertEqual(snapshots[0]['cards'][0]['fingerprint'], snapshots[1]['cards'][0]['fingerprint'])
+        before = self.rows('agent_assessment_runs'), self.rows('agent_assessments')
+        with self.assertRaisesRegex(ValueError, 'run_id.*metadata'):
+            import_agent_assessments(self.data, snapshots[1], self.batch(snapshots[1], 'repository-run-0'))
+        self.assertEqual((self.rows('agent_assessment_runs'), self.rows('agent_assessments')), before)
+
     def test_all_verdicts_and_boundary_confidences_are_preserved(self):
         identity = self.document['annotations'][0]['declaration_id']
         for verdict, reason, confidence in (
@@ -279,7 +295,7 @@ class AgentAssessmentTests(unittest.TestCase):
         candidate = enrich_snapshot(self.snapshot, self.document)
         (self.data / 'snapshot.json').write_text(json.dumps(candidate), encoding='utf-8')
         backup = create_backup(self.data, self.root / 'backups')
-        self.assertEqual(verify_backup(backup)['database_schema_version'], 9)
+        self.assertEqual(verify_backup(backup)['database_schema_version'], DB_SCHEMA_VERSION)
         with closing(connect(backup / 'judgments.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM agent_assessments').fetchone()[0], 2)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM agent_assessment_runs').fetchone()[0], 1)

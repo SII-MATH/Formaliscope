@@ -1,12 +1,13 @@
 "use strict";
 (() => {
   // Only immutable evidence is cached; personal state always uses the session.
-  function create({fetch: fetcher=globalThis.fetch.bind(globalThis), onUnauthorized=()=>{}, evidenceLimit=12}={}) {
+  function create({fetch: fetcher=globalThis.fetch.bind(globalThis), onUnauthorized=()=>{}, evidenceLimit=12, dataset=null}={}) {
     const cache=new Map(), inflight=new Map();
     let generation=0;
 
     async function request(url, {optionalUnauthorized=false, ...options}={}) {
       const started=generation;
+      if(dataset!==null && String(url).includes('/api/'))url+=`${String(url).includes('?')?'&':'?'}dataset=${encodeURIComponent(dataset)}`;
       const response=await fetcher(url, {cache:"no-store", ...options});
       if(response.status===401 && optionalUnauthorized)return null;
       const data=await response.json();
@@ -43,7 +44,8 @@
       cache.clear();inflight.clear();
     }
 
-    return Object.freeze({request,post,evidence,primeEvidence,clearEvidenceCache});
+    function setDataset(value){dataset=value;clearEvidenceCache();}
+    return Object.freeze({request,post,evidence,primeEvidence,clearEvidenceCache,setDataset});
   }
   (typeof window!=="undefined"?window:globalThis).StatementAPI=Object.freeze({create});
 })();

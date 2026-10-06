@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 9
+DB_SCHEMA_VERSION = 10
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -167,6 +167,35 @@ def _migration_9(db: sqlite3.Connection) -> None:
         ON agent_assessment_runs(source_commit, snapshot_digest, expectation_context_digest)""")
 
 
+def _migration_10(db: sqlite3.Connection) -> None:
+    db.execute("ALTER TABLE judgments ADD COLUMN dataset_id TEXT NOT NULL DEFAULT ''")
+    db.execute("ALTER TABLE agent_assessment_runs ADD COLUMN dataset_id TEXT NOT NULL DEFAULT ''")
+    db.execute('CREATE INDEX judgments_dataset_reviewer ON judgments(dataset_id, reviewer, card_id, created_at)')
+    db.execute('CREATE INDEX agent_runs_dataset ON agent_assessment_runs(dataset_id, run_id)')
+    # Preserve every draft, including completed checkpoints, while extending its
+    # uniqueness constraint to allow independent copies of identical evidence.
+    db.execute('ALTER TABLE review_drafts RENAME TO review_drafts_v9')
+    db.execute("""CREATE TABLE review_drafts (
+        id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+        card_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+        reviewer TEXT NOT NULL, verdict TEXT NOT NULL, rationale TEXT NOT NULL,
+        created_at TEXT NOT NULL, fingerprint_scheme TEXT NOT NULL,
+        review_basis_scheme TEXT NOT NULL, review_basis_fingerprint TEXT NOT NULL,
+        source_commit TEXT, snapshot_digest TEXT,
+        revision INTEGER NOT NULL, completed_revision INTEGER NOT NULL DEFAULT 0,
+        completion_request_id TEXT, judgment_id TEXT,
+        dataset_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(dataset_id, reviewer, card_id, fingerprint)
+    )""")
+    columns = ','.join(row[1] for row in db.execute("PRAGMA table_info('review_drafts_v9')"))
+    db.execute(f'INSERT INTO review_drafts ({columns}) SELECT {columns} FROM review_drafts_v9 ORDER BY rowid')
+    db.execute('DROP TABLE review_drafts_v9')
+    db.execute('''CREATE TABLE dataset_admins (
+        dataset_id TEXT NOT NULL, reviewer TEXT NOT NULL,
+        PRIMARY KEY(dataset_id, reviewer)
+    )''')
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -177,6 +206,7 @@ MIGRATIONS = (
     (7, "unify-authentication-and-session-storage", _migration_7),
     (8, "separate-review-drafts-from-history", _migration_8),
     (9, "private-versioned-agent-assessments", _migration_9),
+    (10, "independent-repository-version-datasets", _migration_10),
 )
 
 

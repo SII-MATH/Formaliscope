@@ -18,11 +18,11 @@ from .storage import create_backup, install_snapshot, verify_backup
 def main():
     app_root = Path(__file__).resolve().parents[1]
     default_data_dir = Path(os.environ.get("REVIEW_DATA_DIR", app_root / ".review"))
-    parser = argparse.ArgumentParser(description="KIP126 Blueprint correspondence review")
+    parser = argparse.ArgumentParser(description="Formaliscope Lean Statement review")
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build", help="build a new evidence candidate; install-snapshot activates it")
     build.add_argument("--source", type=Path, required=True,
-                       help="path to a separate KIP126 source checkout")
+                       help="path to a separate reviewed Lean source checkout")
     build_output = build.add_mutually_exclusive_group(required=True)
     build_output.add_argument("--output", type=Path,
                               help="new candidate artifact outside reviewed source and runtime data")
@@ -33,6 +33,17 @@ def main():
     build.add_argument('--statements', action='store_true', help='index all KIP126 and KIPBase declarations for Statement review')
     build.add_argument('--source-commit', help='known 40-character commit for an exact source archive (Statement preview only)')
     build.add_argument('--annotations', type=Path, help='source-hash-bound back-translation drafts for Statement review')
+    build.add_argument('--repository-config', type=Path, help='repository id/name, scan roots, main targets and topics JSON')
+    build.add_argument('--expect-commit', help='refuse a source checkout that does not match this exact commit')
+    collection = sub.add_parser('bundle-snapshots', help='combine frozen repository versions into a new candidate')
+    collection.add_argument('--snapshot', type=Path, action='append', required=True)
+    collection.add_argument('--default', help='initial dataset id: repository@commit')
+    collection.add_argument('--output', type=Path, required=True)
+    grant = sub.add_parser('dataset-admin', help='grant or revoke administrative access to one repository version')
+    grant.add_argument('--data-dir', type=Path, default=default_data_dir)
+    grant.add_argument('--dataset', required=True)
+    grant.add_argument('--reviewer', required=True, help='existing internal reviewer id')
+    grant.add_argument('--revoke', action='store_true')
     start = sub.add_parser("serve", help="serve the local review site")
     start.add_argument("--host", default="127.0.0.1")
     start.add_argument("--port", type=int, default=8765)
@@ -56,6 +67,7 @@ def main():
                          help="persistent data directory (or REVIEW_DATA_DIR)")
     install.add_argument("--allow-dirty-source", action="store_true",
                          help="allow a development snapshot from local changes or an unverified source archive")
+    install.add_argument('--legacy-kip126-only', action='store_true', help='automatic legacy puller guard: refuse repository datasets or collections')
     migrate = sub.add_parser("migrate", help="apply pending database migrations")
     migrate.add_argument("--data-dir", type=Path, default=default_data_dir,
                          help="persistent data directory (or REVIEW_DATA_DIR)")
@@ -90,6 +102,16 @@ def main():
             operation.add_argument('--reviewer', required=True, help='exact existing internal reviewer key')
             operation.add_argument('--admin', action='store_true', help='explicitly grant operator role')
     args = parser.parse_args()
+    if args.command == 'bundle-snapshots':
+        from .repositories import make_collection
+        from .enrichment_v2 import read_document
+        try:
+            result = make_collection([read_document(path) for path in args.snapshot], default=args.default)
+            output = write_candidate_artifact(result, args.output, input_artifacts=tuple(args.snapshot))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            parser.error(str(exc))
+        print(json.dumps({'datasets': len(result['datasets']), 'snapshot_digest': result['digest'], 'output': str(output)}, ensure_ascii=False))
+        return
     if args.command == "verify-backup":
         try:
             directory = args.directory.expanduser().absolute()
@@ -135,17 +157,28 @@ def main():
         return
     if args.command == "build":
         source = args.source.expanduser().resolve()
-        if not (source / "KIP126").is_dir() or (not args.statements and not (source / "blueprint/src/content.tex").is_file()):
+        if not source.is_dir():
+            parser.error(f'--source is not a source directory: {source}')
+        if (not args.repository_config and not (source / "KIP126").is_dir()) or (not args.statements and not (source / "blueprint/src/content.tex").is_file()):
             parser.error(f"--source is not a KIP126 checkout: {source}")
         requested_output = args.output if args.output is not None else args.data_dir / "snapshot.json"
         try:
             output = candidate_output_path(requested_output, source_tree=source)
+            if args.repository_config and not args.statements:
+                parser.error('--repository-config requires --statements')
+            if args.expect_commit:
+                from .build import _git_head
+                import re
+                if not re.fullmatch('[0-9a-f]{40}', args.expect_commit) or _git_head(source) != args.expect_commit:
+                    parser.error('--expect-commit does not match the reviewed checkout HEAD')
             if args.statements:
                 import re
                 from .statements import compile_statements
                 if args.source_commit and (not re.fullmatch('[0-9a-f]{40}', args.source_commit) or args.require_clean):
                     parser.error('--source-commit requires an exact archive commit and cannot be combined with --require-clean')
-                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations)
+                from .enrichment_v2 import read_document
+                repository = read_document(args.repository_config) if args.repository_config else None
+                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations, repository=repository)
                 if args.require_clean and result['source_dirty']:
                     parser.error('reviewed source has uncommitted changes')
                 result['comparison'] = compare_snapshots(None, result)
@@ -164,6 +197,28 @@ def main():
                                      '--file', str(output), '--data-dir', '/path/to/review-data']))
         return
     data_dir = args.data_dir.expanduser().resolve()
+    if args.command == 'dataset-admin':
+        from .data_lock import data_lock
+        from .repositories import select_dataset, dataset_id
+        from .database import connect
+        from contextlib import closing
+        try:
+            with data_lock(data_dir):
+                installed = normalize_snapshot(json.loads((data_dir / 'snapshot.json').read_text()))
+                selected = select_dataset(installed, args.dataset)
+                initialize(data_dir / 'judgments.sqlite3')
+                with closing(connect(data_dir / 'judgments.sqlite3')) as db:
+                    known = db.execute('SELECT 1 FROM reviewer_profiles WHERE reviewer=?', (args.reviewer,)).fetchone()
+                    if not known:
+                        raise ValueError('reviewer must be an existing registered identity')
+                    if args.revoke:
+                        db.execute('DELETE FROM dataset_admins WHERE dataset_id=? AND reviewer=?', (dataset_id(selected), args.reviewer))
+                    else:
+                        db.execute('INSERT OR IGNORE INTO dataset_admins VALUES (?, ?)', (dataset_id(selected), args.reviewer))
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            parser.error(str(exc))
+        print(json.dumps({'dataset_id': dataset_id(selected), 'reviewer': args.reviewer, 'granted': not args.revoke}))
+        return
     if args.command in {'create-admin', 'bind-recovery'}:
         from .name_auth import NameAuthStore, valid_name
         if not valid_name(args.name):
@@ -212,7 +267,7 @@ def main():
         try:
             installed, comparison = install_snapshot(
                 args.file.expanduser().resolve(), data_dir,
-                allow_dirty_source=args.allow_dirty_source)
+                allow_dirty_source=args.allow_dirty_source, legacy_kip126_only=args.legacy_kip126_only)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         print("source update: " + ", ".join(f"{name}={count}" for name, count in comparison.items()))

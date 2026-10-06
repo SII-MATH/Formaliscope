@@ -210,13 +210,18 @@ class SymbolIndex:
                                'column': target_column, 'scope': 'module'}, 'candidates': []}
         namespaces, opened = _scope(module, line) if module else (active.get('declaration', '').split('.')[:-1], [])
         def scoped_choices(value: str) -> list[dict]:
+            def visible(targets):
+                local = [target for target in targets if self.cards[target['card_id']].get('private') and target['file'] == file]
+                return local or [target for target in targets if not self.cards[target['card_id']].get('private')]
             explicit = value.removeprefix('_root_.')
             search = [explicit] if value.startswith('_root_.') else [
                 '.'.join([*namespaces[:count], value]) for count in range(len(namespaces), -1, -1)]
             for candidate in search:
                 if candidate in self.names:
-                    return self.names[candidate]
-            return [target for ns in opened for target in self.names.get(ns + '.' + value, [])]
+                    choices = visible(self.names[candidate])
+                    if choices:
+                        return choices
+            return visible([target for ns in opened for target in self.names.get(ns + '.' + value, [])])
         choices = scoped_choices(name)
         if choices:
             return self._result(name, choices)
@@ -233,7 +238,8 @@ class SymbolIndex:
         # Unknown elaborator context: never silently jump to a globally unique
         # short name. Suggest source-index candidates for deliberate selection.
         choices = [target for key, targets in self.names.items()
-                   if key.endswith('.' + name) for target in targets]
+                   if key.endswith('.' + name) for target in targets
+                   if not self.cards[target['card_id']].get('private') or target['file'] == file]
         if choices:
             result = self._result(name, choices, certain=False)
             result['message'] = '源码索引中找到以下候选；无法确认 Lean 的名称解析，请选择要查看的定义。'

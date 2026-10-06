@@ -10,7 +10,7 @@ const vm=require("node:vm");
 const clone=value=>JSON.parse(JSON.stringify(value));
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
 function fixture({configure=()=>{},topics=[],initialURL='https://review.example/#A',initialEvidence=true,readHook=()=>{},evidenceHook=()=>{}}={}) {
-  const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[];
+  const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[],assignments=[];
   let apiOptions;
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
@@ -33,22 +33,25 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   const currentReview=id=>(records.get(id)||[]).find(row=>row.fingerprint===cards.find(card=>card.id===id)?.fingerprint)||null;
   const stack=[{url:initialURL,state:null}];let cursor=0,nextToken=0;
   const browserHistory={
+    get state(){return stack[cursor].state;},
     replaceState(state,_,url){stack[cursor]={state:clone(state),url:String(url)};},
     pushState(state,_,url){stack.splice(cursor+1);stack.push({state:clone(state),url:String(url)});++cursor;},
     go(delta){const next=cursor+delta;if(next<0||next>=stack.length||next===cursor)return;
       cursor=next;const state=clone(stack[cursor].state);queueMicrotask(()=>listeners.get("popstate")?.({state}));},
     back(){this.go(-1);},forward(){this.go(1);},
   };
-  const location={get href(){return stack[cursor].url;},get hash(){return new URL(this.href).hash;}};
+  const location={get href(){return stack[cursor].url;},get hash(){return new URL(this.href).hash;},assign:url=>assignments.push(String(url))};
+  const dataset={id:'',repository_id:'kip126',repository_name:'KIP126',source_commit:'source',card_count:3};
   const api={
     async request(url){
       reads.push(url);
       const pending=readHook(url);if(pending)return pending;
       if(url==="./api/config")return {preview:false};
+      if(url==='./api/datasets')return {selected:'',datasets:[dataset,{...dataset,id:'beta@version',repository_id:'beta',repository_name:'Beta'}]};
       if(url==="./api/auth/me")return clone(identity.current);
       if(url.startsWith("./api/catalog"))return {cards:clone(cards.map(card=>({...card,
         verdict:currentReview(card.id)?.verdict||null,stale:!!records.get(card.id)?.length&&!currentReview(card.id)}))),
-        source_commit:"source",snapshot_digest:"snapshot",enrichment_topics:clone(topics),
+        source_commit:"source",snapshot_digest:"snapshot",enrichment_topics:clone(topics),dataset,
         initial_evidence:initialEvidence?clone(cards.find(c=>c.id===new URL(url,location.href).searchParams.get('initial'))||cards[0]):null};
       if(url.startsWith("./api/review-state?")){
         const id=new URL(url,location.href).searchParams.get('id'),rows=records.get(id)||[],draft=drafts.get(id);
@@ -66,7 +69,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
       if(evidenceCache.has(id))return clone(evidenceCache.get(id));
       reads.push(`evidence:${id}`);const pending=evidenceHook(id);if(pending)return pending;
       return clone(cards.find(card=>card.id===id));
-    },primeEvidence(card){evidenceCache.set(card.id,card);},clearEvidenceCache(){evidenceCache.clear();},
+    },primeEvidence(card){evidenceCache.set(card.id,card);},clearEvidenceCache(){evidenceCache.clear();},setDataset(){},
     post(url,payload){
       assert.ok(['./api/drafts','./api/judgments'].includes(url));
       return new Promise((resolve,reject)=>requests.push({url,payload:clone(payload),resolve,reject}));
@@ -89,7 +92,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   for(const filename of ["directory-tree.js","review-labels.js","statement-save.js","statement-navigation.js","statement.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname,"static",filename),"utf8"),context,{filename});
   return {
-    requests,stack,element,reads,records,drafts,
+    requests,stack,element,reads,records,drafts,assignments,
     logout(){identity.onLogout();},
     expire(){apiOptions.onUnauthorized();},
     async switchReviewer(){records.clear();drafts.clear();identity.onLogout();identity.current={display_name:'Other'};await identity.restart();},
@@ -295,6 +298,20 @@ async function expiryKeepsFailedOpinion(){
   assert.match(f.element('save-message').textContent,/Session expired/,'An unauthorized save retains its error and unsaved input');
 }
 
+async function datasetSwitchPreservesUnsavedInput(){
+  const f=await prepare();f.element('dataset-select').value='beta@version';
+  const switching=f.element('dataset-select').onchange();await settle();
+  assert.deepEqual(f.assignments,[],'Changing repository waits for draft and completed-review acknowledgements');
+  await finishBoundary(f);await switching;
+  assert.equal(new URL(f.assignments[0]).searchParams.get('dataset'),'beta@version');
+  assert.equal(new URL(f.assignments[0]).hash,'','A new dataset starts without another repository’s selected declaration');
+  const failed=await prepare();failed.element('dataset-select').value='beta@version';
+  const blocked=failed.element('dataset-select').onchange();failed.requests[0].reject(new Error('保存失败'));
+  await blocked;await settle();
+  assert.deepEqual(failed.assignments,[]);assert.equal(failed.element('dataset-select').value,'');
+  assert.equal(failed.title,'B');assert.match(failed.element('rationale').value,/must survive/);
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
@@ -303,5 +320,6 @@ async function expiryKeepsFailedOpinion(){
   await configuredTopicsAndV2Labels();
   await initialEvidenceAndSelection();await lateResponsesAndLogout();await indexedSearchAfterCompletion();
   await expiryKeepsFailedOpinion();
+  await datasetSwitchPreservesUnsavedInput();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

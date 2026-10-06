@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 from .auth import normalize_email
 from .build import LEGACY_SNAPSHOT_SCHEMA, validate_snapshot
+from .repositories import datasets
 
 
 def _loopback(host: str) -> bool:
@@ -111,14 +112,14 @@ def run_preflight(data_dir: Path, *, preview: bool = False, host: str = "127.0.0
     statement = bool(snapshot and snapshot.get("review_mode") == "statement")
     check("review_mode", bool(snapshot) and (statement or not require_statements) and (statement or not preview),
           "Requested review mode is available.", "Build a Statement snapshot with --statements.")
-    check("source_commit", bool(snapshot and re.fullmatch(r"[0-9a-f]{40}", str(snapshot.get("source_commit", "")))),
+    check("source_commit", bool(snapshot and all(re.fullmatch(r"[0-9a-f]{40}", str(item.get("source_commit", ""))) for item in datasets(snapshot))),
           "Source commit recorded.", "Snapshot must record an exact source commit.")
     legacy_unattested = bool(snapshot and not require_statements and not statement
                              and snapshot.get("schema") == LEGACY_SNAPSHOT_SCHEMA
                              and "source_dirty" not in snapshot
                              and snapshot.get("source_origin") != "archive-unverified")
     check("clean_source", bool(snapshot and (preview or legacy_unattested or (
-        snapshot.get("source_dirty") is False and snapshot.get("source_origin") != "archive-unverified"))),
+        all(item.get("source_dirty") is False and item.get("source_origin") != "archive-unverified" for item in datasets(snapshot))))),
           "Existing legacy snapshot retained; clean provenance is unavailable." if legacy_unattested
           else "Source provenance is acceptable for this mode.",
           "Production requires a clean Git source checkout; rebuild with --require-clean.")

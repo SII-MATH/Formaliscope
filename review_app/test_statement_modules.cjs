@@ -44,6 +44,20 @@ async function testAPI(){
   const oldState=switched.request('./api/review-state?id=same');switched.clearEvidenceCache();
   finishOld(response({error:'old session expired'},401));await assert.rejects(oldState,/old session expired/);
   assert.equal(unauthorized,1,'An expired request from the previous identity cannot log out the new identity');
+
+  const scopedCalls=[];
+  const scoped=StatementAPI.create({dataset:'alpha@version1',fetch:async(url,options)=>{
+    scopedCalls.push({url,options});return response({id:'shared',dataset:url});
+  }});
+  const oldCard=await scoped.evidence('shared');
+  await scoped.post('./api/drafts',{card_id:'shared'});
+  assert.ok(scopedCalls.every(call=>call.url.includes('dataset=alpha%40version1')),
+    'Evidence and writes explicitly carry the same repository version');
+  scoped.setDataset('alpha@version2');
+  const newCard=await scoped.evidence('shared');
+  assert.notEqual(oldCard.dataset,newCard.dataset,'Identical declaration IDs cannot reuse another version’s cached evidence');
+  await scoped.request('./api/history?id=shared');
+  assert.ok(scopedCalls.at(-1).url.endsWith('dataset=alpha%40version2'));
 }
 
 function testGraph(){

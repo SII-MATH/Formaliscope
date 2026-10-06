@@ -108,7 +108,7 @@ fi
 candidate="$(mktemp "$DATA_DIR/.incoming-snapshot.XXXXXX")"
 install -o formaliscope-review -g formaliscope-review -m 0600 "$stage/snapshot.json" "$candidate"
 runuser -u formaliscope-review -- env PYTHONPATH="$(readlink -f "$ROOT/current")" REVIEW_DATA_DIR="$DATA_DIR" \
-  python3 -m review_app install-snapshot --file "$candidate" --data-dir "$DATA_DIR"
+  python3 -m review_app install-snapshot --file "$candidate" --data-dir "$DATA_DIR" --legacy-kip126-only
 if systemctl cat formaliscope-review.service >/dev/null 2>&1; then
   systemctl restart formaliscope-review.service
   ready=0

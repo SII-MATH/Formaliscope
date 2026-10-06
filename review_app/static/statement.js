@@ -20,7 +20,8 @@
   const api=window.StatementAPI.create({onUnauthorized:()=>{
     // Expiry invalidates pending reads, but keeps failed-save input available.
     ++sessionSequence;++sequence;api.clearEvidenceCache();identities.unauthorized();
-  }});
+  },dataset:new URL(location.href).searchParams.get('dataset')});
+  let availableDatasets=[];
   const json=api.request,post=api.post,evidence=api.evidence;
   const saves=window.StatementSave.create({post,onState:renderSaveState,onSaved:acceptJudgment});
   const navigation=window.StatementNavigation.create({history,capture:captureReading,restore:restoreReading,
@@ -161,8 +162,9 @@
     row._search=`${row.title} ${row.title_zh||''} ${row.declaration} ${row.module_file} ${row.role} ${row._labels.map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase();
   }
   async function loadCatalog(initialId,sessionTurn){
-    const data=await json(`./api/catalog?initial=${encodeURIComponent(initialId)}`);
+    const [selection,data]=await Promise.all([json('./api/datasets'),json(`./api/catalog?initial=${encodeURIComponent(initialId)}`)]);
     if(sessionTurn!==sessionSequence)return null;
+    availableDatasets=selection.datasets;api.setDataset(selection.selected);
     labels.configureTopics(data.enrichment_topics||[]);
     const normalized=labels.normalizeSelection(selectedLabels);
     selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
@@ -170,9 +172,31 @@
     for(const row of catalog)indexRow(row);
     listCache=null;
     catalogInfo=data;directoryNodes=directories.buildTree(catalog);
+    renderDatasets(data.dataset);
     if(!directoryNodes.has(directory)){directory='';updateLocation();}
     $('directory-tree-version').textContent=data.source_commit;
     renderList();return data;
+  }
+  function renderDatasets(current){
+    const repositories=new Map(availableDatasets.map(item=>[item.repository_id,item.repository_name]));
+    $('repository-select').innerHTML=[...repositories].map(([id,name])=>`<option value="${escape(id)}">${escape(name)}</option>`).join('');
+    $('repository-select').value=current.repository_id;
+    $('dataset-select').innerHTML=availableDatasets.filter(item=>item.repository_id===current.repository_id).map(item=>
+      `<option value="${escape(item.id)}">${escape(item.source_commit.slice(0,12))} · ${item.card_count.toLocaleString()} 条</option>`).join('');
+    $('dataset-select').value=current.id;
+    $('dataset-provenance').textContent=`${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
+    const source=$('repository-source');source.hidden=!current.source_url;source.href=current.source_url||'#';
+    const url=new URL(location.href);if(current.id)url.searchParams.set('dataset',current.id);
+    history.replaceState(history.state,'',url);
+    const scope=current.id?`?dataset=${encodeURIComponent(current.id)}`:'';
+    $('admin-link').href='./admin'+scope;
+    document.querySelectorAll('.review-footer a').forEach(link=>{const target=new URL(link.href);target.searchParams.set('dataset',current.id);link.href=target;});
+  }
+  async function switchDataset(id){
+    if(!availableDatasets.some(item=>item.id===id)||id===catalogInfo?.dataset?.id)return;
+    if(!await mayNavigate()){renderDatasets(catalogInfo.dataset);return;}
+    const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('dataset',id);
+    location.assign(url);
   }
   function matches(c,row){
     const values=c.fingerprints||{[c.fingerprint_scheme]:c.fingerprint};
@@ -398,7 +422,7 @@
   for(const id of ['active-labels','label-groups'])$(id).onclick=event=>{const button=event.target.closest('[data-label]');if(button)changeLabel(button.dataset.label);};
   $('export-scope').onclick=()=>{
     if(!catalogInfo)return;
-    const manifest={schema:'statement-review-scope.v1',source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.snapshot_digest,directory,
+    const manifest={schema:'statement-review-scope.v1',dataset:catalogInfo.dataset,source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.digest,directory,
       selection:directoryNodes.get(directory)?.file?'exact-file':'directory-with-descendants',declarations:directoryRows().map(c=>({id:c.id,declaration:c.declaration,file:c.module_file}))};
     const url=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download='formaliscope-review-scope.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -411,6 +435,8 @@
   $("locate-list").onclick=()=>locateList(true);
   $("views").onclick=event=>{const button=event.target.closest('[data-view]');if(button)setView(button.dataset.view);};
   $('back-card').onclick=()=>navigation.back();
+  $('repository-select').onchange=()=>switchDataset(availableDatasets.find(item=>item.repository_id===$('repository-select').value)?.id);
+  $('dataset-select').onchange=()=>switchDataset($('dataset-select').value);
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});
   $("save").onclick=save;$("next").onclick=()=>next();
   $('review-history').ontoggle=()=>{if($('review-history').open)loadHistory();};
