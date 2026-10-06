@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .build import (SNAPSHOT_SCHEMA, CURRENT_FINGERPRINT_SCHEME, _digest,
                     _content_fingerprint, _dependency_lock_digest, _clean_statement,
-                    INPUT_RE, NODE_RE, LABEL_RE, LEAN_RE, CHAPTER_RE,
+                    INPUT_RE, NODE_RE, LABEL_RE, lean_references, CHAPTER_RE,
                     calculate_snapshot_digest, _git_head, _git_dirty)
 
 DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|protected|noncomputable|partial|unsafe)\s+)*"
@@ -193,7 +193,7 @@ def blueprint_prose(repo: Path) -> dict[str, dict]:
         for match in NODE_RE.finditer(text):
             kind, title, body = match.groups()
             label = LABEL_RE.search(body)
-            for name in LEAN_RE.findall(body):
+            for name in lean_references(body):
                 result.setdefault(name.strip(), {
                     'statement': _clean_statement(body), 'title': title or name,
                     'label': label[1] if label else name,

@@ -41,6 +41,12 @@ CURRENT_FINGERPRINT_SCHEME = "kip126-review-content.v1"
 LEGACY_FINGERPRINT_SCHEME = "kip126-review-legacy.v1"
 
 
+def lean_references(body: str) -> list[str]:
+    """Expand each Blueprint Lean tag's comma-separated declaration names."""
+    return [name.strip() for group in LEAN_RE.findall(body)
+            for name in group.split(",") if name.strip()]
+
+
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -304,7 +310,7 @@ def compile_snapshot(repo: Path) -> dict:
             if label in seen_labels:
                 raise ValueError(f"duplicate Blueprint label: {label}")
             seen_labels.add(label)
-            names = LEAN_RE.findall(body)
+            names = lean_references(body)
             uses = [item.strip() for group in USES_RE.findall(body) for item in group.split(",") if item.strip()]
             statement = _clean_statement(body)
             for name in names:

@@ -18,6 +18,38 @@ from .preview import PreviewAuthStore
 
 
 class StatementBuildTests(unittest.TestCase):
+    def test_blueprint_binds_every_name_in_grouped_lean_tags(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'KIP126').mkdir()
+            (root / 'KIP126/Sample.lean').write_text(
+                'namespace KIP126.Sample\n'
+                'def first : Nat := 1\n'
+                'def second : Nat := 2\n'
+                'theorem third : True := by trivial\n'
+                'def helper : Nat := 3\n'
+                'end KIP126.Sample\n')
+            (root / 'blueprint/src').mkdir(parents=True)
+            (root / 'blueprint/src/content.tex').write_text('\\input{chapter}\n')
+            (root / 'blueprint/src/chapter.tex').write_text(
+                '\\begin{definition}[Shared mathematical object]'
+                '\\label{def:shared}Shared prose.'
+                '\\lean{ KIP126.Sample.first,\n KIP126.Sample.second, }'
+                '\\lean{KIP126.Sample.third}\\end{definition}\n')
+            snapshot = compile_statements(root, source_commit='a' * 40)
+            validate_snapshot(snapshot)
+            cards = {card['declaration']: card for card in snapshot['cards']}
+            self.assertEqual(len(cards), 4)
+            for name in ('first', 'second', 'third'):
+                card = cards['KIP126.Sample.' + name]
+                self.assertEqual(card['statement_origin'], 'blueprint')
+                self.assertEqual(card['statement'], 'Shared prose.')
+                self.assertEqual(card['label'], 'def:shared')
+                self.assertEqual(card['blueprint_file'], 'blueprint/src/chapter.tex')
+                self.assertEqual(card['blueprint_line'], 1)
+                self.assertEqual(card['id'], 'statement::KIP126.Sample.' + name)
+            self.assertEqual(cards['KIP126.Sample.helper']['statement_origin'], 'reading-summary')
+
     def test_full_source_base_and_candidate_dependencies(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder)

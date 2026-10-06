@@ -44,6 +44,28 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("theorem foo", card["lean"]["source"])
         self.assertEqual(snapshot["schema"], SNAPSHOT_SCHEMA)
 
+    def test_grouped_blueprint_links_resolve_local_and_external_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / 'blueprint/src').mkdir(parents=True)
+            (source / 'KIP126').mkdir()
+            (source / 'blueprint/src/content.tex').write_text('\\input{chapter}\n')
+            (source / 'blueprint/src/chapter.tex').write_text(
+                '\\begin{definition}[A sample]\\label{def:sample}'
+                'Shared prose.\\lean{ KIP126.Sample.foo,\n Nat.succ, }'
+                '\\end{definition}\n')
+            (source / 'KIP126/Sample.lean').write_text(
+                'namespace KIP126.Sample\n'
+                'theorem foo : True := by trivial\nend KIP126.Sample\n')
+            with patch('review_app.build._git_head', return_value='0' * 40), \
+                    patch('review_app.build._git_dirty', return_value=False):
+                snapshot = compile_snapshot(source)
+        cards = {card['declaration']: card for card in snapshot['cards']}
+        self.assertEqual(set(cards), {'KIP126.Sample.foo', 'Nat.succ'})
+        self.assertEqual(cards['KIP126.Sample.foo']['source_status'], 'local')
+        self.assertEqual(cards['Nat.succ']['source_status'], 'external')
+        self.assertEqual(cards['KIP126.Sample.foo']['id'], 'def:sample::KIP126.Sample.foo')
+
     def test_review_basis_survives_unrelated_version_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
