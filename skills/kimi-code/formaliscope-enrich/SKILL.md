@@ -29,6 +29,8 @@ python3 skills/scripts/prepare.py \
 
 可重复使用 `--directory`、`--file`、`--declaration-id`（精确 ID 或完整 Lean 名称）。有预期材料时加 `--expectation-context /absolute/path/project-expectation.txt`。默认阈值为 0.8，只在用户指定时用 `--threshold` 修改。
 
+准备脚本默认从冻结快照提取所选声明绑定的 Blueprint 文案，并按精确声明 ID 保存到 `expectation-context.txt`，记录材料摘要；一个声明的多个节点及节点共同关联的声明全部保留。`--expectation-context` 是补充材料，不会取消 Blueprint 参考。没有任何绑定文案或补充材料时不创建预期文件；混合批次中未绑定的声明仍须判断为不知道。预期文件只能在第一阶段落盘后提供。
+
 脚本冻结 `snapshot.json`、`agent-config.json`、`manifest.json`，可选的预期材料另存 `expectation-context.txt` 并记录 SHA-256。运行 ID、时间、源码提交、快照摘要、配置模型、推理等级、主题集合、规则版本与阈值由脚本记录，Agent 不填写这些字段。批次目录为 0700，文件为 0600；任务和 Agent 结果也采用此权限，因为包含内部判断。
 
 续做只使用本批冻结文件。配置中的模型路由 ID 是本批执行要求；调度层必须根据 harness 执行状态确认实际使用了该路由，不能仅凭配置值或 Worker 自报身份冒充执行事实。运行中的 model 字段记录此路由 ID，不推断其底层供应商型号。改模型或推理等级时开新批次。

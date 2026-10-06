@@ -179,7 +179,7 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
     return records
 
 
-def blueprint_prose(repo: Path) -> dict[str, dict]:
+def blueprint_references(repo: Path) -> dict[str, list[dict]]:
     result = {}
     content = repo / 'blueprint/src/content.tex'
     if not content.is_file():
@@ -193,15 +193,24 @@ def blueprint_prose(repo: Path) -> dict[str, dict]:
         for match in NODE_RE.finditer(text):
             kind, title, body = match.groups()
             label = LABEL_RE.search(body)
-            for name in lean_references(body):
-                result.setdefault(name.strip(), {
-                    'statement': _clean_statement(body), 'title': title or name,
+            names = list(dict.fromkeys(lean_references(body)))
+            statement = _clean_statement(body)
+            if not statement:
+                continue
+            for name in names:
+                result.setdefault(name, []).append({
+                    'statement': statement, 'title': title or name,
                     'label': label[1] if label else name,
                     'chapter': chapter[1] if chapter else path.stem,
                     'blueprint_file': str(path.relative_to(repo)),
                     'blueprint_line': text.count('\n', 0, match.start())+1,
+                    'declarations': names,
                 })
     return result
+
+
+def blueprint_prose(repo: Path) -> dict[str, dict]:
+    return {name: references[0] for name, references in blueprint_references(repo).items()}
 
 
 def compile_statements(repo: Path, *, source_commit: str | None = None, annotations: Path | None = None,
@@ -222,7 +231,7 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
     for name in index:
         full_names[index[name]['name']].append(name)
         short[index[name]['name'].rsplit('.', 1)[-1]].append(name)
-    prose = blueprint_prose(repo)
+    references = blueprint_references(repo)
     translated = json.loads(annotations.read_text(encoding='utf-8')) if annotations else {}
     if not isinstance(translated, dict):
         raise ValueError('annotations must map declaration names to source-bound reading drafts')
@@ -266,7 +275,8 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
     cards = []
     for name, row in index.items():
         declaration = row['name']
-        bp = prose.get(declaration)
+        blueprint = references.get(declaration, [])
+        bp = blueprint[0] if blueprint else None
         annotation = translated.get(name)
         title = annotation.get('title', declaration) if annotation else bp['title'] if bp else declaration.rsplit('.', 1)[-1]
         role = ('主定理' if name in roots else '直接依赖' if name in direct else
@@ -304,6 +314,8 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             'module_file': row['file'],
             'annotation_source_sha256': annotation['source_sha256'] if annotation else None,
         }
+        if blueprint:
+            card['blueprint_references'] = blueprint
         if repository and row['private']:
             card['private'] = True
         nl, lean, fingerprint = _content_fingerprint(card, None)

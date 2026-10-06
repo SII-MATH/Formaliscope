@@ -6,6 +6,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import importlib.util
+import json
 from pathlib import Path, PurePosixPath
 import sys
 import uuid
@@ -70,6 +71,11 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
         raw_context = Path(expectation_context).read_bytes()
         if not raw_context.decode('utf-8').strip():
             raise ValueError('expectation context must be non-empty UTF-8 text')
+    from review_app.blueprint import expectation_context as blueprint_context
+    context = blueprint_context(snapshot, selected,
+                                raw_context.decode('utf-8') if raw_context is not None else None)
+    if any(context['references'].values()):
+        raw_context = (json.dumps(context, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     now = datetime.now(timezone.utc)
     run = {'run_id': now.strftime('%Y%m%dT%H%M%SZ-') + str(uuid.uuid4()),
            'model': worker['model'], 'reasoning_effort': worker['reasoning_effort'],

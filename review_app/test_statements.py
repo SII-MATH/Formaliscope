@@ -7,11 +7,12 @@ import tempfile
 import threading
 import unittest
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .build import validate_snapshot
+from .build import validate_snapshot, _content_fingerprint
 from .statements import compile_statements, source_declarations
 from .server import ReviewHTTPServer, initialize, make_handler, accepts_gzip
 from .preview import PreviewAuthStore
@@ -35,7 +36,10 @@ class StatementBuildTests(unittest.TestCase):
                 '\\begin{definition}[Shared mathematical object]'
                 '\\label{def:shared}Shared prose.'
                 '\\lean{ KIP126.Sample.first,\n KIP126.Sample.second, }'
-                '\\lean{KIP126.Sample.third}\\end{definition}\n')
+                '\\lean{KIP126.Sample.third}\\end{definition}\n'
+                '\\begin{remark}[Additional expectation]\\label{rem:first}'
+                'Another mathematical condition.\\lean{KIP126.Sample.first}'
+                '\\end{remark}\n')
             snapshot = compile_statements(root, source_commit='a' * 40)
             validate_snapshot(snapshot)
             cards = {card['declaration']: card for card in snapshot['cards']}
@@ -48,7 +52,19 @@ class StatementBuildTests(unittest.TestCase):
                 self.assertEqual(card['blueprint_file'], 'blueprint/src/chapter.tex')
                 self.assertEqual(card['blueprint_line'], 1)
                 self.assertEqual(card['id'], 'statement::KIP126.Sample.' + name)
+                self.assertEqual(card['blueprint_references'][0]['declarations'],
+                                 ['KIP126.Sample.first', 'KIP126.Sample.second', 'KIP126.Sample.third'])
+            original = cards['KIP126.Sample.first']
+            self.assertEqual(len(original['blueprint_references']), 2)
+            moved = deepcopy(original)
+            moved['blueprint_references'][0]['blueprint_line'] += 20
+            self.assertEqual(_content_fingerprint(original, None), _content_fingerprint(moved, None))
+            changed = deepcopy(original)
+            changed['blueprint_references'][1]['statement'] = 'A stronger expected conclusion.'
+            self.assertNotEqual(_content_fingerprint(original, None)[0], _content_fingerprint(changed, None)[0])
+            self.assertEqual(_content_fingerprint(original, None)[1], _content_fingerprint(changed, None)[1])
             self.assertEqual(cards['KIP126.Sample.helper']['statement_origin'], 'reading-summary')
+            self.assertNotIn('blueprint_references', cards['KIP126.Sample.helper'])
 
     def test_full_source_base_and_candidate_dependencies(self):
         with tempfile.TemporaryDirectory() as folder:

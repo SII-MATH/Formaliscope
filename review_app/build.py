@@ -127,6 +127,21 @@ def validate_snapshot(snapshot: dict) -> None:
     from .enrichment_v2 import DEFAULT_TOPICS, validate_public_annotation, validate_topics
     topics = validate_topics(snapshot.get('enrichment_topics', DEFAULT_TOPICS))
     for card in cards:
+        if 'blueprint_references' in card:
+            references = card['blueprint_references']
+            keys = {'title', 'statement', 'label', 'chapter', 'blueprint_file',
+                    'blueprint_line', 'declarations'}
+            if not isinstance(references, list) or any(
+                    not isinstance(reference, dict) or set(reference) != keys or
+                    any(not isinstance(reference[key], str) for key in
+                        ('title', 'statement', 'label', 'chapter', 'blueprint_file')) or
+                    not reference['statement'].strip() or
+                    type(reference['blueprint_line']) is not int or reference['blueprint_line'] < 1 or
+                    not isinstance(reference['declarations'], list) or
+                    any(not isinstance(name, str) or not name for name in reference['declarations']) or
+                    card.get('declaration') not in reference['declarations']
+                    for reference in references):
+                raise ValueError('invalid attributed Blueprint references')
         enrichment = card.get('enrichment')
         if isinstance(enrichment, dict) and enrichment.get('schema') == 'statement-enrichment.v2':
             validate_public_annotation(enrichment, topics)
@@ -151,11 +166,17 @@ def validate_snapshot(snapshot: dict) -> None:
 
 
 def _content_fingerprint(card: dict, dependency_lock_digest: str | None) -> tuple[str, str, str]:
-    nl_digest = _digest({
+    natural_language = {
         "kind": card.get("kind"),
         "title": card.get("title"),
         "statement": card.get("statement"),
-    })
+    }
+    if card.get('blueprint_references'):
+        # Relocating a node does not change its mathematical review basis.
+        natural_language['blueprint_references'] = [
+            {key: reference[key] for key in ('title', 'statement', 'declarations')}
+            for reference in card['blueprint_references']]
+    nl_digest = _digest(natural_language)
     lean = card.get("lean")
     lean_digest = _digest({
         "declaration": card.get("declaration"),

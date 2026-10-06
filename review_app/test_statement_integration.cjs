@@ -112,6 +112,24 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   };
 }
 
+async function blueprintReferenceDisplay(){
+  const f=fixture({configure(cards){
+    cards[0].statement_origin='backtranslation';cards[0].statement='独立的 Lean 回译';
+    cards[0].blueprint_references=[{title:'Expected tower',statement:'An isomorphism compatible with transitions.',label:'prop:tower',blueprint_file:'blueprint/src/chapter.tex',blueprint_line:12,declarations:['Test.A','Test.B']},{title:'Further condition',statement:'A second expected property.',label:'prop:second',blueprint_file:'blueprint/src/chapter.tex',blueprint_line:24,declarations:['Test.A']}];
+    cards[1].statement_origin='reading-summary';cards[1].statement='阅读摘要';
+    cards[2].statement_origin='blueprint';cards[2].statement='Legacy Blueprint text';cards[2].label='def:legacy';cards[2].blueprint_file='blueprint/src/legacy.tex';cards[2].blueprint_line=4;
+  }});
+  await settle();assert.equal(f.element('blueprint-panel').hidden,false);
+  assert.match(f.element('blueprint-references').innerHTML,/compatible with transitions/);
+  assert.match(f.element('blueprint-references').innerHTML,/second expected property/);
+  assert.match(f.element('blueprint-references').innerHTML,/关联 2 条声明/);
+  assert.equal(f.element('statement').innerHTML,'独立的 Lean 回译');
+  f.click('B');await settle();assert.equal(f.element('blueprint-panel').hidden,true);
+  assert.equal(f.element('blueprint-references').innerHTML,'','Unbound cards clear the previous reference');
+  f.click('C');await settle();assert.equal(f.element('blueprint-panel').hidden,false);
+  assert.match(f.element('blueprint-references').innerHTML,/Legacy Blueprint text/);
+}
+
 async function prepare() {
   const f=fixture();await settle();assert.equal(f.title,"A");
   f.click("B");await settle();assert.equal(f.title,"B");
@@ -321,5 +339,6 @@ async function datasetSwitchPreservesUnsavedInput(){
   await initialEvidenceAndSelection();await lateResponsesAndLogout();await indexedSearchAfterCompletion();
   await expiryKeepsFailedOpinion();
   await datasetSwitchPreservesUnsavedInput();
+  await blueprintReferenceDisplay();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

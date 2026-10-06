@@ -164,6 +164,10 @@ def enrich_snapshot(snapshot: dict, document: dict) -> dict:
     cards = {card['id']: card for card in result['cards']}
     for annotation in annotations:
         card = cards[annotation['declaration_id']]
+        from .blueprint import card_references
+        references = card_references(card)
+        if references:
+            card['blueprint_references'] = references
         if document['schema'] == 'statement-enrichment.v2':
             from .enrichment_v2 import public_annotation
             card['enrichment'] = public_annotation(annotation)

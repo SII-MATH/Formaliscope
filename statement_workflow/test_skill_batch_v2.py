@@ -115,6 +115,53 @@ class SkillBatchV2Tests(unittest.TestCase):
         self.snapshot_path.write_text('{}')
         self.assertEqual(collector._read(self.batch / 'snapshot.json'), self.snapshot)
 
+    def blueprint_batch(self, *, additional=None):
+        source = self.root / 'source'
+        (source / 'blueprint/src').mkdir(parents=True)
+        (source / 'blueprint/src/content.tex').write_text('\\input{chapter}\n')
+        (source / 'blueprint/src/chapter.tex').write_text(
+            '\\begin{definition}[Two values]\\label{def:values}'
+            'The first two values are one and two.'
+            '\\lean{Example.a, Example.b}\\end{definition}\n')
+        self.snapshot = compile_statements(source, source_commit='a' * 40)
+        self.snapshot_path = self.write('blueprint-snapshot.json', self.snapshot)
+        self.batch = self.root / 'blueprint-batch'
+        self.prepare(expectation_context=additional)
+        self.first_path = self.write('first-stage.json', deepcopy(self.result))
+
+    def test_blueprint_expectations_are_automatically_frozen_per_declaration(self):
+        self.blueprint_batch()
+        context = collector._read(self.batch / 'expectation-context.txt')
+        self.assertEqual(context['source_commit'], self.snapshot['source_commit'])
+        self.assertEqual(context['snapshot_digest'], self.snapshot['digest'])
+        self.assertEqual(context['references'][self.ids[0]][0]['declarations'], ['Example.a', 'Example.b'])
+        self.assertEqual(context['references'][self.ids[2]], [])
+        self.assertEqual(self.manifest['run']['expectation_context_digest'],
+                         hashlib.sha256((self.batch / 'expectation-context.txt').read_bytes()).hexdigest())
+        self.annotations[0]['expectation_assessment'].update(verdict='aligned', reason_zh=None)
+        self.annotations[1]['expectation_assessment'].update(verdict='misaligned', reason_zh='测试夹具的第二个值不同。')
+        self.collect(first=[self.first_path])
+
+    def test_blueprint_context_does_not_authorize_alignment_for_an_unbound_declaration(self):
+        self.blueprint_batch()
+        self.annotations[2]['expectation_assessment'].update(verdict='aligned', reason_zh=None)
+        self.rejected(first=[self.first_path])
+
+    def test_blueprint_assessment_requires_unchanged_saved_readback(self):
+        self.blueprint_batch()
+        self.annotations[1]['readback']['text_zh'] = '从预期反写的文字，不应接受。'
+        self.rejected(first=[self.first_path])
+
+    def test_explicit_expectation_context_supplements_blueprint_references(self):
+        additional = self.root / 'additional.txt'
+        additional.write_text('用户对第三条声明的明确预期。', encoding='utf-8')
+        self.blueprint_batch(additional=additional)
+        context = collector._read(self.batch / 'expectation-context.txt')
+        self.assertEqual(context['additional_context'], additional.read_text())
+        self.assertTrue(context['references'][self.ids[0]])
+        self.annotations[2]['expectation_assessment'].update(verdict='aligned', reason_zh=None)
+        self.collect(first=[self.first_path])
+
     def test_prepare_requires_explicit_valid_selection_and_unique_run_ids(self):
         for selectors in ({}, {'directories': ['missing']}, {'directories': ['../KIP126']},
                           {'files': ['/KIP126/Sub/Example.lean']},

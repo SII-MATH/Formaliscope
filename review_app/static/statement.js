@@ -204,9 +204,9 @@
   }
   function math(){
     clearTimeout(mathTimer);
-    if(window.MathJax?.typesetPromise){window.Stage3Latex?.typeset([$("statement")]);return;}
+    if(window.MathJax?.typesetPromise){window.Stage3Latex?.typeset([$("statement"),$("blueprint-references")]);return;}
     if(mathLoading)return;
-    mathTimer=setTimeout(()=>{mathLoading=true;const script=document.createElement("script");script.src=new URL("./mathjax-tex-svg.js",document.baseURI);script.onload=()=>Promise.resolve(window.MathJax?.startup?.promise).then(()=>window.Stage3Latex?.typeset([$("statement")]));script.onerror=()=>{mathLoading=false;};document.head.appendChild(script);},350);
+    mathTimer=setTimeout(()=>{mathLoading=true;const script=document.createElement("script");script.src=new URL("./mathjax-tex-svg.js",document.baseURI);script.onload=()=>Promise.resolve(window.MathJax?.startup?.promise).then(()=>window.Stage3Latex?.typeset([$("statement"),$("blueprint-references")]));script.onerror=()=>{mathLoading=false;};document.head.appendChild(script);},350);
   }
   function codeHtml(text,options){return window.Stage3Lean?.toHtml(text,options)||escape(text);}
   function renderEvidence(c){
@@ -218,9 +218,15 @@
     renderProvenance(c);
     $("meta").innerHTML=`<span>${escape(c.declaration)}</span>`;
     renderCardLabels();
-    $("statement-origin").textContent=c.statement_origin==="blueprint"?"Blueprint 原文":c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
-    $("statement").innerHTML=window.Stage3Latex?.toHtml(c.statement)||escape(c.statement);math();
-    $("nl-location").textContent=c.statement_origin==="reading-summary"?"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。":c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":`${c.blueprint_file}:${c.blueprint_line}`;
+    const reading=c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
+    $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
+    $("statement").innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
+    $("nl-location").textContent=c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。";
+    const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
+    const present=references.filter(reference=>reference.statement?.trim());
+    $('blueprint-panel').hidden=!present.length;
+    $('blueprint-references').innerHTML=present.map(reference=>`<div class="blueprint-reference"><h4>${escape(reference.title||reference.label)}</h4><div class="statement">${window.Stage3Latex?.toHtml(reference.statement)||escape(reference.statement)}</div>${reference.declarations?.length>1?`<p class="pane-note">这段文案关联 ${reference.declarations.length} 条声明，请核对当前声明对应的部分。</p>`:''}<div class="source-location">${escape(reference.label)} · ${escape(reference.blueprint_file)}:${reference.blueprint_line}</div></div>`).join('');
+    math();
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
     $("lean-location").textContent=c.lean?`${c.lean.file}:${c.lean.line} · 声明完整显示` : "源码尚未定位";
     $("module-panel").hidden=true;$("module-panel").open=false;$("toggle-module").textContent="查看完整文件";

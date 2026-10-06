@@ -266,6 +266,18 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
         if (not context.is_file() or
                 hashlib.sha256(context.read_bytes()).hexdigest() != run['expectation_context_digest']):
             raise ValueError('frozen expectation context is missing or its digest changed')
+        from review_app.blueprint import CONTEXT_SCHEMA, expectation_context
+        try:
+            material = _read(context)
+        except (ValueError, UnicodeError):
+            material = None  # Existing caller-provided plain text remains supported.
+        if isinstance(material, dict) and material.get('schema') == CONTEXT_SCHEMA:
+            if material != expectation_context(snapshot, selected, material.get('additional_context')):
+                raise ValueError('Blueprint expectations do not match the selected frozen declarations')
+            if material['additional_context'] is None:
+                for identity in selected:
+                    if not material['references'][identity] and originals[identity]['expectation_assessment']['verdict'] != 'undetermined':
+                        raise ValueError('a declaration without Blueprint reference must be undetermined')
     if readback_paths:
         first_stage, _ = batches(readback_paths, 'readback')
         for identity in selected:
