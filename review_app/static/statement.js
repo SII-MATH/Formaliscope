@@ -225,6 +225,7 @@
     const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
     const present=references.filter(reference=>reference.statement?.trim());
     $('blueprint-panel').hidden=!present.length;
+    $('blueprint-panel').open=false;
     $('blueprint-references').innerHTML=present.map(reference=>`<div class="blueprint-reference"><h4>${escape(reference.title||reference.label)}</h4><div class="statement">${window.Stage3Latex?.toHtml(reference.statement)||escape(reference.statement)}</div>${reference.declarations?.length>1?`<p class="pane-note">这段文案关联 ${reference.declarations.length} 条声明，请核对当前声明对应的部分。</p>`:''}<div class="source-location">${escape(reference.label)} · ${escape(reference.blueprint_file)}:${reference.blueprint_line}</div></div>`).join('');
     math();
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
