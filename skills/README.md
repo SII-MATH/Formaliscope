@@ -86,7 +86,7 @@ Codex 默认 `worker.reasoning_effort=high`；Claude Code 和 Kimi Code 默认�
 python3 skills/scripts/prepare.py \
   --config skills/codex/formaliscope-enrich/config.json \
   --snapshot /absolute/path/snapshot.json \
-  --directory KIP126/Interface/Axiom \
+  --directory KIP126/Def/ClassicalAdams/Tower \
   --output .statement-enrichment/new-batch
 ```
 

@@ -31,11 +31,13 @@ disable-model-invocation: true
 python3 skills/scripts/prepare.py \
   --config "${CLAUDE_SKILL_DIR}/config.json" \
   --snapshot /absolute/path/snapshot.json \
-  --directory KIP126/Interface/Axiom \
+  --directory KIP126/Def/ClassicalAdams/Tower \
   --output .statement-enrichment/new-batch
 ```
 
 可重复 `--directory`、`--file`、`--declaration-id`（精确 ID 或完整 Lean 名称）；有独立预期材料时加 `--expectation-context /absolute/path/project-expectation.txt`。默认阈值 0.8，只在用户要求时用 `--threshold` 修改。
+
+目录参数指定本批要补全的范围，按冻结快照中的 Lean 文件路径选择，并包含子目录。上例使用当前 KIP126 存在的 `KIP126/Def/ClassicalAdams/Tower`，只是示例；实际执行应替换为用户指定的目录、文件或声明。源码版本已经固定后，批次冻结进一步固定本次的条目清单、输入快照、Blueprint 参考和模型配置，保证两阶段及中断续做使用同一组材料。批次还保存机器内部判断、置信度和原始输出，因此放在本地被 Git 忽略的目录；只有公开回译和标签进入审阅页面。
 
 准备脚本默认从冻结快照提取所选声明绑定的 Blueprint 文案，并按精确声明 ID 保存到 `expectation-context.txt`，记录材料摘要；一个声明的多个节点及节点共同关联的声明全部保留。`--expectation-context` 是补充材料，不会取消 Blueprint 参考。没有任何绑定文案或补充材料时不创建预期文件；混合批次中未绑定的声明仍须判断为不知道。预期文件只能在第一阶段落盘后提供。
 

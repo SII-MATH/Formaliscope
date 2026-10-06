@@ -45,7 +45,7 @@ Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、ba
 ```sh
 python3 skills/scripts/prepare.py \
   --config /path/to/selected-agent-config.json \
-  --snapshot /path/to/snapshot.json --directory KIP126/Interface/Axiom \
+  --snapshot /path/to/snapshot.json --directory KIP126/Def/ClassicalAdams/Tower \
   --output .statement-enrichment/new-batch
 ```
 
