@@ -14,3 +14,4 @@ __pycache__/
 .claude/agents/formaliscope-expectation.md
 .kimi-code/skills/formaliscope-enrich
 .kimi-code/agents/formaliscope-enrich
+.performance-results/

@@ -64,7 +64,7 @@ hash 指定且命中嵌入证据的启动链从「config → me → me → catal
 
 超大声明的端到端时间基本未变，仍主要受传输与完整源码渲染限制。小样本下的解析、首字节或长任务回退均如实列出；这些指标的几毫秒波动不应解释为确定的提升或退化。清单 gzip 体积只减少约 0.9%，主要收益来自减少串行往返和列表重复计算。
 
-原始结果：[正常网络之前](perf/statement-issue4-before-normal.json)、[正常网络之后](perf/statement-issue4-after-normal.json)、[慢速网络之前](perf/statement-issue4-before-slow.json)、[慢速网络之后](perf/statement-issue4-after-slow.json)。四组测量共 24 轮，计时范围内没有浏览器脚本错误或 API 错误。
+四组测量共 24 轮，计时范围内没有浏览器脚本错误或 API 错误。原始 JSON 日志保存在本地 `.performance-results/statement-issue4/`，不随仓库分发；可按下方复测步骤重新生成。
 
 ## 测量口径与限制
 
