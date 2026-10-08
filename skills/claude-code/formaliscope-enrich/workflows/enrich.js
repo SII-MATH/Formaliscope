@@ -99,7 +99,7 @@ const results = await pipeline(
     const receipt = await agent(
       `执行纯 Lean 回译。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
 以本组 cards 的 ID 与 Lean 字段、必要 modules 定义为回译依据。
-将结果写入指定新路径，权限 0600，保留所有原始输入，返回文件回执。
+将结果写入指定新路径，保留所有原始输入，返回文件回执。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-readback', 'Lean 回译', `${group.key}:readback`),
     )
@@ -124,7 +124,7 @@ const results = await pipeline(
     const receipt = await agent(
       `执行独立预期判断。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
 以第一阶段文件为固定基线，补充 expectation_assessment，原样保留其余字段及分值。
-将结果写入指定新路径，权限 0600，保留基线文件，返回文件回执。
+将结果写入指定新路径，保留基线文件，返回文件回执。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-expectation', '内部预期判断', `${group.key}:expectation`),
     )

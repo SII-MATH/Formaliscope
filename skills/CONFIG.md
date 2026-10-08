@@ -1,6 +1,6 @@
 # 回译任务配置
 
-Agent 开始任务前，起草一份独立 JSON 配置，保存到 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`。时间取本地时间，任务名使用简短英文，例如 `20261008-150000-tower.json`；同名任务加序号。目录权限 0700，文件权限 0600。
+Agent 开始任务前，起草一份独立 JSON 配置，保存到 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`。时间取本地时间，任务名使用简短英文，例如 `20261008-150000-tower.json`；同名任务加序号。
 
 共享默认值在 [default-config.json](default-config.json)。三个工具的 `config.json` 引用共享默认值并提供各自的设置；任务通过 `defaults` 引用当前工具的配置，填写输入及需要覆盖的字段。对象逐项合并，数组整体替换，明确的 null 覆盖默认值；省略字段继承默认配置。
 
