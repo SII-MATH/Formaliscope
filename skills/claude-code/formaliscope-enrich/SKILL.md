@@ -13,7 +13,7 @@ disable-model-invocation: true
 
 先加载 `/workflow-authoring`。两个专用 agent 使用 `omitClaudeMd: true` 及各自的独立上下文；第一阶段的上下文由阶段说明、字段标准、Lean 输入及主题组成。运行前核对自动注入材料，使其符合该阶段的输入范围。
 
-遵守项目 `AGENTS.md`，以用户指定的 Statement 快照及目录、文件或声明为范围。范围待明确时，请用户指定本次目标。
+以用户指定的 Statement 快照及目录、文件或声明为范围。范围待明确时，请用户指定本次目标。
 
 读取本工具对应的 `config.json`，或用户指定的配置。`worker.model` 默认 `luna6`，由用户配置模型路由；`worker.reasoning_effort` 指定推理设置，`topics` 提供主题选项。新任务使用 `formaliscope-enrichment-config.v2`，通过 `--config` 显式传入配置。
 
