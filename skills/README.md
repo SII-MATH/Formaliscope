@@ -14,6 +14,8 @@ skills/
 
 ## 按当前 harness 安装
 
+必须安装在 **Formaliscope 仓库目录内**，使用下表列出的项目级安装目录。下表和安装命令中的路径都相对于 Formaliscope 仓库根目录；从该目录启动执行会话，并运行后续准备、收集命令。不使用用户级或全局安装。
+
 `skills/` 是源目录，不是自动发现目录。需要使用回译 Skill 时，先确认**当前执行会话的 harness**，只安装对应版本到本项目的发现目录。不要依据模型品牌选择版本：Claude Code 使用 Kimi 模型时，仍安装 Claude Code 版。
 
 | 当前 harness | 仓库源目录 | 项目安装目录 | 手动调用 |
@@ -66,7 +68,7 @@ Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独�
 
 安装副本被 Git 忽略，源码修改只写回 `skills/<harness>/formaliscope-enrich/`。更新源码后，先比较安装副本与源码，保存需要保留的本地修改，再移除本 Skill 的旧副本并重新安装。Claude 版还须同时比较、备份并更新本 Skill 的两个 `.claude/agents/formaliscope-*.md` 注册副本；Kimi 版还须比较、备份并更新 `.kimi-code/agents/formaliscope-enrich/` 中的专用 worker 副本。卸载时只移除本 Skill 对应的安装副本；不要清空其他 Skill、agent 或 harness 配置。
 
-同一 checkout 切换 harness 时，先检查并移除上一个 harness 的本 Skill 安装副本，再安装当前版本。Kimi Code 也扫描 `.agents/skills/`，因此同时保留 Codex 和 Kimi 的同名安装可能造成误选。用户级或其他来源若也有同名 Skill，同样需要确认实际加载的路径；不能依赖不同工具的同名优先级。
+同一 checkout 切换 harness 时，先检查并移除上一个 harness 的本 Skill 安装副本，再安装当前版本。Kimi Code 也扫描 `.agents/skills/`，因此同时保留 Codex 和 Kimi 的同名安装可能造成误选。已有用户级或其他来源的同名 Skill 时，先处理冲突，确保会话加载本项目安装的版本。
 
 ## 模型配置
 
@@ -78,7 +80,7 @@ Codex 默认 `worker.reasoning_effort=high`；Claude Code 和 Kimi Code 默认�
 
 ## 执行与维护
 
-安装包含本 harness 的入口、配置与三份阶段提示词；Claude 版另含专用 agents 定义和分组 Workflow 脚本，Kimi 版另含单独注册的 swarm worker 定义。脚本留在仓库 `skills/scripts/`，安装目录不需要复制共享准备/收集脚本。定位包含 `review_app/`、`statement_workflow/` 和 `skills/` 的仓库根目录，在该目录执行命令；不从全局安装路径推算仓库位置。Claude 版通过 `${CLAUDE_SKILL_DIR}` 定位安装资源，不据此推算仓库。Kimi 版通过 `${KIMI_SKILL_DIR}` 定位配置与阶段提示词，同样不据此推算仓库。本流程推荐使用上面的项目级安装。
+安装包含本 harness 的入口、配置与三份阶段提示词；Claude 版另含专用 agents 定义和分组 Workflow 脚本，Kimi 版另含单独注册的 swarm worker 定义。共享准备/收集脚本留在仓库 `skills/scripts/`。Claude 版通过 `${CLAUDE_SKILL_DIR}` 读取安装资源，Kimi 版通过 `${KIMI_SKILL_DIR}` 读取安装资源。安装与路径约定统一由本说明规定，Skill 按项目已正确安装的前提执行。
 
 准备脚本自动记录任务依据，同一内容的完整快照共用在批次父目录的 `.snapshots/`，批次内 `snapshot.json` 为相对链接；无需额外固定操作。移动或备份时同时保留共享目录，旧批次的完整快照继续兼容。
 

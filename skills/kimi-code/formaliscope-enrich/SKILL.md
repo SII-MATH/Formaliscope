@@ -11,9 +11,9 @@ whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文�
 
 ## 准备回译任务
 
-这是 Kimi Code 版本；若当前会话是其他 harness，先按 `skills/README.md` 安装对应版本，不执行本版本的调度说明。定位包含 `review_app/`、`statement_workflow/` 和 `skills/` 的 Formaliscope 仓库根目录并遵守 `AGENTS.md`；所有下述命令在该根目录运行。安装位置只用于发现 Skill，不能根据安装目录推算仓库根目录。以用户指定的 Statement `snapshot.json` 为输入；缺少范围时请用户指定目录、文件或声明，不默认处理全库。
+遵守项目 `AGENTS.md`。以用户指定的 Statement `snapshot.json` 为输入；缺少范围时请用户指定目录、文件或声明，不默认处理全库。
 
-`${KIMI_SKILL_DIR}` 由 Kimi 在加载时展开为本 Skill 的实际目录，用它定位配置、`references/` 和源 `agents/`；不要从工作目录猜测这些路径。模型路由 ID 来自 `${KIMI_SKILL_DIR}/config.json` 的 `worker.model`，默认 `luna6`；用户负责路由，不替换成供应商模型 ID。主题选项来自 `topics`。用户提供其他配置时使用该文件，准备脚本必须显式传入 `--config`。
+模型路由 ID 来自 `${KIMI_SKILL_DIR}/config.json` 的 `worker.model`，默认 `luna6`；用户负责路由，不替换成供应商模型 ID。主题选项来自 `topics`。用户提供其他配置时使用该文件，准备脚本必须显式传入 `--config`。
 
 `worker.reasoning_effort` 默认 null，表示不额外要求等级；Kimi 的 thinking 开关不能被当作 Codex 的 high 等等级。非 null 时必须确认当前 provider、模型和调度机制能应用该确切等级，否则停止并说明限制，不静默忽略。新批次配置必须为 `formaliscope-enrichment-config.v2`；阶段 prompt 不写模型名称。
 
@@ -43,7 +43,7 @@ python3 skills/scripts/prepare.py \
 
 按文件或相关数学对象拆组，分组声明集合互不重叠且恰好覆盖 manifest 的目标。共享定义可跨组读取，不自动成为补全目标。worker 用只读 JSON 查询按本组 ID 和依赖提取固定快照中的 Lean 内容，不通读整份快照；不得将既有中文或评估字段带入第一阶段。每组指定稳定的 `group_id`、精确声明 ID 和唯一 `group-N-readback.json` / `group-N.json` 绝对路径，禁止多 worker 写同一文件。
 
-使用专用 `formaliscope-enrich-worker` 子 Agent；其源定义在 `${KIMI_SKILL_DIR}/agents/formaliscope-enrich-worker.md`。Skill 内的 `agents/` 不会自动注册，须按 `skills/README.md` 单独安装到 `.kimi-code/agents/formaliscope-enrich/`，在新会话的工具可用类型中确认该名称；缺失时先完成安装，不静默退回通用 coder。worker 使用独立上下文，不调用 Skill 或继续委派；检查其实际系统说明和自动注入材料，含预期资料且无法隔离时停止。
+使用专用 `formaliscope-enrich-worker` 子 Agent。worker 使用独立上下文，不调用 Skill 或继续委派；检查其实际系统说明和自动注入材料，含预期资料且无法隔离时停止。
 
 模型路由依当前工具能力：有模型池且提供 `model` 参数时，显式选择对应固定路由的池 alias；只有调用者实际路由已确认为固定要求时才能选 `primary`。池 alias 不必字面等于 `luna6`，但必须有 harness 的路由绑定与执行状态依据，不能凭 Luna 等显示名称推断。无池时继承调用者；若配置强制 secondary model，则使用并核对该强制绑定，不传工具未提供的 `model` 参数。不要把 agent frontmatter 的 `model` 当作生效配置，Kimi 不用它选择模型。
 

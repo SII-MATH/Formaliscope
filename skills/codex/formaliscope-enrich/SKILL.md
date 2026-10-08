@@ -9,7 +9,7 @@ description: "在 Codex 中为 Formaliscope 按配置指定的子 Agent 分组�
 
 ## 准备回译任务
 
-这是 Codex 版本；若当前会话是其他 harness，先按 `skills/README.md` 安装对应版本，不执行本版本的调度说明。定位包含 `review_app/`、`statement_workflow/` 和 `skills/` 的 Formaliscope 仓库根目录并遵守 `AGENTS.md`；所有下述命令在该根目录运行。安装位置只用于发现 Skill，不能根据安装目录推算仓库根目录。以用户指定的 Statement `snapshot.json` 为输入；缺少范围时请用户指定目录、文件或声明，不默认处理全库。
+遵守项目 `AGENTS.md`。以用户指定的 Statement `snapshot.json` 为输入；缺少范围时请用户指定目录、文件或声明，不默认处理全库。
 
 模型路由 ID 唯一来自 [config.json](config.json) 的 `worker.model`，默认 `luna6`；用户负责该 ID 到底层模型的路由。推理等级来自 `worker.reasoning_effort`，主题选项来自 `topics`。用户指定其他配置时使用该文件。准备脚本必须显式传入 `--config`，不推断 harness 或默认模型。新批次配置必须为 `formaliscope-enrichment-config.v2`；prompt 不写模型名称。
 

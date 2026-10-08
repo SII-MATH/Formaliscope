@@ -11,12 +11,11 @@ disable-model-invocation: true
 
 ## 1. 检查能力、范围与输入边界
 
-定位包含 `review_app/`、`statement_workflow/` 和 `skills/` 的 Formaliscope 仓库根目录，遵守 `AGENTS.md`；下述仓库命令均在该根目录运行。安装位置只用于发现资源，不能据此推算仓库位置。只处理用户指定的 Statement 快照及目录、文件或声明；缺少范围时请用户指定，不默认全库。
+遵守项目 `AGENTS.md`。只处理用户指定的 Statement 快照及目录、文件或声明；缺少范围时请用户指定，不默认全库。
 
 调用本 Skill 表示请求使用 Workflow，但不绕过任何工具许可。开始前检查：
 
-- 当前 harness 是 Claude Code，且提供 `Workflow` 与 `workflow-authoring`。先加载 `/workflow-authoring`；不可用时停止说明，不静默回退到别的 harness 或独立 API 执行器。
-- `${CLAUDE_SKILL_DIR}/agents/` 是分发资源，**不会自动注册**。按仓库 `skills/README.md` 将两个定义安装到 `.claude/agents/`，确认已加载 `formaliscope-readback` 与 `formaliscope-expectation`。
+- 先加载 `/workflow-authoring`，使用 `Workflow` 执行分组流水线。
 - 本流程要求支持 `omitClaudeMd: true`（Claude Code v2.1.271 起），不使用继承主历史的 fork，不预加载本 Skill 或其他含预期资料的 skill，不配置持久 memory。`omitClaudeMd` 不排除托管策略等所有来源；还要检查自动注入的其他上下文。若第一阶段会接收预期、既有中文、Blueprint、论文、作者注释或人工判断，停止，不先生成被污染的回译。
 - 模型路由 ID 来自 `${CLAUDE_SKILL_DIR}/config.json` 的 `worker.model`，默认 **`luna6`**。用户负责路由；不替换为 Claude 家族别名或供应商 ID，不修改全局模型、凭据或允许列表。Workflow 每个阶段的 `agent()` 都显式传该路由，而不是依赖主会话模型或 Worker 自报身份。
 - `worker.reasoning_effort` 默认 null，表示不额外指定 effort。非 null 时只能使用当前 Workflow 和模型确实支持的 `low/medium/high/xhigh/max`，由逐次 `agent()` 的 `effort` 设置；无法确认支持时停止，不翻译 Codex 等级、不忽略或降级。
