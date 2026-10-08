@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
+from skills.scripts.config import load_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +32,7 @@ class ClaudeWorkflowTests(unittest.TestCase):
             'repoRoot': '/fixture/repo',
             'skillDir': '/fixture/repo/.claude/skills/formaliscope-enrich',
             'batchDir': '/fixture/repo/.statement-enrichment/test',
-            'config': json.loads((SKILL / 'config.json').read_text(encoding='utf-8')),
+            'config': load_config(SKILL / 'config.json'),
             'declarationIds': ['statement::Example.a', 'statement::Example.b', 'statement::Example.c'],
             'groups': [
                 {'key': 'group-1', 'declarationIds': ['statement::Example.a']},

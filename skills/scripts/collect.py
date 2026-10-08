@@ -363,23 +363,47 @@ def collect(snapshot_path, manifest_path, result_paths, review_paths, output,
     return _collect_v1(snapshot_path, manifest_path, result_paths, review_paths, output)
 
 
+def collect_from_config(config_path):
+    from skills.scripts.config import load_config, project_path, task_output
+    settings = load_config(config_path)
+    batch = task_output(config_path, settings)
+    collection = settings['collection']
+    output = (project_path(collection['output'], 'collection.output')
+              if collection['output'] is not None else batch / 'collected')
+    paths = lambda key: [project_path(value, 'collection.' + key) for value in collection[key]]
+    return output, collect(batch / 'snapshot.json', batch / 'manifest.json',
+                           paths('results'), paths('reviews'), output,
+                           executed_model=collection['executed_model'],
+                           readback_paths=paths('readback_results'))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--snapshot', required=True, type=Path)
-    parser.add_argument('--manifest', required=True, type=Path)
-    parser.add_argument('--result', required=True, action='append', type=Path)
-    parser.add_argument('--review', action='append', type=Path, default=[])
-    parser.add_argument('--executed-model', help='dispatcher confirmation of the actual worker model (v2)')
+    parser.add_argument('--config', type=Path, help='task configuration with collection receipts')
+    parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--manifest', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--result', action='append', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--review', action='append', type=Path, default=[], help=argparse.SUPPRESS)
+    parser.add_argument('--executed-model', help=argparse.SUPPRESS)
     parser.add_argument('--readback-result', action='append', type=Path, default=[],
-                        help='saved first-stage worker output, before expectation context (v2)')
-    parser.add_argument('--output', required=True, type=Path)
+                        help=argparse.SUPPRESS)
+    parser.add_argument('--output', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        report = collect(args.snapshot, args.manifest, args.result, args.review, args.output,
-                         executed_model=args.executed_model, readback_paths=args.readback_result)
+        if args.config is not None:
+            if any((args.snapshot, args.manifest, args.result, args.review, args.output,
+                    args.executed_model, args.readback_result)):
+                raise ValueError('put collection settings in the configuration file')
+            output, report = collect_from_config(args.config)
+        else:
+            if not all((args.snapshot, args.manifest, args.result, args.output)):
+                raise ValueError('provide config or the complete legacy collection arguments')
+            output = args.output
+            report = collect(args.snapshot, args.manifest, args.result, args.review, output,
+                             executed_model=args.executed_model, readback_paths=args.readback_result)
     except (ValueError, OSError) as exc:
         parser.exit(2, f'collect: {exc}\n')
-    print(json.dumps({'output': str(args.output.resolve()),
+    print(json.dumps({'output': str(output.resolve()),
                       'routes': {route: sum(row['route'] == route for row in report['entries'])
                                  for route in (('direct', 'reviewed', 'pending', 'failed')
                                                if report['schema'].endswith('.v2') else

@@ -12,7 +12,7 @@
 
 模型路由 ID、推理等级、主题选项从[当前 harness 的配置](../skills/README.md#模型配置)读取，prompt 不固定模型。准备脚本记录配置和范围、引用共享只读快照，续做使用本批文件。调度层必须按配置显式启动子 Agent，并确认实际执行模型；模型不可用或不符时停止并准备新批次，不能静默回退。
 
-复核唯一条件是原始 `readback.confidence < threshold`，默认 0.8，等于阈值直接汇总。预期判断及其分值、角色、优先度、依赖数量、复杂度和抽样都不参与路由。正文 null 单列生成失败，不计成功，不以空正文覆盖现有回译。
+复核唯一条件是原始 `readback.confidence < threshold`，阈值取合并后的任务配置，等于阈值直接汇总。预期判断及其分值、角色、优先度、依赖数量、复杂度和抽样都不参与路由。正文 null 单列生成失败，不计成功，不以空正文覆盖现有回译。
 
 ## 审阅范围
 
@@ -40,32 +40,23 @@ Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、ba
 
 ## 准备、校验与汇总
 
-在仓库根目录准备新的回译任务：
+Agent 开始任务前，起草 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照、范围和用户要求的覆盖项。字段和合并规则见 [任务配置说明](../skills/CONFIG.md)，默认值集中在 [共享配置](../skills/default-config.json)。
 
 ```sh
-python3 skills/scripts/prepare.py \
-  --config /path/to/selected-agent-config.json \
-  --snapshot /path/to/snapshot.json --directory KIP126/Def/ClassicalAdams/Tower \
-  --output .statement-enrichment/new-batch
+python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
 ```
 
-也可用 `--file`、`--declaration-id`，多次提供时取并集。必须通过 `--config` 指定当前 harness 的模型配置；可选用户指定的 `--threshold` 和 `--expectation-context`。固定的预期材料只在第二阶段提供给 Worker。批次目录 0700、普通文件 0600，全部放在被 Git 忽略的 `.statement-enrichment/`；因为含内部评估，不放入公开目录。
+准备结果记录实际批次路径、完整合并设置和声明清单。预期材料在第一阶段落盘后提供给 Worker。任务配置、批次和结果均保存在被 Git 忽略的私密目录。
 
 脚本将完整快照按内容 SHA-256 共用保存在批次父目录的 `.snapshots/` 中，已有内容会校验后复用；批次的 `snapshot.json` 是指向它的相对链接，不再每批复制全库。共享快照为只读 0400，目录为 0700；批次保存 `agent-config.json`、`manifest.json` 和可选 `expectation-context.txt`（含 SHA-256），普通文件为 0600。运行 ID、时间、源码提交、快照摘要、模型路由、推理等级、主题、规则版本及阈值由脚本记录，Agent 不填写。任务和 Agent 结果也保持私密权限。续做使用本批入口，不重新读取最初的输入路径；换模型、材料或范围时准备新任务。移动或备份任务时同时保留同级 `.snapshots/`，不要单独移动链接或删除仍被任务引用的快照。旧批次中的完整 `snapshot.json` 仍可直接使用。
 
-按 Skill 完成分组两阶段输出，调度层确认模型后收集：
+按 Skill 完成分组两阶段输出后，将文件回执和调度记录核实的模型写入任务配置的 `collection`，然后收集：
 
 ```sh
-python3 skills/scripts/collect.py \
-  --snapshot .statement-enrichment/new-batch/snapshot.json \
-  --manifest .statement-enrichment/new-batch/manifest.json \
-  --result .statement-enrichment/new-batch/group-1.json \
-  --executed-model ACTUAL_MODEL \
-  --readback-result .statement-enrichment/new-batch/group-1-readback.json \
-  --output .statement-enrichment/new-batch/collected
+python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
 ```
 
-`ACTUAL_MODEL` 是调度工具确认的实际模型，必须与本批要求相同。`--result`、`--readback-result` 和 `--review` 可重复。没有预期材料时可省略第一阶段参数；有预期时必须提供，脚本验证目标集合、原回译不变及预期材料摘要。
+有预期时配置各组 `readback_results`；无预期时 `results` 指向第一阶段文件。复核后填入 `collection.reviews` 并设置新的输出目录重新收集。收集依据准备时保存的快照、manifest 和模型配置，原始输入或默认配置的后续变化不改变本批依据。
 
 脚本对所有输入检查精确目标集合、固定来源、选项、类型、有限分值和条件必填理由，全部通过后才写新的输出目录。它生成 `enrichment.json`、`review-queue.json`、`report.json`，区分直接汇总、已复核、待复核、生成失败。不能以提高原分值代替复核。
 

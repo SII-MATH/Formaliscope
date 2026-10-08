@@ -11,25 +11,29 @@ whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文�
 
 ## 准备回译任务
 
-以用户指定的 Statement 快照及目录、文件或声明为范围。范围待明确时，请用户指定本次目标。
+开始任务前，按用户要求起草独立配置文件，命名为 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，时间使用本地时间，任务名用简短英文。配置目录采用 0700，文件采用 0600。
 
-读取本工具对应的 `config.json`，或用户指定的配置。`worker.model` 默认 `luna6`，由用户配置模型路由；`worker.reasoning_effort` 指定推理设置，`topics` 提供主题选项。通过 `--config` 传入配置。
+用 `defaults` 引用本工具的配置，填写本次输入快照和范围；额外要求写为覆盖项，其余继承默认配置。字段和合并规则见 [任务配置说明](../../../skills/CONFIG.md)。例如 `20261008-150000-tower.json`：
 
-```sh
-python3 skills/scripts/prepare.py \
-  --config "${KIMI_SKILL_DIR}/config.json" \
-  --snapshot /absolute/path/snapshot.json \
-  --directory KIP126/Def/ClassicalAdams/Tower \
-  --output .statement-enrichment/new-batch
+```json
+{
+  "defaults": "skills/kimi-code/formaliscope-enrich/config.json",
+  "snapshot": "/absolute/path/snapshot.json",
+  "selection": {"directories": ["KIP126/Def/ClassicalAdams/Tower"]}
+}
 ```
 
-将示例目录替换为用户选定的范围。`--directory` 包含子目录，也可重复使用 `--file`、`--declaration-id`，各选择取并集。阈值默认 0.8，用户指定时通过 `--threshold` 设置。补充预期材料通过 `--expectation-context` 提供。
+按实际任务替换路径和范围，然后准备：
+
+```sh
+python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+```
 
 准备脚本自动记录声明清单、模型配置、源码提交、快照摘要、运行 ID、时间和规则版本。完整快照按内容 SHA-256 共用在批次父目录的 `.snapshots/`，批次的 `snapshot.json` 为相对链接。共享快照为 0400，批次目录为 0700，普通文件为 0600。续做沿用本批文件；更改模型、材料或范围时准备新任务。移动、备份时一起保留共享快照目录；历史批次的完整快照继续可用。
 
 脚本将所选声明绑定的 Blueprint 文案按精确 ID 保存到 `expectation-context.txt`，保留所有关联节点、出处及共同关联的声明，并记录材料摘要。补充材料和 Blueprint 一起作为第二阶段参考。第一阶段保存完成后提供该文件；缺少对应文案及明确补充预期的声明填 `undetermined`。
 
-`worker.reasoning_effort` 默认 null；非 null 时确认当前 provider、模型和调度机制可应用该确切设置。配置差异和待确认项作为执行限制报告，调整配置时开新任务。
+从本批 `agent-config.json` 读取合并后的设置，确认当前 provider、模型和调度机制可应用配置的推理设置。配置差异和待确认项作为执行限制报告，调整配置时开新任务。
 
 ## 原生 Swarm 与两阶段填写
 
@@ -81,19 +85,13 @@ python3 skills/scripts/prepare.py \
 
 ## 校验与复核
 
-确认实际执行模型后，用全部分组结果收集：
+执行完成后，根据文件回执和调度记录，将各组结果、第一阶段文件及已确认的实际模型写入任务配置的 `collection`；用同一任务配置收集：
 
 ```sh
-python3 skills/scripts/collect.py \
-  --snapshot .statement-enrichment/new-batch/snapshot.json \
-  --manifest .statement-enrichment/new-batch/manifest.json \
-  --result .statement-enrichment/new-batch/group-1.json \
-  --executed-model ACTUAL_MODEL \
-  --readback-result .statement-enrichment/new-batch/group-1-readback.json \
-  --output .statement-enrichment/new-batch/collected
+python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
 ```
 
-`ACTUAL_MODEL` 使用调度记录确认的模型路由 ID，并与本批配置一致。`--result`、`--readback-result` 和 `--review` 均可重复。有预期时提供每组第一阶段文件；无预期时将第一阶段文件作为 `--result`，可省略 `--readback-result`。
+收集路径和复核文件均在 `collection` 中配置，格式见 [任务配置说明](../../../skills/CONFIG.md)。
 
 收集器校验完整目标集合、固定来源、配置主题、字段类型、有限分值和条件理由；有预期时还校验第一阶段回译及原分值、材料摘要。格式错误可由对应 worker 按机械错误修正一次，写入新的私密文件并保持其余内容。沿用完整原始输入收集到新输出目录；未解决的错误按组记录为未完成。
 
@@ -105,7 +103,7 @@ python3 skills/scripts/collect.py \
 
 每项包含精确 `declaration_id`、完整确认或修订的 `annotation`、实际复核 `model` 和带时区 `reviewed_at`。保持原始两个分值和完整 `expectation_assessment`，依据固定 Lean 核对回译。仍待解释的条目保持 pending，原始文件保留。
 
-用全部原始输入加 `--review /absolute/path/review.json` 重新收集到新目录。产物为 `enrichment.json`、`review-queue.json`、`report.json`，记录 `direct`、`reviewed`、`pending`、`failed`、原分值及复核来源。内部评估与原始结果保存在被 Git 忽略的私密目录。
+将复核文件路径写入 `collection.reviews`，设置新的 `collection.output`，用同一任务配置重新收集。产物为 `enrichment.json`、`review-queue.json`、`report.json`，记录 `direct`、`reviewed`、`pending`、`failed`、原分值及复核来源。内部评估与原始结果保存在被 Git 忽略的私密目录。
 
 格式修正通过真实 agent ID 续做对应 worker，提供机械错误及新的结果路径，保持原始语义、分值和已保存的第一阶段基线。
 

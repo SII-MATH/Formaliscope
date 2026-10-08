@@ -8,7 +8,7 @@ v2 已接入 Skill、校验器与数据库迁移 9：Agent 填写标题、完整
 
 多仓库接入通过独立配置扫描根目录、主目标和主题，再把各仓库/版本的冻结快照组合成候选集合。页面可切换仓库与版本；判断、草稿、导出及管理员汇总按数据集隔离。数据库迁移 10 保留旧 KIP126 记录及快照回退能力，操作步骤见 [多仓库与版本说明](review_app/REPOSITORIES.md)。
 
-回译 Skill 源文件按 Codex、Claude Code、Kimi Code 分别维护在 `skills/`，先按[安装说明](skills/README.md)安装当前 harness 的版本。三份配置的模型路由 ID 均为 `luna6`，由用户处理路由；推理等级和主题由各版本的 `config.json` 指定。先按冻结 Lean 分组回译，再用独立预期材料补内部判断；没有材料时填“不知道”。默认只有原始 `readback.confidence < 0.8` 的成功回译进入主 Agent 复核，判断置信度不增加路由条件；无法回译单列失败。准备与收集脚本自动记录来源、运行与原始分值，无需额外模型服务。
+回译 Skill 源文件按 Codex、Claude Code、Kimi Code 分别维护在 `skills/`，先按[安装说明](skills/README.md)安装当前 harness 的版本。Agent 每次先起草独立[任务配置](skills/CONFIG.md)，覆盖[共享默认配置](skills/default-config.json)，准备与收集命令只传 `--config`。先按固定 Lean 分组回译，再用独立预期材料补内部判断；没有材料时填“不知道”。原始 `readback.confidence` 低于配置阈值的成功回译进入主 Agent 复核，无法回译单列失败。脚本自动记录来源、运行与原始分值。
 
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
 

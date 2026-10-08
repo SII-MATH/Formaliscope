@@ -8,6 +8,7 @@ skills/
 ├── claude-code/formaliscope-enrich/
 ├── kimi-code/formaliscope-enrich/
 └── scripts/
+    ├── config.py
     ├── prepare.py
     └── collect.py
 ```
@@ -62,7 +63,7 @@ test ! -e .kimi-code/skills/formaliscope-enrich && test ! -L .kimi-code/skills/f
 
 Kimi Code 不会自动发现 Skill 源目录中的 `agents/`；专用 worker 必须另外复制到项目级 `.kimi-code/agents/formaliscope-enrich/`。安装命令会先同时检查 Skill 和 agent 目标（包括符号链接），任一已存在就停止，不覆盖。安装后在**新会话**确认 Skill 可调用且 `formaliscope-enrich-worker` 已注册；agent 新增或修改后也要重新复制并在新会话确认。更新或卸载时，分别同步或移除本 Skill 的 `.kimi-code/skills/formaliscope-enrich/` 和 `.kimi-code/agents/formaliscope-enrich/` 副本；保留需要的本地修改，不清空其他 Skill、agent 或 harness 配置。
 
-Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独立 worker，保存每个 Agent ID；有预期材料时，第二阶段通过对应 ID resume 同一 worker，并仅补充预期判断。只有一组时例外，直接调用该 worker，不启动 AgentSwarm。按 Skill 的两阶段隔离要求传递资料，不改变 `luna6` 模型路由或本 Skill 的其他处理、校验与复核功能。
+Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独立 worker，保存每个 Agent ID；有预期材料时，第二阶段通过对应 ID resume 同一 worker，并仅补充预期判断。只有一组时例外，直接调用该 worker。按 Skill 的两阶段要求传递资料，模型和其他设置取本批合并后的配置。
 
 安装后确认当前 harness 的 Skill 列表中出现了对应版本；必要时重新加载 Skill 或重启会话。安装只是让 harness 发现说明，不执行回译、不导入数据库，也不安装运行快照。Skill 自身没有自动安装机制。
 
@@ -72,11 +73,9 @@ Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独�
 
 ## 模型配置
 
-三份 `config.json` 的 `worker.model` 均为 **`luna6`**，由用户处理模型路由。保持这个 ID，不自行替换成 GPT、Claude 或 Kimi 的供应商型号，也不修改全局路由或凭据。运行记录中的 model 表示 harness 确认使用的模型路由 ID；调度层仍须核对实际执行是否使用了该路由，不把配置值直接当成执行证据。
+共享默认配置在 [default-config.json](default-config.json)，包含模型、主题、复核阈值和任务设置。三个工具的 `config.json` 引用共享配置并覆盖各自的推理设置。模型路由由用户配置，运行时从调度记录核实。
 
-Codex 默认 `worker.reasoning_effort=high`；Claude Code 和 Kimi Code 默认为 null，表示不额外要求等级。非 null 的等级必须能被当前 harness 和模型实际应用。Claude 的 effort、Kimi 的 thinking 和 Codex 的 reasoning effort 不默认视为等价，不能静默忽略或降级。
-
-每个 harness 独立维护配置；主题和字段规则保持一致。所有准备命令必须显式传入 `--config`，不从安装目录推断默认模型。用户指定其他配置时使用该配置。批次一旦固定，续做沿用本批文件；换模型或设置时开新批次。
+每次任务开始前，Agent 起草 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照和范围，按用户要求覆盖设置。对象字段逐项合并，数组整体替换，明确的 null 覆盖原值。省略项继承默认配置，字段和路径约定见 [任务配置说明](CONFIG.md)。
 
 ## 执行与维护
 
@@ -84,15 +83,14 @@ Codex 默认 `worker.reasoning_effort=high`；Claude Code 和 Kimi Code 默认�
 
 准备脚本自动记录任务依据，同一内容的完整快照共用在批次父目录的 `.snapshots/`，批次内 `snapshot.json` 为相对链接；无需额外固定操作。移动或备份时同时保留共享目录，旧批次的完整快照继续兼容。
 
-例如 Codex 准备回译任务；其他 harness 使用各自的配置路径：
+起草任务配置后，准备和收集均只传配置路径：
 
 ```sh
-python3 skills/scripts/prepare.py \
-  --config skills/codex/formaliscope-enrich/config.json \
-  --snapshot /absolute/path/snapshot.json \
-  --directory KIP126/Def/ClassicalAdams/Tower \
-  --output .statement-enrichment/new-batch
+python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
 ```
+
+配置示例、执行后填写的 `collection` 字段和复核后的重新收集见 [任务配置说明](CONFIG.md)。
 
 随后按安装的 Skill 分组调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。Claude 版由主会话核对固定范围与配置，Workflow `pipeline()` 逐组执行独立回译与预期 agents，无预期时跳过第二阶段；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。共享收集器仍只按原始回译分值安排主 Agent 复核；生成的候选和内部评估沿既有命令分别处理。完整数据契约、收集和导入命令见 [Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
 

@@ -9,9 +9,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from review_app.enrichment import validate_enrichment
 from review_app.statements import compile_statements
+from skills.scripts.config import load_config
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/scripts'
@@ -412,11 +414,115 @@ class SkillBatchV2Tests(unittest.TestCase):
         self.assertIn('--config', completed.stderr)
         self.assertFalse(output.exists())
 
+    def task_config(self, **overrides):
+        task = {'defaults': str(self.config_path), 'snapshot': str(self.snapshot_path),
+                'output': str(self.root / 'configured-batch'),
+                'selection': {'directories': ['KIP126/Sub']}}
+        task.update(overrides)
+        return self.write('task-config.json', task)
+
+    def test_task_config_inherits_defaults_merges_worker_and_replaces_lists(self):
+        task = self.task_config(defaults='skills/codex/formaliscope-enrich/config.json',
+                                worker={'reasoning_effort': None},
+                                topics=self.config['topics'], threshold=0.7)
+        resolved = load_config(task)
+        self.assertEqual(resolved['worker'], {'model': 'luna6', 'reasoning_effort': None})
+        self.assertEqual(resolved['topics'], self.config['topics'])
+        self.assertEqual(resolved['selection'], {'directories': ['KIP126/Sub'],
+                                                'files': [], 'declaration_ids': []})
+        batch, manifest = preparer.prepare_from_config(task)
+        self.assertEqual(manifest['threshold'], 0.7)
+        self.assertEqual(len(manifest['declaration_ids']), 3)
+        self.assertEqual(collector._read(batch / 'task-config.json')['worker'], resolved['worker'])
+
+    def test_project_relative_inputs_and_automatic_batch_name(self):
+        task = self.task_config(defaults='config.json', snapshot='source-snapshot.json', output=None)
+        with patch('skills.scripts.config.REPO', self.root):
+            batch, manifest = preparer.prepare_from_config(task)
+        self.assertEqual(batch, self.root / '.statement-enrichment/task-config')
+        self.assertEqual(len(manifest['declaration_ids']), 3)
+        self.assertTrue((batch / 'snapshot.json').is_symlink())
+
+    def test_config_only_prepare_and_collect_cli_use_saved_batch_inputs(self):
+        context = self.root / 'reference.txt'
+        context.write_text('测试夹具的补充预期。')
+        task = self.task_config(threshold=0.9, expectation_context=str(context))
+        prepared = subprocess.run([sys.executable, str(SCRIPTS / 'prepare.py'),
+                                   '--config', str(task)], cwd=self.root,
+                                  capture_output=True, text=True)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        batch = Path(json.loads(prepared.stdout)['output'])
+        first = self.write('first-configured.json', self.result)
+        result = self.write('final-configured.json', self.result)
+        config = collector._read(task)
+        config['collection'] = {'results': [str(result)], 'readback_results': [str(first)],
+                                'executed_model': 'fixture-worker'}
+        task.write_text(json.dumps(config))
+        # Collection uses the prepared snapshot/config even if defaults or input move on.
+        self.snapshot_path.unlink()
+        self.config['worker']['model'] = 'new-default-model'
+        self.write('config.json', self.config)
+        collected = subprocess.run([sys.executable, str(SCRIPTS / 'collect.py'),
+                                    '--config', str(task)], cwd=self.root,
+                                   capture_output=True, text=True)
+        self.assertEqual(collected.returncode, 0, collected.stderr)
+        report = collector._read(batch / 'collected/report.json')
+        self.assertEqual(report['threshold'], 0.9)
+        self.assertEqual([row['route'] for row in report['entries']], ['pending', 'pending', 'direct'])
+        self.assertEqual(collector._read(batch / 'agent-config.json')['worker']['model'], 'fixture-worker')
+
+    def test_configured_collection_requires_actual_model_and_unchanged_readback(self):
+        context = self.root / 'reference.txt'
+        context.write_text('合成预期。')
+        task = self.task_config(expectation_context=str(context))
+        batch, _ = preparer.prepare_from_config(task)
+        first = self.write('first-configured.json', deepcopy(self.result))
+        result = self.write('final-configured.json', self.result)
+        config = collector._read(task)
+        config['collection'] = {'results': [str(result)], 'readback_results': [str(first)]}
+        task.write_text(json.dumps(config))
+        with self.assertRaises(ValueError): collector.collect_from_config(task)
+        config['collection']['executed_model'] = 'fixture-worker'
+        task.write_text(json.dumps(config))
+        self.result['annotations'][0]['readback']['text_zh'] = '反写基线的错误结果。'
+        result.write_text(json.dumps(self.result))
+        with self.assertRaises(ValueError): collector.collect_from_config(task)
+        self.assertFalse((batch / 'collected').exists())
+
+    def test_invalid_task_config_fails_before_creating_output(self):
+        for overrides in ({'threshold': True}, {'threshold': 1.2},
+                          {'selection': {'directories': 'KIP126/Sub'}},
+                          {'selection': {'directories': []}}, {'snapshot': None},
+                          {'threshhold': 0.9}, {'worker': {'reasoning_effort': 'unknown'}}):
+            with self.subTest(overrides=overrides):
+                task = self.task_config(**overrides)
+                with self.assertRaises(ValueError): preparer.prepare_from_config(task)
+                self.assertFalse((self.root / 'configured-batch').exists())
+
+    def test_defaults_cycles_and_duplicate_keys_are_rejected(self):
+        first = self.write('cycle-a.json', {'defaults': str(self.root / 'cycle-b.json')})
+        self.write('cycle-b.json', {'defaults': str(first)})
+        with self.assertRaisesRegex(ValueError, 'cycle'): load_config(first)
+        first.write_text('{"threshold": 0.7, "threshold": 0.8}')
+        with self.assertRaisesRegex(ValueError, 'duplicate'): load_config(first)
+
+    def test_explicit_null_clears_supplement_but_preserves_blueprint_reference(self):
+        self.blueprint_batch()
+        context = self.root / 'reference.txt'
+        context.write_text('用户补充材料。')
+        parent = self.task_config(expectation_context=str(context))
+        task = self.write('clear-supplement.json', {'defaults': str(parent),
+                           'output': str(self.root / 'cleared-context'), 'expectation_context': None})
+        batch, _ = preparer.prepare_from_config(task)
+        reference = collector._read(batch / 'expectation-context.txt')
+        self.assertIsNone(reference['additional_context'])
+        self.assertTrue(reference['references'][self.ids[0]])
+
     def test_prepare_cli_freezes_each_harness_config_from_unrelated_directory(self):
         for harness in ('codex', 'claude-code', 'kimi-code'):
             with self.subTest(harness=harness):
                 config_path = SCRIPTS.parent / harness / 'formaliscope-enrich/config.json'
-                config = json.loads(config_path.read_text())
+                config = load_config(config_path)
                 output = self.root / harness
                 completed = subprocess.run([sys.executable, str(SCRIPTS / 'prepare.py'),
                                             '--config', str(config_path),
@@ -425,7 +531,8 @@ class SkillBatchV2Tests(unittest.TestCase):
                                            cwd=self.root, capture_output=True, text=True)
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(json.loads(completed.stdout)['model'], config['worker']['model'])
-                self.assertEqual(json.loads((output / 'agent-config.json').read_text()), config)
+                self.assertEqual(json.loads((output / 'agent-config.json').read_text()),
+                                 {key: config[key] for key in ('schema', 'worker', 'topics')})
                 run = json.loads((output / 'manifest.json').read_text())['run']
                 self.assertEqual(run['model'], config['worker']['model'])
                 self.assertEqual(run['reasoning_effort'], config['worker']['reasoning_effort'])
