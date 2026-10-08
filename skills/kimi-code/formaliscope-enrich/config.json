@@ -1,5 +1,6 @@
 {
   "defaults": "skills/default-config.json",
+  "harness": "kimi-code",
   "worker": {
     "reasoning_effort": null
   }

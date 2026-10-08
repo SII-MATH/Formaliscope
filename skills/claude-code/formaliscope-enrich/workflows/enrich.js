@@ -40,8 +40,8 @@ if (!Array.isArray(groups) || !groups.length) {
 const selected = new Set(declarationIds), assigned = new Set(), keys = new Set()
 for (const group of groups) {
   if (!group || typeof group.key !== 'string' || !/^group-[1-9][0-9]*$/.test(group.key) ||
-      keys.has(group.key) || !Array.isArray(group.declarationIds) || !group.declarationIds.length) {
-    throw new Error('每组必须有唯一 group-N key 和非空声明集合')
+      keys.has(group.key) || !Array.isArray(group.declarationIds) || group.declarationIds.length !== 1) {
+    throw new Error('每组必须有唯一 group-N key 和恰好一条声明')
   }
   keys.add(group.key)
   for (const id of group.declarationIds) {
@@ -54,13 +54,15 @@ for (const group of groups) {
 if (assigned.size !== selected.size) {
   throw new Error('请补齐分组，使其恰好覆盖本次运行分配的声明集合')
 }
-const agentCount = groups.length * (expectationContext === null ? 1 : 2)
+const agentCount = groups.length * 2
 if (groups.length > 4096 || agentCount > 1000) {
   throw new Error('超过 Workflow 运行时上限；显式拆成多次运行后完整收集，不截断目标')
 }
 
 const join = (root, relative) => `${root.replace(/[\\/]$/, '')}/${relative}`
 const snapshotPath = join(batchDir, 'snapshot.json')
+const manifestPath = join(batchDir, 'manifest.json')
+const deliveryScript = join(repoRoot, 'skills/scripts/collect.py')
 const schemaPath = join(repoRoot, 'statement_workflow/SCHEMA_V2.md')
 const receiptSchema = {
   type: 'object',
@@ -91,15 +93,22 @@ const results = await pipeline(
       repo_root: repoRoot,
       schema_path: schemaPath,
       prompt_path: join(skillDir, 'references/worker-prompt.md'),
+      output_schema_path: join(repoRoot, 'statement_workflow/schema/statement-readback-batch.v1.schema.json'),
+      delivery_script: deliveryScript,
+      manifest_path: manifestPath,
       snapshot_path: snapshotPath,
       topics: config.topics,
       declaration_ids: group.declarationIds,
+      draft_path: `${path}.input.json`,
+      next_result_path: join(resultDir, `${group.key}.json`),
       result_path: path,
     }
     const receipt = await agent(
       `执行纯 Lean 回译。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
 以本组 cards 的 ID 与 Lean 字段、必要 modules 定义为回译依据。
-将结果写入指定新路径，保留所有原始输入，返回文件回执。
+只填写第一阶段字段，不生成 expectation_assessment。
+先保存 draft_path，再调用 delivery_script --deliver-readback 交付至 result_path 并封存摘要；不得直接写正式结果或自报摘要。
+固定程序成功后返回其文件回执；失败停止本组，不改写原文件。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-readback', 'Lean 回译', `${group.key}:readback`),
     )
@@ -107,24 +116,28 @@ const results = await pipeline(
   },
   async (readback, group) => {
     if (!readback) return null
-    if (expectationContext === null) {
-      return { key: group.key, readback_path: readback.result_path, result_path: readback.result_path, count: readback.count }
-    }
     const path = join(resultDir, `${group.key}.json`)
     const input = {
       repo_root: repoRoot,
       schema_path: schemaPath,
       prompt_path: join(skillDir, 'references/expectation-prompt.md'),
+      output_schema_path: join(repoRoot, 'statement_workflow/schema/statement-expectation-batch.v1.schema.json'),
+      delivery_script: deliveryScript,
+      manifest_path: manifestPath,
       snapshot_path: snapshotPath,
       readback_path: readback.result_path,
+      baseline_path: `${readback.result_path}.baseline.json`,
       expectation_context_path: expectationContext,
       declaration_ids: group.declarationIds,
+      draft_path: `${path}.input.json`,
       result_path: path,
     }
     const receipt = await agent(
       `执行独立预期判断。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
-以第一阶段文件为固定基线，补充 expectation_assessment，原样保留其余字段及分值。
-将结果写入指定新路径，保留基线文件，返回文件回执。
+先调用 delivery_script --check-readback 检查基线摘要，成功后只读基线和预期材料。
+仅输出 declaration_id 和 expectation_assessment，不复制或输出正文、标题、分类、优先度及回译分值。
+expectation_context_path 为 null 时，判断填 undetermined 并说明缺少独立预期材料。
+保存 draft_path，再调用 delivery_script --deliver-expectation 排他交付；成功后返回程序文件回执，保留基线和原始输入。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-expectation', '内部预期判断', `${group.key}:expectation`),
     )

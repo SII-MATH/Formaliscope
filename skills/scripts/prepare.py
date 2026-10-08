@@ -19,7 +19,7 @@ SCRIPT = Path(__file__).resolve().parent / 'collect.py'
 spec = importlib.util.spec_from_file_location('formaliscope_prepare_collect', SCRIPT)
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
-from skills.scripts.config import load_config, project_path, task_output, snapshot_pool
+from skills.scripts.config import load_config, project_path, resolve_worker_model, task_output, snapshot_pool
 
 _UNSET = object()
 
@@ -71,7 +71,7 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
     snapshot = helper._read(snapshot_path)
     helper._validate({'schema': 'statement-enrichment.v1', 'annotations': []}, snapshot)
     settings = load_config(config_path) if _settings is None else deepcopy(_settings)
-    config = {key: settings[key] for key in ('schema', 'worker', 'topics')}
+    config = {key: deepcopy(settings[key]) for key in ('schema', 'worker', 'topics')}
     helper._fields(config, ('schema', 'worker', 'topics'), 'config')
     if config['schema'] != 'formaliscope-enrichment-config.v2':
         raise ValueError('unsupported config schema; new batches require v2')
@@ -79,6 +79,7 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
     helper._fields(worker, ('model', 'reasoning_effort'), 'worker config')
     if not isinstance(worker['model'], str) or not worker['model'].strip():
         raise ValueError('worker model must be a non-empty string')
+    worker['model'] = resolve_worker_model(settings)
     if worker['reasoning_effort'] not in (None, 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ValueError('unsupported worker reasoning effort')
     threshold = helper._score(settings['threshold'] if threshold is _UNSET else threshold)
@@ -125,7 +126,8 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
            'topics': config['topics'], 'threshold': threshold}
     helper._validate({'schema': 'statement-enrichment.v2', 'run': run, 'annotations': [],
                       'sources': {}, 'originals': {}, 'reviews': {}}, snapshot)
-    manifest = {'schema': 'formaliscope-enrichment-batch.v2',
+    manifest = {'schema': 'formaliscope-enrichment-batch.v3',
+                'result_protocol': 'formaliscope-stage-results.v1', 'harness': settings['harness'],
                 'source_commit': snapshot['source_commit'], 'snapshot_digest': snapshot['digest'],
                 'threshold': threshold, 'declaration_ids': selected, 'run': run}
     settings.update(snapshot=str(Path(snapshot_path).absolute()), output=str(Path(output).absolute()),

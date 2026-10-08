@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
-from skills.scripts.config import load_config
+from skills.scripts.config import load_config, resolve_worker_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,15 +28,19 @@ class ClaudeWorkflowTests(unittest.TestCase):
         cls.source = (SKILL / 'workflows/enrich.js').read_text(encoding='utf-8')
 
     def setUp(self):
+        settings = load_config(SKILL / 'config.json')
+        config = {key: deepcopy(settings[key]) for key in ('schema', 'worker', 'topics')}
+        config['worker']['model'] = resolve_worker_model(settings)
         self.args = {
             'repoRoot': '/fixture/repo',
             'skillDir': '/fixture/repo/.claude/skills/formaliscope-enrich',
             'batchDir': '/fixture/repo/.formaliscope/tasks/batches/test',
-            'config': load_config(SKILL / 'config.json'),
+            'config': config,
             'declarationIds': ['statement::Example.a', 'statement::Example.b', 'statement::Example.c'],
             'groups': [
                 {'key': 'group-1', 'declarationIds': ['statement::Example.a']},
-                {'key': 'group-2', 'declarationIds': ['statement::Example.b', 'statement::Example.c']},
+                {'key': 'group-2', 'declarationIds': ['statement::Example.b']},
+                {'key': 'group-3', 'declarationIds': ['statement::Example.c']},
             ],
             'expectationContext': '/fixture/repo/.formaliscope/tasks/batches/test/expectation-context.txt',
         }
@@ -44,10 +48,16 @@ class ClaudeWorkflowTests(unittest.TestCase):
     def run_workflow(self, args=..., mode='normal'):
         harness = r'''
 const calls = [], logs = [];
+let releaseReadback;
+const slowReadback = new Promise(resolve => { releaseReadback = resolve; });
 const mockAgent = async (prompt, opts) => {
   const input = JSON.parse(prompt.split('任务数据：')[1]);
   const key = opts.label.split(':')[0];
   calls.push({prompt, opts, input});
+  if (MODE === 'pipeline-progress') {
+    if (key === 'group-1' && opts.agentType === 'formaliscope-readback') await slowReadback;
+    if (key === 'group-2' && opts.agentType === 'formaliscope-expectation') releaseReadback();
+  }
   if (key === 'group-1') {
     if (MODE === 'skip-readback' && opts.agentType === 'formaliscope-readback') return null;
     if (MODE === 'fail-readback' && opts.agentType === 'formaliscope-readback') throw new Error('fixture API error');
@@ -85,23 +95,87 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
         output = self.run_workflow()
         self.assertNotIn('error', output)
         self.assertTrue(output['result']['complete'])
-        self.assertEqual(len(output['calls']), 4)
+        self.assertEqual(len(output['calls']), 6)
         self.assertEqual(output['result']['expected_count'], 3)
         self.assertEqual(output['result']['incomplete_groups'], [])
         for call in output['calls']:
-            self.assertEqual(call['opts']['model'], 'luna6')
+            self.assertEqual(call['opts']['model'], 'sonnet')
+            self.assertEqual(len(call['input']['declaration_ids']), 1)
             self.assertNotIn('effort', call['opts'])
             self.assertNotIn('isolation', call['opts'])
             self.assertNotIn('resume', call['opts'])
             self.assertEqual(call['opts']['schema']['required'], ['result_path', 'count'])
         readbacks = [call for call in output['calls'] if call['opts']['agentType'] == 'formaliscope-readback']
         expectations = [call for call in output['calls'] if call['opts']['agentType'] == 'formaliscope-expectation']
+        self.assertEqual(len(readbacks), 3)
+        self.assertEqual(len(expectations), 3)
         for readback, expectation in zip(readbacks, expectations):
+            self.assertLess(output['calls'].index(readback), output['calls'].index(expectation))
             self.assertEqual(expectation['input']['readback_path'], readback['input']['result_path'])
             self.assertEqual(expectation['input']['declaration_ids'], readback['input']['declaration_ids'])
             self.assertNotEqual(expectation['input']['result_path'], readback['input']['result_path'])
             self.assertEqual(expectation['input']['expectation_context_path'], self.args['expectationContext'])
             self.assertEqual(expectation['opts']['phase'], '内部预期判断')
+
+    def test_stage_contracts_delivery_commands_and_allocated_paths_are_separate(self):
+        output = self.run_workflow()
+        paths = []
+        for call in output['calls']:
+            data = call['input']
+            readback = call['opts']['agentType'] == 'formaliscope-readback'
+            stage = 'readback' if readback else 'expectation'
+            self.assertEqual(data['output_schema_path'], self.args['repoRoot'] +
+                             f'/statement_workflow/schema/statement-{stage}-batch.v1.schema.json')
+            self.assertEqual(data['manifest_path'], self.args['batchDir'] + '/manifest.json')
+            self.assertEqual(data['delivery_script'], self.args['repoRoot'] + '/skills/scripts/collect.py')
+            self.assertEqual(data['draft_path'], data['result_path'] + '.input.json')
+            paths.extend([data['draft_path'], data['result_path']])
+            self.assertIn(f'--deliver-{stage}', call['prompt'])
+            self.assertNotIn('formaliscope-agent-batch.v2', call['prompt'])
+            if readback:
+                self.assertIn('不生成 expectation_assessment', call['prompt'])
+                self.assertIn('不得直接写正式结果或自报摘要', call['prompt'])
+                expectation = next(item for item in output['calls'] if
+                                   item['opts']['label'] == call['opts']['label'].replace(':readback', ':expectation'))
+                self.assertEqual(data['next_result_path'], expectation['input']['result_path'])
+                self.assertNotIn('baseline_path', data)
+            else:
+                self.assertEqual(data['baseline_path'], data['readback_path'] + '.baseline.json')
+                self.assertIn('--check-readback', call['prompt'])
+                self.assertIn('仅输出 declaration_id 和 expectation_assessment', call['prompt'])
+                self.assertIn('不复制或输出正文、标题、分类、优先度及回译分值', call['prompt'])
+                self.assertNotIn('next_result_path', data)
+        self.assertEqual(len(paths), len(set(paths)))
+
+    def test_shared_harness_prompts_use_stage_schemas_and_fixed_delivery(self):
+        for harness in ('claude-code', 'codex', 'kimi-code'):
+            skill = ROOT / 'skills' / harness / 'formaliscope-enrich'
+            worker = (skill / 'references/worker-prompt.md').read_text(encoding='utf-8')
+            expectation = (skill / 'references/expectation-prompt.md').read_text(encoding='utf-8')
+            with self.subTest(harness=harness):
+                self.assertIn('formaliscope-readback-batch.v1', worker)
+                self.assertIn('--deliver-readback', worker)
+                self.assertIn('draft_path', worker)
+                self.assertIn('formaliscope-expectation-batch.v1', expectation)
+                self.assertIn('--check-readback', expectation)
+                self.assertIn('--deliver-expectation', expectation)
+                self.assertIn('draft_path', expectation)
+                for text in (worker, expectation):
+                    self.assertNotIn('formaliscope-agent-batch.v2', text)
+                for text, stage, fields in (
+                    (worker, 'readback', {'declaration_id', 'title_zh', 'readback', 'classification', 'priority'}),
+                    (expectation, 'expectation', {'declaration_id', 'expectation_assessment'}),
+                ):
+                    examples = [json.loads(block.split('```', 1)[0]) for block in text.split('```json\n')[1:]]
+                    document = next(value for value in examples if value.get('schema') == f'formaliscope-{stage}-batch.v1')
+                    self.assertEqual(set(document['annotations'][0]), fields)
+
+    def test_groups_advance_without_waiting_for_other_readbacks(self):
+        output = self.run_workflow(mode='pipeline-progress')
+        self.assertTrue(output['result']['complete'])
+        labels = [call['opts']['label'] for call in output['calls']]
+        self.assertLess(labels.index('group-2:expectation'), labels.index('group-1:expectation'))
+        self.assertEqual(len(labels), 6)
 
     def test_readback_receives_no_expectation_path_or_material_or_other_groups(self):
         output = self.run_workflow()
@@ -118,13 +192,20 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                             if call['opts']['label'].startswith(group['key'] + ':'))
             self.assertEqual(call['input']['declaration_ids'], assigned)
 
-    def test_absent_expectation_uses_readback_as_final_without_extra_agents(self):
+    def test_absent_expectation_still_runs_independent_second_agent_per_declaration(self):
         self.args['expectationContext'] = None
         output = self.run_workflow()
         self.assertTrue(output['result']['complete'])
-        self.assertEqual(len(output['calls']), 2)
+        self.assertEqual(len(output['calls']), 6)
+        expectations = [call for call in output['calls']
+                        if call['opts']['agentType'] == 'formaliscope-expectation']
+        self.assertEqual(len(expectations), 3)
+        for call in expectations:
+            self.assertIsNone(call['input']['expectation_context_path'])
+            self.assertIn('undetermined', call['prompt'])
+            self.assertIn('缺少独立预期材料', call['prompt'])
         for group in output['result']['groups']:
-            self.assertEqual(group['result_path'], group['readback_path'])
+            self.assertNotEqual(group['result_path'], group['readback_path'])
 
     def test_route_and_supported_effort_come_from_frozen_config(self):
         self.args['config']['worker'] = {'model': 'fixture-custom-route', 'reasoning_effort': 'high'}
@@ -162,10 +243,12 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
 
     def test_group_partition_rejects_missing_duplicates_unknown_empty_and_unsafe_keys(self):
         invalid = []
-        for mutation in ('missing', 'duplicate', 'unknown', 'empty', 'key', 'duplicate-key', 'duplicate-manifest'):
+        for mutation in ('missing', 'duplicate', 'unknown', 'empty', 'multiple', 'key', 'duplicate-key', 'duplicate-manifest'):
             args = deepcopy(self.args)
             if mutation == 'missing': args['groups'].pop()
-            if mutation == 'duplicate': args['groups'][1]['declarationIds'].append('statement::Example.a')
+            if mutation == 'duplicate': args['groups'][1]['declarationIds'] = ['statement::Example.a']
+            if mutation == 'multiple':
+                args['groups'][1]['declarationIds'].extend(args['groups'].pop()['declarationIds'])
             if mutation == 'unknown': args['groups'][0]['declarationIds'] = ['statement::Unknown']
             if mutation == 'empty': args['groups'][0]['declarationIds'] = []
             if mutation == 'key': args['groups'][0]['key'] = '../result'
@@ -184,7 +267,7 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                 output = self.run_workflow(mode=mode)
                 self.assertFalse(output['result']['complete'])
                 self.assertEqual(output['result']['incomplete_groups'], ['group-1'])
-                self.assertEqual([group['key'] for group in output['result']['groups']], ['group-2'])
+                self.assertEqual([group['key'] for group in output['result']['groups']], ['group-2', 'group-3'])
                 self.assertTrue(any('group-1' in line for line in output['logs']))
                 if mode != 'skip-expectation':
                     self.assertFalse(any(call['opts']['label'] == 'group-1:expectation'
@@ -205,9 +288,12 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
         self.args['declarationIds'] = ['statement::Example.' + str(index) for index in range(501)]
         self.args['groups'] = [{'key': 'group-' + str(index + 1), 'declarationIds': [identity]}
                                for index, identity in enumerate(self.args['declarationIds'])]
-        output = self.run_workflow()
-        self.assertIn('超过 Workflow', output['error'])
-        self.assertEqual(output['calls'], [])
+        for context in (self.args['expectationContext'], None):
+            with self.subTest(context=context):
+                self.args['expectationContext'] = context
+                output = self.run_workflow()
+                self.assertIn('超过 Workflow', output['error'])
+                self.assertEqual(output['calls'], [])
 
 
 if __name__ == '__main__':

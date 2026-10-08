@@ -37,11 +37,11 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 启动子 Agent 时，将 `worker.model` 传给 `spawn_agent.model`，非 null 的推理等级传给 `reasoning_effort`，设置 `fork_turns="none"`，按工具并发额度执行。根据调度记录核对实际路由和设置；核对结果一致后收集，差异或待确认项作为本批执行限制报告。调整配置时开新任务。
 
-第一阶段使用 [回译 prompt](references/worker-prompt.md)，以独立上下文接收仓库路径、固定快照、主题、本组 ID 和唯一 `group-N-readback.json` 路径。提取 Lean 声明及必要定义作为回译依据，保存正文和自报分值；预期判断暂填 `undetermined`。
+第一阶段使用 [回译 prompt](references/worker-prompt.md)，以独立上下文接收仓库路径、固定快照、主题、本组 ID、manifest、唯一 draft/result 路径及 `next_result_path`（无材料时 null）。仅输出 `declaration_id`、`title_zh`、`readback`、`classification`、`priority`，不接收预期材料、不填占位判断。Worker 调用固定 `collect.py --deliver-readback`，由程序校验、排他交付第一阶段文件并封存 `.baseline.json` 摘要。
 
-有预期材料时，第一阶段落盘后继续同一子 Agent，通过 [预期判断 prompt](references/expectation-prompt.md) 提供保存的基线、预期文件和新的 `group-N.json` 路径。补充 `expectation_assessment`，原样保留基线的其余字段。没有预期材料时，第一阶段文件即为最终结果，预期判断保持 `undetermined`。
+有预期材料时，交付成功后继续同一子 Agent，按 [预期判断 prompt](references/expectation-prompt.md) 先调用 `--check-readback`，再提供只读基线、预期文件和已分配的 `group-N.json`。仅输出 `declaration_id`、`expectation_assessment`，通过 `--deliver-expectation` 排他交付，不复制或输出第一阶段字段。没有材料时保留跳过第二阶段规则，`collection.results=[]`，始终填写 `readback_results`；收集程序生成 `undetermined`，理由说明跳过，判断分值固定 1.0，仅表示确定缺少材料，不是模型数学判断。
 
-每组输出 `{"schema":"formaliscope-agent-batch.v2","annotations":[...]}`，逐条填写 `declaration_id`、`title_zh`、`readback`、`classification`、`priority`、`expectation_assessment`。可靠回译尚待完成时，正文填 null。来源、运行及模型记录由脚本和调度层维护。
+两个阶段分别使用严格 `formaliscope-readback-batch.v1`、`formaliscope-expectation-batch.v1`，每组精确覆盖分配的 ID，每条一次。正文不能可靠生成时为 null。收集器检查第一阶段字节摘要、组 ID/条数和第二阶段分配路径，再按 ID 确定性合并，保持最终 `statement-enrichment.v2`。主 Agent 不临时拼接或改正文让校验通过；失败停止并保留原始文件。摘要仅检测篡改，不是权限隔离，不覆盖已有产物。历史 v1/v2 按显式 manifest 保留原契约，不猜测或转换。
 
 ## 校验与复核
 

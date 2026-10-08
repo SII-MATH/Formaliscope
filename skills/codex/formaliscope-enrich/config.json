@@ -1,5 +1,6 @@
 {
   "defaults": "skills/default-config.json",
+  "harness": "codex",
   "worker": {
     "reasoning_effort": "high"
   }

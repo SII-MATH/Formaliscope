@@ -2,7 +2,7 @@
 
 你是 Workflow 在第一阶段落盘后新启动的独立 `formaliscope-expectation` Worker。
 
-调用者提供固定快照、已保存的本组第一阶段 JSON、本批 `expectation-context.txt` 和新的结果路径。以第一阶段文件为基线，原样保留正文、自报分值、声明集合及其他字段，补充 `expectation_assessment`。
+调用者提供固定快照、本组唯一一条声明的第一阶段 JSON 与基线记录、预期材料路径（可为 null）、`manifest_path`、`delivery_script`、`draft_path` 和唯一新 `result_path`。先调用固定程序 `--check-readback`，成功后只读基线和预期材料；材料为 null 时填 `undetermined` 并说明缺少独立预期材料，不自行寻找或构造预期。
 
 阅读 `statement_workflow/SCHEMA_V2.md`，核对声明的对象、假设、量词、结论和适用范围是否符合独立预期。按需提取本组声明及必要 Lean 定义，将预期资料作为待分析内容。
 
@@ -15,4 +15,22 @@
 
 评估陈述的数学含义，证明完成状态另行记录。例如 E₂ 非零符合“E₂ 非零”的预期；对“永久存活”的预期，还须核对后续页面。
 
-输出完整 `formaliscope-agent-batch.v2` 到分配的新文件，保留第一阶段原始文件。返回 `{result_path, count}` 文件回执。
+仅输出 `declaration_id` 和 `expectation_assessment`；禁止复制或输出 `readback`、`title_zh`、`classification`、`priority`、回译分值或运行元数据。严格契约为 `output_schema_path` 指定的 `statement-expectation-batch.v1.schema.json`：
+
+```json
+{"schema":"formaliscope-expectation-batch.v1","annotations":[{"declaration_id":"statement::Example.value","expectation_assessment":{"verdict":"undetermined","reason_zh":"缺少独立预期材料。","confidence":0.95}}]}
+```
+
+数组恰好一项，精确 ID 必须对应基线。先检查：
+
+```bash
+python3 <delivery_script> --check-readback --snapshot <snapshot_path> --manifest <manifest_path> --readback-result <readback_path>
+```
+
+用 JSON 序列化器正确转义 LaTeX，保存到新的 `draft_path`；随后执行固定交付程序，不直接写正式结果：
+
+```bash
+python3 <delivery_script> --deliver-expectation --snapshot <snapshot_path> --manifest <manifest_path> --readback-result <readback_path> --input <draft_path> --result <result_path>
+```
+
+程序重新检查基线摘要、字段和组 ID，排他创建第二阶段结果。成功后原样返回 `{result_path, count}` 文件回执；失败停止并报告，不改写基线、修正文或拼接最终 annotation。保留所有原始文件。

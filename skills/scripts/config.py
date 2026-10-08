@@ -35,15 +35,18 @@ def _read(path):
     return document
 
 
-def _merge(base, overlay):
+def _merge(base, overlay, path=()):
     result = deepcopy(base)
     for key, value in overlay.items():
         if key not in base:
+            if path and path[0] == 'model_aliases':
+                result[key] = deepcopy(value)
+                continue
             raise ValueError(f'unknown configuration field: {key}')
         if isinstance(base[key], dict):
             if not isinstance(value, dict):
                 raise ValueError(f'{key} must be an object')
-            result[key] = _merge(base[key], value)
+            result[key] = _merge(base[key], value, path + (key,))
         else:
             result[key] = deepcopy(value)
     return result
@@ -66,6 +69,16 @@ def load_config(path):
     result = resolve(project_path(str(path), 'config'), set())
     if result['schema'] != base['schema']:
         raise ValueError('unsupported configuration schema')
+    harness = result['harness']
+    if harness is not None and (not isinstance(harness, str) or not harness.strip()):
+        raise ValueError('harness must be a non-empty string or null')
+    for harness, aliases in result['model_aliases'].items():
+        if not isinstance(harness, str) or not harness.strip() or not isinstance(aliases, dict):
+            raise ValueError('model_aliases must map non-empty harness names to objects')
+        for model, alias in aliases.items():
+            if (not isinstance(model, str) or not model.strip() or
+                    not isinstance(alias, str) or not alias.strip()):
+                raise ValueError('model aliases must map non-empty model names to non-empty strings')
     for key in ('directories', 'files', 'declaration_ids'):
         values = result['selection'][key]
         if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
@@ -75,6 +88,11 @@ def load_config(path):
         if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
             raise ValueError(f'collection.{key} must be a list of paths')
     return result
+
+
+def resolve_worker_model(config):
+    model = config['worker']['model']
+    return config['model_aliases'].get(config['harness'], {}).get(model, model)
 
 
 def task_output(config_path, config):

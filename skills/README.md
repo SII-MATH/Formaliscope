@@ -73,7 +73,7 @@ Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独�
 
 ## 模型配置
 
-共享默认配置在 [default-config.json](default-config.json)，包含模型、主题、复核阈值和任务设置。三个工具的 `config.json` 引用共享配置并覆盖各自的推理设置。模型路由由用户配置，运行时从调度记录核实。
+共享默认配置在 [default-config.json](default-config.json)，包含逻辑模型、按 harness 区分的别名、主题、复核阈值和任务设置。三个工具的 `config.json` 指定 harness 并覆盖各自的推理设置。默认逻辑模型仍为 `luna6`；准备时，Claude Code 的别名将其解析为 `sonnet`，Codex/Kimi 不受该映射影响。已解析调度名冻结在 `agent-config.json` 和 manifest，原始名称及映射保留在 `task-config.json`。别名只决定请求路由，实际执行还须核对启动元数据和响应记录，不能把配置当作执行证明。
 
 每次任务开始前，Agent 起草 `.formaliscope/tasks/configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照和范围，按用户要求覆盖设置。对象字段逐项合并，数组整体替换，明确的 null 覆盖原值。省略项继承默认配置，字段和路径约定见 [任务配置说明](CONFIG.md)。
 
@@ -92,7 +92,11 @@ python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-
 
 配置示例、执行后填写的 `collection` 字段和复核后的重新收集见 [任务配置说明](CONFIG.md)。
 
-随后按安装的 Skill 分组调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。Claude 版由主会话核对固定范围与配置，Workflow `pipeline()` 逐组执行独立回译与预期 agents，无预期时跳过第二阶段；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。共享收集器仍只按原始回译分值安排主 Agent 复核；生成的候选和内部评估沿既有命令分别处理。完整数据契约、收集和导入命令见 [Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
+随后按安装的 Skill 调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。新批次冻结 manifest v3 和阶段协议：第一阶段仅输出 declaration_id、title_zh、readback、classification、priority，第二阶段仅输出 declaration_id、expectation_assessment。两个阶段分别写新草稿，由固定 `collect.py --deliver-readback`／`--deliver-expectation` 严格校验并排他交付正式结果；第一阶段交付同时记录实际文件字节摘要到 `.baseline.json`，第二阶段先运行 `--check-readback`，收集时再次独立检查并按 ID 确定性合并，模型不复制第一阶段字段。
+
+Claude 版每条声明一组，Workflow `pipeline()` 在每组回译交付且回执有效后，启动新的独立预期 Agent；无预期材料也执行第二阶段，传 null 并明确判断为 `undetermined`。每条声明固定两次调用及两个正式结果文件，不同组独立推进。Workflow 无直接文件系统接口，阶段 Agent 调用固定交付程序；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。Codex/Kimi 保留各自分组和续做方式，无材料时跳过第二阶段，提供全部 `readback_results` 和空 `results`，由收集程序生成明确的 undetermined 记录。
+
+摘要仅提供篡改检测，不是权限隔离，不能抵御同时改写结果与记录的进程。原始阶段文件保留，失败不能靠主 Agent 改正文、重新封存或临时拼接绕过。最终 `statement-enrichment.v2`、低分复核及公开／私密隔离语义不变；历史 manifest v1/v2 明确走原契约，不猜测或转换。完整交付命令、数据契约和导入流程见 [任务配置说明](CONFIG.md)、[Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
 
 改字段规范或阶段约束时，检查三个版本的入口和提示词；改调度工具、模型选择或上下文管理时，只修改相应 harness。三份版本都不得把机器结果标为人工已审阅，或自动安装快照、部署服务。
 

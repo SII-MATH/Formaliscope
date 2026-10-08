@@ -1,5 +1,11 @@
 {
   "schema": "formaliscope-enrichment-config.v2",
+  "harness": null,
+  "model_aliases": {
+    "claude-code": {
+      "luna6": "sonnet"
+    }
+  },
   "worker": {
     "model": "luna6",
     "reasoning_effort": null

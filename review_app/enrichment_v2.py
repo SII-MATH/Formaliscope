@@ -70,14 +70,41 @@ def validate_agent_annotations(annotations, snapshot, topics=None):
     return _annotations(annotations, snapshot, DEFAULT_TOPICS if topics is None else topics)
 
 
+@lru_cache(maxsize=2)
+def _stage_schema(stage):
+    if stage not in ('readback', 'expectation'):
+        raise ValueError('unsupported result stage')
+    return json.loads((SCHEMA_PATH.parent / f'statement-{stage}-batch.v1.schema.json').read_text(encoding='utf-8'))
+
+
+def validate_stage_batch(document, stage, snapshot, topics=None):
+    from .build import validate_snapshot
+    from .enrichment import _validate
+    schema = _stage_schema(stage)
+    _validate(document, schema, schema)
+    validate_snapshot(snapshot)
+    if snapshot.get('review_mode') != 'statement':
+        raise ValueError('enrichment requires a Statement snapshot')
+    rows = document['annotations']
+    _targets(rows, snapshot, DEFAULT_TOPICS if topics is None else topics,
+             check_topics=stage == 'readback')
+    return rows
+
+
 def _annotations(annotations, snapshot, topics):
-    allowed_topics = {item['id'] for item in validate_topics(topics)}
     if not isinstance(annotations, list):
         raise ValueError('annotations must be a list')
+    for annotation in annotations:
+        _contract(annotation, 'annotation')
+    _targets(annotations, snapshot, topics, check_topics=True)
+    return annotations
+
+
+def _targets(annotations, snapshot, topics, *, check_topics):
+    allowed_topics = {item['id'] for item in validate_topics(topics)}
     cards = {card['id']: card for card in snapshot['cards']}
     seen = set()
     for annotation in annotations:
-        _contract(annotation, 'annotation')
         identity = annotation['declaration_id']
         if identity not in cards or identity in seen:
             raise ValueError('annotation declaration must be known and unique')
@@ -85,9 +112,8 @@ def _annotations(annotations, snapshot, topics):
         lean = cards[identity].get('lean')
         if not isinstance(lean, dict) or not isinstance(lean.get('source'), str) or not lean['source'].strip():
             raise ValueError('selected declaration must have non-empty frozen Lean source text')
-        if set(annotation['classification']['topics']) - allowed_topics:
+        if check_topics and set(annotation['classification']['topics']) - allowed_topics:
             raise ValueError('annotation uses an unregistered project topic')
-    return annotations
 
 
 def validate_document(document, snapshot):

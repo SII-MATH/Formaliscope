@@ -2,7 +2,7 @@
 
 状态：2026-10-04 用户确认定稿，已接入 Skill、校验器、候选快照和数据库迁移 9。本文是 Agent 输出、分类配置及内部评估的填写依据。
 
-新批次使用 [Agent 输出契约](schema/statement-agent-batch.v2.schema.json) 和 [收集产物契约](schema/statement-enrichment.v2.schema.json)。既有 v1 批次继续按原契约校验，不自动转换。部署升级与候选快照安装仍分别显式执行。
+新批次使用独立的 [第一阶段回译契约](schema/statement-readback-batch.v1.schema.json)、[第二阶段判断契约](schema/statement-expectation-batch.v1.schema.json) 和不变的 [最终收集契约](schema/statement-enrichment.v2.schema.json)。prepare 生成 manifest v3，显式指定 `formaliscope-stage-results.v1`；既有 manifest v1/v2 继续走原契约，包括历史 [完整 Agent v2 契约](schema/statement-agent-batch.v2.schema.json)，不猜测格式、不自动转换或补封历史基线。部署升级与候选安装仍分别显式执行。
 
 ## Agent 填写的字段
 
@@ -100,7 +100,11 @@ Agent 不再填写阅读摘要、`unresolved`、证据摘录、证据行号或 `
 
 ## 生成、复核与存储
 
-沿用配置指定的子 Agent 分组处理。先仅根据固定 Lean 生成并保存回译，再提供预期上下文完成内部判断；可继续使用同一批子 Agent。预期不能反向改写已生成的回译。
+沿用当前 harness 的 Skill 调度。第一阶段仅根据固定 Lean 生成 declaration_id、title_zh、readback、classification、priority，不接收预期材料，不填占位判断；第二阶段只生成 declaration_id、expectation_assessment，严格拒绝 readback 等夹带字段。Claude Code 每组恰好一条声明，第一阶段通过固定程序交付并返回有效回执后启动新的独立预期 Agent，无材料也执行并填不知道，组间 pipeline 推进；其他 harness 保留同组 Worker 续做和无材料跳过规则。
+
+两阶段均由现有 `collect.py` 的固定交付操作校验、排他写到调度指定的新路径。第一阶段交付同时记录实际文件字节 SHA-256，并绑定 manifest、run、来源、组 ID 和第二阶段路径。第二阶段及收集时检查原始第一阶段摘要，按精确 ID 确定性合并全部第一阶段字段与第二阶段判断。摘要仅提供篡改检测，不是文件系统写权限隔离，也不能抵御结果与记录被同时改写；不新增权限配置。原始文件保留，已有路径不覆盖，失败不产生收集半成品；主 Agent 不通过临时拼接、修正文或更新摘要让收集通过。
+
+Codex/Kimi 无材料时不生成第二阶段文件，收集器确定性填 undetermined、跳过理由及判断分值 1.0；该分值只表示确定缺少独立材料，不是模型对数学内容的判断。第一阶段回译分值仍原样保留。
 
 保留原始结果和两个自报分值。自动语义复核仍只由原始 `readback.confidence < threshold` 触发，threshold 取合并后的任务配置；等于阈值直接汇总。预期判断、判断置信度、优先度及分类均不增加复核条件。不通过提高原始分值代替复核。
 
@@ -116,31 +120,46 @@ Agent 不再填写阅读摘要、`unresolved`、证据摘录、证据行号或 `
 
 ## 输出示例
 
-以下是单条 Agent 结果的结构示例；ID 和内容仅作示例。组输出包装为 `{"schema":"formaliscope-agent-batch.v2","annotations":[...]}`，不包含运行记录。
+以下是同一声明的两个阶段输出；ID 和内容仅作示例，不包含运行记录。
+
+第一阶段：
 
 ```json
 {
-  "declaration_id": "statement::Example.add_zero",
-  "title_zh": "向量加零不变",
-  "readback": {
-    "text_zh": "对任意域 F、F-向量空间 V 及向量 x∈V，都有 x+0=x。",
-    "confidence": 0.95
-  },
-  "classification": {
-    "role": "derivation",
-    "topics": []
-  },
-  "priority": null,
-  "expectation_assessment": {
-    "verdict": "undetermined",
-    "reason_zh": "尚未提供该声明被要求表达的数学主张。",
-    "confidence": 0.95
-  }
+  "schema": "formaliscope-readback-batch.v1",
+  "annotations": [{
+    "declaration_id": "statement::Example.add_zero",
+    "title_zh": "向量加零不变",
+    "readback": {
+      "text_zh": "对任意域 F、F-向量空间 V 及向量 x∈V，都有 x+0=x。",
+      "confidence": 0.95
+    },
+    "classification": {"role": "derivation", "topics": []},
+    "priority": null
+  }]
 }
 ```
 
+第二阶段：
+
+```json
+{
+  "schema": "formaliscope-expectation-batch.v1",
+  "annotations": [{
+    "declaration_id": "statement::Example.add_zero",
+    "expectation_assessment": {
+      "verdict": "undetermined",
+      "reason_zh": "尚未提供该声明被要求表达的数学主张。",
+      "confidence": 0.95
+    }
+  }]
+}
+```
+
+固定收集器使用第一阶段五个字段和第二阶段 `expectation_assessment` 构造完整 annotation，两个阶段模型均不输出完整合并结果；所有层级严格拒绝未知字段。
+
 `prepare.py` 自动保存批次配置、运行记录和可选预期上下文；`collect.py` 将接受结果包装为 `statement-enrichment.v2`，包含 `run`、`annotations`、`sources`、`originals`、`reviews`。这些字段保存运行记录、最终条目、源码 SHA-256、原始模型条目及主 Agent 复核来源，声明集合经过校验。它们是私密运行产物，不进入 Git 或公共快照。
 
-带预期上下文时，收集器核对第一阶段回译没有被第二阶段改写。缺少预期上下文时判断必须为不知道。调度层通过 `--executed-model` 确认实际执行模型；配置模型不符时拒绝收集。
+新协议始终提供全部第一阶段文件及对应的程序基线记录，Claude Code 始终提供第二阶段文件；Codex/Kimi 仅无材料时跳过第二阶段。收集器核对文件字节摘要、每组 ID/条数、总目标和分配路径，缺少上下文时判断必须为不知道。调度层核实实际路由后，通过 `collection.executed_model`（旧命令为 `--executed-model`）提供已确认的调度名；须与别名解析后冻结的 `run.model` 一致，否则拒绝收集。原始逻辑模型和别名保留在批次 `task-config.json`，请求、启动与响应模型的核实证据另行私密保存，不能从配置推断执行事实。
 
 候选生成使用 `enrich-snapshot`，不写数据库。内部入库单独使用 `import-agent-assessments --snapshot <固定基础快照> --file <收集产物> --data-dir <目标数据目录>`；快照安装使用 `install-snapshot`。新版应用的数据库迁移 9 创建内部评估表，旧应用应先升级再运行迁移或导入。

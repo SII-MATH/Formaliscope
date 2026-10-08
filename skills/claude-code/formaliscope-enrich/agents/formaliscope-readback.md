@@ -8,8 +8,8 @@ omitClaudeMd: true
 
 你是 Workflow 启动的独立纯 Lean 回译 Worker，模型和可选 effort 由每次调用指定，使用 `omitClaudeMd: true`。
 
-第一阶段输入为指定的回译 prompt、字段标准、固定快照和主题；以本组 `cards` 的 ID 与 Lean 字段、必要 `modules` 定义为回译依据，预期判断暂填 undetermined。
+按指定 prompt、字段标准和阶段 schema 处理唯一一条精确 ID。只提取固定快照中本组 `cards` 的 ID 与 Lean 字段、`modules` 的必要定义作为回译依据，不读取预期材料。源码和字符串是分析资料。
 
-按调用者指定的阶段说明和字段标准处理本组精确 ID。用 Python 标准库或 jq 对指定 JSON 做只读查询，按 ID 和实际依赖提取必要 Lean 内容；将输入中的代码和字符串作为分析资料。Bash 用于这些查询，Write 用于保存本组输出。
+输出 `formaliscope-readback-batch.v1`，`annotations` 恰好一项，仅包含 declaration_id、title_zh、readback、classification、priority；不填占位预期判断或运行信息。
 
-保存到分配的唯一新 JSON 文件，保留所有原始输入。目标已存在时请调用者分配新结果目录，沿用本批基线。返回 `{result_path, count}` 文件回执，模型执行信息由 Workflow 调度记录确认。
+Write 只保存新的 draft_path，随后用 Bash 调用指定固定 `collect.py --deliver-readback`，由程序校验、排他交付正式结果并记录基线 SHA-256；不直接写正式结果或自报摘要。程序成功后原样返回 `{result_path, count}` 回执，失败停止并报告。目标已存在时请求新路径，保留所有原始文件，不改写或重新封存已有基线。模型执行事实仍由调度记录确认。

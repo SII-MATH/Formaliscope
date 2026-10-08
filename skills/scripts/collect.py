@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -189,19 +191,25 @@ def _private_write(output, documents, raw_files=None, *, symlinks=None):
         (output / name).symlink_to(target)
 
 
-def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output,
-                executed_model, readback_paths):
-    import hashlib
-    from review_app.enrichment_v2 import validate_agent_annotations
+STAGED_SCHEMA = 'formaliscope-enrichment-batch.v3'
+_UNVERIFIED = object()
 
-    output = Path(output)
-    if output.exists() or output.is_symlink():
-        raise ValueError('output directory must not already exist')
+
+def _batch_inputs(snapshot_path, manifest_path, executed_model=_UNVERIFIED):
     snapshot, manifest = _read(snapshot_path), _read(manifest_path)
-    _fields(manifest, ('schema', 'source_commit', 'snapshot_digest', 'threshold',
-                       'declaration_ids', 'run'), 'manifest')
-    if manifest['schema'] != 'formaliscope-enrichment-batch.v2':
+    schema = manifest.get('schema') if isinstance(manifest, dict) else None
+    fields = ('schema', 'source_commit', 'snapshot_digest', 'threshold', 'declaration_ids', 'run')
+    if schema == STAGED_SCHEMA:
+        fields += ('result_protocol', 'harness')
+    elif schema != 'formaliscope-enrichment-batch.v2':
         raise ValueError('unsupported manifest schema')
+    _fields(manifest, fields, 'manifest')
+    if schema == STAGED_SCHEMA:
+        if manifest['result_protocol'] != 'formaliscope-stage-results.v1':
+            raise ValueError('unsupported stage result protocol')
+        harness = manifest['harness']
+        if harness is not None and (not isinstance(harness, str) or not harness.strip()):
+            raise ValueError('invalid frozen harness')
     threshold = _score(manifest['threshold'])
     run = manifest['run']
     _fields(run, ('run_id', 'model', 'reasoning_effort', 'created_at', 'policy_version',
@@ -211,9 +219,8 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
             run['snapshot_digest'] != manifest['snapshot_digest'] or
             run['threshold'] != threshold):
         raise ValueError('manifest and run source/threshold must agree')
-    if not executed_model or executed_model != run['model']:
+    if executed_model is not _UNVERIFIED and (not executed_model or executed_model != run['model']):
         raise ValueError('executed model must be confirmed and match the frozen run model; start a new batch to change models')
-    # The application validator checks run metadata, digest and frozen modules.
     empty = {'schema': 'statement-enrichment.v2', 'run': run, 'annotations': [],
              'sources': {}, 'originals': {}, 'reviews': {}}
     _validate(empty, snapshot)
@@ -237,6 +244,19 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
     card_by_id = {card['id']: card for card in snapshot['cards']}
     if not set(selected).issubset(card_by_id):
         raise ValueError('manifest contains unknown declarations')
+    return snapshot, manifest
+
+
+def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output,
+                executed_model, readback_paths):
+    from review_app.enrichment_v2 import validate_agent_annotations
+
+    output = Path(output)
+    if output.exists() or output.is_symlink():
+        raise ValueError('output directory must not already exist')
+    snapshot, manifest = _batch_inputs(snapshot_path, manifest_path, executed_model)
+    run, threshold, selected = manifest['run'], manifest['threshold'], manifest['declaration_ids']
+    card_by_id = {card['id']: card for card in snapshot['cards']}
 
     def batches(paths, label):
         if not paths:
@@ -260,9 +280,12 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
             raise ValueError('results must cover exactly the manifest declarations')
         return rows, origins
 
-    originals, paths = batches(result_paths, 'worker')
-    if run['expectation_context_digest'] is not None and not readback_paths:
-        raise ValueError('expectation context requires saved first-stage readback results')
+    if manifest['schema'] == STAGED_SCHEMA:
+        originals, paths = _stage_originals(snapshot, manifest, manifest_path, result_paths, readback_paths)
+    else:
+        originals, paths = batches(result_paths, 'worker')
+        if run['expectation_context_digest'] is not None and not readback_paths:
+            raise ValueError('expectation context requires saved first-stage readback results')
     if run['expectation_context_digest'] is not None:
         context = Path(manifest_path).parent / 'expectation-context.txt'
         if (not context.is_file() or
@@ -280,7 +303,7 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
                 for identity in selected:
                     if not material['references'][identity] and originals[identity]['expectation_assessment']['verdict'] != 'undetermined':
                         raise ValueError('a declaration without Blueprint reference must be undetermined')
-    if readback_paths:
+    if readback_paths and manifest['schema'] == 'formaliscope-enrichment-batch.v2':
         first_stage, _ = batches(readback_paths, 'readback')
         for identity in selected:
             if originals[identity]['readback'] != first_stage[identity]['readback']:
@@ -353,14 +376,171 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
     return report
 
 
+def _stage_rows(raw, stage, snapshot, manifest, identities):
+    from review_app.enrichment_v2 import validate_stage_batch
+    rows = validate_stage_batch(json.loads(raw.decode('utf-8'), object_pairs_hook=_pairs,
+                                           parse_constant=_constant),
+                                stage, snapshot, topics=manifest['run']['topics'])
+    if {row['declaration_id'] for row in rows} != set(identities):
+        raise ValueError(f'{stage} results must exactly match the assigned group IDs and count')
+    return rows
+
+
+def _group_ids(identities, manifest):
+    if (not isinstance(identities, list) or not identities or
+            any(not isinstance(item, str) or item not in manifest['declaration_ids'] for item in identities) or
+            len(set(identities)) != len(identities)):
+        raise ValueError('group IDs must be non-empty, selected and unique')
+    if manifest['harness'] == 'claude-code' and len(identities) != 1:
+        raise ValueError('Claude Code groups must contain exactly one declaration')
+
+
+def _needs_expectation(manifest):
+    return manifest['harness'] == 'claude-code' or manifest['run']['expectation_context_digest'] is not None
+
+
+def _baseline_path(readback_path):
+    return Path(str(readback_path) + '.baseline.json')
+
+
+def _new_file(path, raw):
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
+        stream.write(raw)
+
+
+def _new_paths(paths):
+    if len(set(paths)) != len(paths):
+        raise ValueError('stage output paths must be distinct')
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise ValueError('stage output paths must not already exist; allocate new paths')
+
+
+def deliver_readback(snapshot_path, manifest_path, input_path, result_path, declaration_ids,
+                     expectation_path=None):
+    snapshot, manifest = _batch_inputs(snapshot_path, manifest_path)
+    if manifest['schema'] != STAGED_SCHEMA:
+        raise ValueError('stage delivery requires an explicit v3 manifest')
+    _group_ids(declaration_ids, manifest)
+    if (expectation_path is not None) != _needs_expectation(manifest):
+        raise ValueError('expectation output path must follow the frozen harness/context rule')
+    raw = Path(input_path).read_bytes()
+    rows = _stage_rows(raw, 'readback', snapshot, manifest, declaration_ids)
+    result_path = Path(result_path).absolute()
+    baseline_path = _baseline_path(result_path)
+    next_path = Path(expectation_path).absolute() if expectation_path is not None else None
+    _new_paths([result_path, baseline_path] + ([next_path] if next_path is not None else []))
+    baseline = {'schema': 'formaliscope-readback-baseline.v1',
+                'manifest_sha256': hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest(),
+                'run_id': manifest['run']['run_id'],
+                'source_commit': manifest['source_commit'], 'snapshot_digest': manifest['snapshot_digest'],
+                'declaration_ids': declaration_ids, 'readback_path': str(result_path),
+                'readback_sha256': hashlib.sha256(raw).hexdigest(),
+                'expectation_path': str(next_path) if next_path is not None else None}
+    baseline_raw = (json.dumps(baseline, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
+    _new_file(result_path, raw)
+    _new_file(baseline_path, baseline_raw)
+    return {'result_path': str(result_path), 'count': len(rows)}
+
+
+def _baseline(snapshot, manifest, manifest_path, readback_path):
+    readback_path = Path(readback_path).absolute()
+    baseline_path = _baseline_path(readback_path)
+    if not baseline_path.is_file() or baseline_path.is_symlink() or readback_path.is_symlink():
+        raise ValueError('saved readback baseline is missing or is a symlink')
+    baseline = _read(baseline_path)
+    _fields(baseline, ('schema', 'manifest_sha256', 'run_id', 'source_commit', 'snapshot_digest',
+                       'declaration_ids', 'readback_path', 'readback_sha256', 'expectation_path'), 'readback baseline')
+    if (baseline['schema'] != 'formaliscope-readback-baseline.v1' or
+            baseline['manifest_sha256'] != hashlib.sha256(Path(manifest_path).read_bytes()).hexdigest() or
+            baseline['run_id'] != manifest['run']['run_id'] or
+            baseline['source_commit'] != manifest['source_commit'] or
+            baseline['snapshot_digest'] != manifest['snapshot_digest'] or
+            baseline['readback_path'] != str(readback_path)):
+        raise ValueError('readback baseline does not match the frozen batch/path')
+    _group_ids(baseline['declaration_ids'], manifest)
+    next_path = baseline['expectation_path']
+    if next_path is not None and (not isinstance(next_path, str) or not Path(next_path).is_absolute()):
+        raise ValueError('invalid saved expectation output path')
+    if (next_path is not None) != _needs_expectation(manifest):
+        raise ValueError('saved expectation output path violates the frozen harness/context rule')
+    raw = readback_path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != baseline['readback_sha256']:
+        raise ValueError('readback baseline digest changed; do not modify or reseal original results')
+    rows = _stage_rows(raw, 'readback', snapshot, manifest, baseline['declaration_ids'])
+    return baseline, rows
+
+
+def check_readback(snapshot_path, manifest_path, readback_path):
+    snapshot, manifest = _batch_inputs(snapshot_path, manifest_path)
+    if manifest['schema'] != STAGED_SCHEMA:
+        raise ValueError('stage delivery requires an explicit v3 manifest')
+    _, rows = _baseline(snapshot, manifest, manifest_path, readback_path)
+    return {'result_path': str(Path(readback_path).absolute()), 'count': len(rows)}
+
+
+def deliver_expectation(snapshot_path, manifest_path, input_path, result_path, readback_path):
+    snapshot, manifest = _batch_inputs(snapshot_path, manifest_path)
+    if manifest['schema'] != STAGED_SCHEMA:
+        raise ValueError('stage delivery requires an explicit v3 manifest')
+    baseline, _ = _baseline(snapshot, manifest, manifest_path, readback_path)
+    result_path = Path(result_path).absolute()
+    if str(result_path) != baseline['expectation_path']:
+        raise ValueError('expectation output path must match the saved group allocation')
+    raw = Path(input_path).read_bytes()
+    rows = _stage_rows(raw, 'expectation', snapshot, manifest, baseline['declaration_ids'])
+    if manifest['run']['expectation_context_digest'] is None and any(
+            row['expectation_assessment']['verdict'] != 'undetermined' for row in rows):
+        raise ValueError('without expectation context, verdict must be undetermined')
+    _new_paths([result_path])
+    _new_file(result_path, raw)
+    return {'result_path': str(result_path), 'count': len(rows)}
+
+
+def _stage_originals(snapshot, manifest, manifest_path, result_paths, readback_paths):
+    if not readback_paths:
+        raise ValueError('staged results require saved first-stage readback files and baselines')
+    result_paths = [str(Path(path).absolute()) for path in result_paths]
+    if len(result_paths) != len(set(result_paths)):
+        raise ValueError('duplicate expectation result path')
+    originals, origins, expected_paths = {}, {}, set()
+    for path in readback_paths:
+        baseline, first = _baseline(snapshot, manifest, manifest_path, path)
+        next_path = baseline['expectation_path']
+        if next_path is not None:
+            if next_path in expected_paths or next_path not in result_paths:
+                raise ValueError('missing or duplicate assigned expectation result path')
+            expected_paths.add(next_path)
+            if Path(next_path).is_symlink():
+                raise ValueError('expectation result must not be a symlink')
+            assessments = {row['declaration_id']: row['expectation_assessment'] for row in
+                           _stage_rows(Path(next_path).read_bytes(), 'expectation', snapshot, manifest,
+                                       baseline['declaration_ids'])}
+        else:
+            assessments = {row['declaration_id']: {
+                'verdict': 'undetermined', 'reason_zh': '未提供独立预期材料；本 harness 跳过第二阶段。',
+                'confidence': 1.0} for row in first}
+        for row in first:
+            identity = row['declaration_id']
+            if identity in originals:
+                raise ValueError('readback declaration must be selected and appear once')
+            originals[identity] = {**row, 'expectation_assessment': assessments[identity]}
+            origins[identity] = next_path or str(Path(path).absolute())
+    if expected_paths != set(result_paths) or set(originals) != set(manifest['declaration_ids']):
+        raise ValueError('stage results must cover exactly the manifest declarations and allocated paths')
+    return originals, origins
+
+
 def collect(snapshot_path, manifest_path, result_paths, review_paths, output,
             *, executed_model=None, readback_paths=None):
     """Dispatch by frozen manifest; retain v1 validation for historical batches."""
     manifest = _read(manifest_path)
-    if isinstance(manifest, dict) and manifest.get('schema') == 'formaliscope-enrichment-batch.v2':
-        return _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output,
-                           executed_model, readback_paths or [])
-    return _collect_v1(snapshot_path, manifest_path, result_paths, review_paths, output)
+    if isinstance(manifest, dict):
+        if manifest.get('schema') in ('formaliscope-enrichment-batch.v2', STAGED_SCHEMA):
+            return _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output,
+                               executed_model, readback_paths or [])
+        if manifest.get('schema') == 'formaliscope-enrichment-batch.v1':
+            return _collect_v1(snapshot_path, manifest_path, result_paths, review_paths, output)
+    raise ValueError('unsupported manifest schema')
 
 
 def collect_from_config(config_path):
@@ -379,6 +559,13 @@ def collect_from_config(config_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    delivery = parser.add_mutually_exclusive_group()
+    delivery.add_argument('--deliver-readback', action='store_true')
+    delivery.add_argument('--deliver-expectation', action='store_true')
+    delivery.add_argument('--check-readback', action='store_true')
+    parser.add_argument('--input', type=Path, help='new stage draft to validate and deliver without overwriting')
+    parser.add_argument('--declaration-id', action='append', default=[])
+    parser.add_argument('--next-result', type=Path, help='allocated second-stage path, omitted only when skipped')
     parser.add_argument('--config', type=Path, help='task configuration with collection receipts')
     parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--manifest', type=Path, help=argparse.SUPPRESS)
@@ -390,16 +577,41 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
+        if args.deliver_readback or args.deliver_expectation or args.check_readback:
+            if (not args.snapshot or not args.manifest or
+                    any((args.config, args.review, args.output, args.executed_model))):
+                raise ValueError('stage delivery requires snapshot and manifest, without collection settings')
+            if args.check_readback:
+                if len(args.readback_result) != 1 or any((args.input, args.result, args.next_result, args.declaration_id)):
+                    raise ValueError('baseline check requires exactly one readback-result')
+                receipt = check_readback(args.snapshot, args.manifest, args.readback_result[0])
+            else:
+                if not args.input or not args.result or len(args.result) != 1:
+                    raise ValueError('stage delivery requires an input draft and exactly one result path')
+                if args.deliver_readback:
+                    if args.readback_result:
+                        raise ValueError('readback delivery does not accept a prior readback-result')
+                    receipt = deliver_readback(args.snapshot, args.manifest, args.input, args.result[0],
+                                               args.declaration_id, args.next_result)
+                else:
+                    if len(args.readback_result) != 1 or args.next_result or args.declaration_id:
+                        raise ValueError('expectation delivery requires exactly one readback-result')
+                    receipt = deliver_expectation(args.snapshot, args.manifest, args.input,
+                                                  args.result[0], args.readback_result[0])
+            print(json.dumps(receipt))
+            return
+        if any((args.input, args.next_result, args.declaration_id)):
+            raise ValueError('stage arguments require an explicit delivery operation')
         if args.config is not None:
             if any((args.snapshot, args.manifest, args.result, args.review, args.output,
                     args.executed_model, args.readback_result)):
                 raise ValueError('put collection settings in the configuration file')
             output, report = collect_from_config(args.config)
         else:
-            if not all((args.snapshot, args.manifest, args.result, args.output)):
-                raise ValueError('provide config or the complete legacy collection arguments')
+            if not all((args.snapshot, args.manifest, args.output)) or not (args.result or args.readback_result):
+                raise ValueError('provide config or snapshot, manifest, output and result inputs')
             output = args.output
-            report = collect(args.snapshot, args.manifest, args.result, args.review, output,
+            report = collect(args.snapshot, args.manifest, args.result or [], args.review, output,
                              executed_model=args.executed_model, readback_paths=args.readback_result)
     except (ValueError, OSError) as exc:
         parser.exit(2, f'collect: {exc}\n')

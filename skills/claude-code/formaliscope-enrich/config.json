@@ -1,5 +1,6 @@
 {
   "defaults": "skills/default-config.json",
+  "harness": "claude-code",
   "worker": {
     "reasoning_effort": null
   }

@@ -43,17 +43,17 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 ### 第一阶段
 
-两组及以上使用 `AgentSwarm`，单组使用 `Agent`。模板引用 `${KIMI_SKILL_DIR}/references/worker-prompt.md`，提供仓库路径、本批快照、主题配置和本组任务；items 包含 `group_id`、精确 ID 和唯一结果路径。按当前工具的参数约定调用，等待聚合报告。
+两组及以上使用 `AgentSwarm`，单组使用 `Agent`。模板引用 `${KIMI_SKILL_DIR}/references/worker-prompt.md`，提供仓库路径、本批快照、主题、manifest 和本组任务；items 包含 `group_id`、精确 ID、唯一 draft/result 路径和 `next_result_path`（无材料时 null）。第一阶段不接收预期材料、不填占位判断，仅输出 declaration_id、title_zh、readback、classification、priority。Worker 调用固定 `collect.py --deliver-readback`，由程序校验、排他交付正式文件并封存 `.baseline.json` 摘要。等待聚合报告。
 
 按工具返回的真实身份记录每组 agent ID 与结果文件的对应关系，核对声明集合及文件就绪情况。
 
 ### 第二阶段
 
-有预期材料且第一阶段就绪时，通过 `AgentSwarm.resume_agent_ids` 续做对应 worker；单组可用 `Agent` resume。任务引用 `${KIMI_SKILL_DIR}/references/expectation-prompt.md`，提供已保存的第一阶段文件、本批参考和新的结果路径。补充内部判断并原样保留回译及分值。
+有预期材料且第一阶段交付成功时，通过 `AgentSwarm.resume_agent_ids` 续做对应 worker；单组可用 `Agent` resume。任务引用 `${KIMI_SKILL_DIR}/references/expectation-prompt.md`，先调用固定 `--check-readback`，再只读第一阶段基线和本批参考。仅输出 declaration_id、expectation_assessment，通过 `--deliver-expectation` 排他交付已分配的新路径，禁止复制或输出第一阶段字段。
 
-没有预期材料时，第一阶段文件即为最终结果，预期判断保持 `undetermined`。
+无预期材料时保留跳过第二阶段规则；`collection.results=[]`，始终填写 `readback_results`。收集程序生成 `undetermined`、跳过原因及固定判断分值 1.0，仅表示确定缺少材料，不是模型数学判断。
 
-每组输出 `{"schema":"formaliscope-agent-batch.v2","annotations":[...]}`，逐条填写 `declaration_id`、`title_zh`、`readback`、`classification`、`priority`、`expectation_assessment`。可靠回译尚待完成时，正文填 null。来源、运行及模型记录由脚本和调度层维护。
+两个阶段分别使用严格 `formaliscope-readback-batch.v1`、`formaliscope-expectation-batch.v1`，每组精确覆盖分配 ID，每条一次。正文不能可靠生成时为 null。收集器检查基线字节摘要、组 ID/条数及第二阶段分配路径，再按 ID 确定性合并，保持最终 `statement-enrichment.v2`。失败停止并保留原始文件；主 Agent 不临时拼接或改正文让校验通过。摘要只检测篡改，不是权限隔离；已有文件不覆盖。历史 v1/v2 按显式 manifest 保留原契约，不猜测或转换。
 
 ## 校验与复核
 
