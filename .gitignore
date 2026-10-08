@@ -15,3 +15,6 @@ __pycache__/
 .kimi-code/skills/formaliscope-enrich
 .kimi-code/agents/formaliscope-enrich
 .performance-results/
+# Local measurement logs and source-bound preview drafts.
+review_app/perf/
+review_app/preview_annotations.json
