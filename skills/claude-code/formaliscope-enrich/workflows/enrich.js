@@ -8,7 +8,7 @@ export const meta = {
 }
 
 if (!args || typeof args !== 'object' || Array.isArray(args)) {
-  throw new Error('args 必须是结构化对象，不能是 JSON 字符串')
+  throw new Error('args 请使用结构化对象')
 }
 const { repoRoot, skillDir, batchDir, resultDir = batchDir, config, declarationIds, groups, expectationContext } = args
 for (const [name, path] of Object.entries({ repoRoot, skillDir, batchDir, resultDir })) {
@@ -27,7 +27,7 @@ if (config?.schema !== 'formaliscope-enrichment-config.v2' ||
 }
 const effort = config.worker.reasoning_effort
 if (effort !== null && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
-  throw new Error('本 Workflow 不支持所配置的 effort；不得忽略或翻译其他 harness 的等级')
+  throw new Error('effort 请使用本 Workflow 支持的 low/medium/high/xhigh/max 或 null')
 }
 if (!Array.isArray(declarationIds) || !declarationIds.length ||
     declarationIds.some(id => typeof id !== 'string' || !id.startsWith('statement::')) ||
@@ -52,7 +52,7 @@ for (const group of groups) {
   }
 }
 if (assigned.size !== selected.size) {
-  throw new Error('分组必须恰好覆盖本次运行分配的声明集合，不得丢组')
+  throw new Error('请补齐分组，使其恰好覆盖本次运行分配的声明集合')
 }
 const agentCount = groups.length * (expectationContext === null ? 1 : 2)
 if (groups.length > 4096 || agentCount > 1000) {
@@ -77,7 +77,7 @@ const options = (agentType, phase, label) => ({
 })
 const checkReceipt = (receipt, path, group) => {
   if (!receipt || receipt.result_path !== path || receipt.count !== group.declarationIds.length) {
-    throw new Error(`${group.key} 未返回完整文件回执；停止该组，不启动后续阶段`)
+    throw new Error(`${group.key} 的文件回执待补齐；该组后续阶段等待完整回执`)
   }
   return receipt
 }
@@ -98,8 +98,8 @@ const results = await pipeline(
     }
     const receipt = await agent(
       `执行纯 Lean 回译。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
-只读本阶段分配的材料和必要固定 Lean 定义，不遍历批次目录或读取其他阶段文件。
-只写指定结果，权限 0600。不要自行确认模型身份，返回文件回执。
+以本组 cards 的 ID 与 Lean 字段、必要 modules 定义为回译依据。
+将结果写入指定新路径，权限 0600，保留所有原始输入，返回文件回执。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-readback', 'Lean 回译', `${group.key}:readback`),
     )
@@ -123,8 +123,8 @@ const results = await pipeline(
     }
     const receipt = await agent(
       `执行独立预期判断。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
-第一阶段文件是固定基线，只修改 expectation_assessment；不反写原文件或改动其他字段。
-只写指定的新结果，权限 0600。不要自行确认模型身份，返回文件回执。
+以第一阶段文件为固定基线，补充 expectation_assessment，原样保留其余字段及分值。
+将结果写入指定新路径，权限 0600，保留基线文件，返回文件回执。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-expectation', '内部预期判断', `${group.key}:expectation`),
     )
@@ -134,7 +134,7 @@ const results = await pipeline(
 )
 const incomplete = groups.filter((group, index) => !results[index]).map(group => group.key)
 if (incomplete.length) {
-  log(`未完成分组：${incomplete.join(', ')}；禁止当作完整批次收集`)
+  log(`未完成分组：${incomplete.join(', ')}；完整收集等待这些组交付`)
 }
 return {
   complete: incomplete.length === 0,

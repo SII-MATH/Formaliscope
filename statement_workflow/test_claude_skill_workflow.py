@@ -184,7 +184,7 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                 self.assertFalse(output['result']['complete'])
                 self.assertEqual(output['result']['incomplete_groups'], ['group-1'])
                 self.assertEqual([group['key'] for group in output['result']['groups']], ['group-2'])
-                self.assertTrue(any('禁止' in line for line in output['logs']))
+                self.assertTrue(any('group-1' in line for line in output['logs']))
                 if mode != 'skip-expectation':
                     self.assertFalse(any(call['opts']['label'] == 'group-1:expectation'
                                          for call in output['calls']))
