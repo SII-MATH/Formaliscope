@@ -98,7 +98,7 @@ class SkillBatchV2Tests(unittest.TestCase):
         self.first_path = self.write('first-stage.json', deepcopy(self.result))
         return context
 
-    def test_prepare_freezes_selection_config_context_and_private_permissions(self):
+    def test_prepare_records_selection_config_context_and_private_permissions(self):
         context = self.context_batch()
         self.assertEqual(len(self.manifest['declaration_ids']), 3)
         self.assertEqual(self.manifest['run']['model'], 'fixture-worker')
@@ -108,12 +108,57 @@ class SkillBatchV2Tests(unittest.TestCase):
         self.assertEqual(collector._read(self.batch / 'agent-config.json'), self.config)
         self.assertEqual(stat.S_IMODE(self.batch.stat().st_mode), 0o700)
         for path in self.batch.iterdir():
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode),
+                             0o400 if path.name == 'snapshot.json' else 0o600)
         self.config['worker']['model'] = 'another-model'
         self.write('config.json', self.config)
         self.assertEqual(collector._read(self.batch / 'agent-config.json')['worker']['model'], 'fixture-worker')
         self.snapshot_path.write_text('{}')
         self.assertEqual(collector._read(self.batch / 'snapshot.json'), self.snapshot)
+
+    def test_tasks_share_one_snapshot_and_survive_original_input_removal(self):
+        other = self.root / 'second-task'
+        self.prepare(output=other)
+        link = self.batch / 'snapshot.json'
+        self.assertTrue(link.is_symlink())
+        self.assertFalse(Path(link.readlink()).is_absolute())
+        self.assertEqual(link.resolve(), (other / 'snapshot.json').resolve())
+        self.assertEqual(len(list((self.root / '.snapshots').iterdir())), 1)
+        self.assertEqual(stat.S_IMODE(link.resolve().parent.stat().st_mode), 0o700)
+        self.snapshot_path.unlink()
+        self.assertEqual(collector._read(link), self.snapshot)
+        self.collect()
+
+    def test_changed_input_uses_a_new_shared_snapshot_without_changing_old_tasks(self):
+        old_target = (self.batch / 'snapshot.json').resolve()
+        source = self.root / 'source/KIP126/Sub/Example.lean'
+        source.write_text(source.read_text().replace(':= 1', ':= 5'))
+        newer = compile_statements(self.root / 'source', source_commit='b' * 40)
+        self.snapshot_path.write_text(json.dumps(newer))
+        other = self.root / 'new-source-task'
+        self.prepare(output=other)
+        self.assertNotEqual(old_target, (other / 'snapshot.json').resolve())
+        self.assertEqual(collector._read(self.batch / 'snapshot.json'), self.snapshot)
+        self.assertEqual(collector._read(other / 'snapshot.json'), newer)
+
+    def test_corrupted_shared_snapshot_is_rejected_without_overwriting_or_output(self):
+        target = (self.batch / 'snapshot.json').resolve()
+        target.chmod(0o600)
+        target.write_text('{}')
+        self.rejected()
+        other = self.root / 'corrupted-task'
+        with self.assertRaisesRegex(ValueError, 'shared snapshot content changed'):
+            self.prepare(output=other)
+        self.assertFalse(other.exists())
+        self.assertEqual(target.read_text(), '{}')
+
+    def test_old_v2_task_with_full_snapshot_remains_collectable(self):
+        link = self.batch / 'snapshot.json'
+        raw = link.read_bytes()
+        link.unlink()
+        link.write_bytes(raw)
+        link.chmod(0o600)
+        self.collect()
 
     def blueprint_batch(self, *, additional=None):
         source = self.root / 'source'

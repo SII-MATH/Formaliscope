@@ -4,13 +4,13 @@
 
 ## 当前流程
 
-冻结源码快照、范围及配置 → 配置指定的子 Agent 分组生成并保存纯 Lean 回译 → 同一子 Agent 根据独立预期材料补内部判断 → 脚本校验 → 仅低回译置信度由主 Agent 复核 → 汇总私密补充数据 → 生成公开候选快照／独立导入内部评估 → 显式安装 → 用户审阅。
+准备任务并引用固定快照 → 配置指定的子 Agent 分组生成并保存纯 Lean 回译 → 同一子 Agent 根据独立预期材料补内部判断 → 脚本校验 → 仅低回译置信度由主 Agent 复核 → 汇总私密补充数据 → 生成公开候选快照／独立导入内部评估 → 显式安装 → 用户审阅。
 
 没有预期材料时，判断为不知道；不能自行从 Lean 构造预期再判符合。第二阶段不能改变已保存的回译正文及其分值。主 Agent 复核也保留原始两个分值和完整机器预期判断，不把机器处理标为人的审阅。
 
-默认预期来自冻结快照中绑定该声明的 Blueprint 文案。准备脚本自动保存按精确声明 ID 索引的参考到 `expectation-context.txt`，同时保留所有关联节点、出处及共同关联的声明。`--expectation-context` 可补充用户提供的材料。参考只进入第二阶段；没有该声明的参考或明确补充预期时填不知道。同一节点覆盖多个 Lean 声明时，核对当前声明对应的部分，而不是要求每条声明独自覆盖节点全部内容。
+默认预期来自固定快照中绑定该声明的 Blueprint 文案。准备脚本自动保存按精确声明 ID 索引的参考到 `expectation-context.txt`，同时保留所有关联节点、出处及共同关联的声明。`--expectation-context` 可补充用户提供的材料。参考只进入第二阶段；没有该声明的参考或明确补充预期时填不知道。同一节点覆盖多个 Lean 声明时，核对当前声明对应的部分，而不是要求每条声明独自覆盖节点全部内容。
 
-模型路由 ID、推理等级、主题选项从[当前 harness 的配置](../skills/README.md#模型配置)读取，prompt 不固定模型。准备脚本冻结配置和源码，续做沿用副本。调度层必须按配置显式启动子 Agent，并确认实际执行模型；模型不可用或不符时停止并准备新批次，不能静默回退。
+模型路由 ID、推理等级、主题选项从[当前 harness 的配置](../skills/README.md#模型配置)读取，prompt 不固定模型。准备脚本记录配置和范围、引用共享只读快照，续做使用本批文件。调度层必须按配置显式启动子 Agent，并确认实际执行模型；模型不可用或不符时停止并准备新批次，不能静默回退。
 
 复核唯一条件是原始 `readback.confidence < threshold`，默认 0.8，等于阈值直接汇总。预期判断及其分值、角色、优先度、依赖数量、复杂度和抽样都不参与路由。正文 null 单列生成失败，不计成功，不以空正文覆盖现有回译。
 
@@ -29,18 +29,18 @@ Agent 输出 [statement-agent-batch.v2.schema.json](schema/statement-agent-batch
 | `declaration_id` | 调度分配的精确 ID，原样返回。 |
 | `title_zh` | 简短、忠实的中文阅读标题，无法可靠命名时为 null。 |
 | `readback.text_zh` | 完整中文及 LaTeX 回译；未生成时为 null。 |
-| `readback.confidence` | 回译忠实于冻结 Lean 的自报分值，0–1。 |
+| `readback.confidence` | 回译忠实于固定 Lean 的自报分值，0–1。 |
 | `classification` | 七类数学角色单选或 null；当前配置主题多选、去重，未知为 []。 |
 | `priority` | p0/p1/p2/null，按实际审核目标和作用分级。 |
 | `expectation_assessment` | 是／否／不知道及独立自报分值；否与不知道必须有非空具体理由。仅供内部评估。 |
 
-Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、basis、provenance、时间或实际执行模型。来源校验仍保留：脚本自动记录运行 ID、配置模型、推理等级、生成时间、源码提交、冻结快照摘要、规则版本和预期材料摘要，对每条精确 Lean 源码计算 SHA-256。
+Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、basis、provenance、时间或实际执行模型。来源校验仍保留：脚本自动记录运行 ID、配置模型、推理等级、生成时间、源码提交、固定快照摘要、规则版本和预期材料摘要，对每条精确 Lean 源码计算 SHA-256。
 
-收集产物使用 [statement-enrichment.v2.schema.json](schema/statement-enrichment.v2.schema.json)：`run` 保存冻结运行记录；`annotations` 为接受条目；`sources` 是 ID → 源码摘要；`originals` 是 ID → 原始 Worker 条目；`reviews` 是已复核 ID → 实际复核模型和时间。原始结果文件保留，未复核和失败条目另列报告。
+收集产物使用 [statement-enrichment.v2.schema.json](schema/statement-enrichment.v2.schema.json)：`run` 保存固定运行记录；`annotations` 为接受条目；`sources` 是 ID → 源码摘要；`originals` 是 ID → 原始 Worker 条目；`reviews` 是已复核 ID → 实际复核模型和时间。原始结果文件保留，未复核和失败条目另列报告。
 
 ## 准备、校验与汇总
 
-在仓库根目录准备一个新的私密批次：
+在仓库根目录准备新的回译任务：
 
 ```sh
 python3 skills/scripts/prepare.py \
@@ -49,7 +49,9 @@ python3 skills/scripts/prepare.py \
   --output .statement-enrichment/new-batch
 ```
 
-也可用 `--file`、`--declaration-id`，多次提供时取并集。必须通过 `--config` 指定当前 harness 的模型配置；可选用户指定的 `--threshold` 和 `--expectation-context`。冻结的预期材料只在第二阶段提供给 Worker。批次目录 0700、文件 0600，全部放在被 Git 忽略的 `.statement-enrichment/`；因为含内部评估，不放入公开目录。
+也可用 `--file`、`--declaration-id`，多次提供时取并集。必须通过 `--config` 指定当前 harness 的模型配置；可选用户指定的 `--threshold` 和 `--expectation-context`。固定的预期材料只在第二阶段提供给 Worker。批次目录 0700、普通文件 0600，全部放在被 Git 忽略的 `.statement-enrichment/`；因为含内部评估，不放入公开目录。
+
+脚本将完整快照按内容 SHA-256 共用保存在批次父目录的 `.snapshots/` 中，已有内容会校验后复用；批次的 `snapshot.json` 是指向它的相对链接，不再每批复制全库。共享快照为只读 0400，目录为 0700；批次保存 `agent-config.json`、`manifest.json` 和可选 `expectation-context.txt`（含 SHA-256），普通文件为 0600。运行 ID、时间、源码提交、快照摘要、模型路由、推理等级、主题、规则版本及阈值由脚本记录，Agent 不填写。任务和 Agent 结果也保持私密权限。续做使用本批入口，不重新读取最初的输入路径；换模型、材料或范围时准备新任务。移动或备份任务时同时保留同级 `.snapshots/`，不要单独移动链接或删除仍被任务引用的快照。旧批次中的完整 `snapshot.json` 仍可直接使用。
 
 按 Skill 完成分组两阶段输出，调度层确认模型后收集：
 
@@ -65,7 +67,7 @@ python3 skills/scripts/collect.py \
 
 `ACTUAL_MODEL` 是调度工具确认的实际模型，必须与本批要求相同。`--result`、`--readback-result` 和 `--review` 可重复。没有预期材料时可省略第一阶段参数；有预期时必须提供，脚本验证目标集合、原回译不变及预期材料摘要。
 
-脚本对所有输入检查精确目标集合、冻结来源、选项、类型、有限分值和条件必填理由，全部通过后才写新的输出目录。它生成 `enrichment.json`、`review-queue.json`、`report.json`，区分直接汇总、已复核、待复核、生成失败。不能以提高原分值代替复核。
+脚本对所有输入检查精确目标集合、固定来源、选项、类型、有限分值和条件必填理由，全部通过后才写新的输出目录。它生成 `enrichment.json`、`review-queue.json`、`report.json`，区分直接汇总、已复核、待复核、生成失败。不能以提高原分值代替复核。
 
 ## 公开候选与私密数据库分别导入
 
@@ -101,4 +103,4 @@ python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 python3 -m unittest review_app.test_enrichment
 ```
 
-协议回归采用合成夹具，覆盖冻结范围与主题、实际模型确认、两阶段回译不变、阈值边界、独立双分值、失败回译、原结果保留、私密文件权限和旧批次兼容。真实数学质量仍按实际试跑验收。
+协议回归采用合成夹具，覆盖固定范围与主题、实际模型确认、两阶段回译不变、阈值边界、独立双分值、失败回译、原结果保留、私密文件权限和旧批次兼容。真实数学质量仍按实际试跑验收。

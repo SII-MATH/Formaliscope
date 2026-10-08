@@ -74,13 +74,15 @@ Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独�
 
 Codex 默认 `worker.reasoning_effort=high`；Claude Code 和 Kimi Code 默认为 null，表示不额外要求等级。非 null 的等级必须能被当前 harness 和模型实际应用。Claude 的 effort、Kimi 的 thinking 和 Codex 的 reasoning effort 不默认视为等价，不能静默忽略或降级。
 
-每个 harness 独立维护配置；主题和字段规则保持一致。所有准备命令必须显式传入 `--config`，不从安装目录推断默认模型。用户指定其他配置时使用该配置。批次一旦冻结，续做沿用本批文件；换模型或设置时开新批次。
+每个 harness 独立维护配置；主题和字段规则保持一致。所有准备命令必须显式传入 `--config`，不从安装目录推断默认模型。用户指定其他配置时使用该配置。批次一旦固定，续做沿用本批文件；换模型或设置时开新批次。
 
 ## 执行与维护
 
 安装包含本 harness 的入口、配置与三份阶段提示词；Claude 版另含专用 agents 定义和分组 Workflow 脚本，Kimi 版另含单独注册的 swarm worker 定义。脚本留在仓库 `skills/scripts/`，安装目录不需要复制共享准备/收集脚本。定位包含 `review_app/`、`statement_workflow/` 和 `skills/` 的仓库根目录，在该目录执行命令；不从全局安装路径推算仓库位置。Claude 版通过 `${CLAUDE_SKILL_DIR}` 定位安装资源，不据此推算仓库。Kimi 版通过 `${KIMI_SKILL_DIR}` 定位配置与阶段提示词，同样不据此推算仓库。本流程推荐使用上面的项目级安装。
 
-例如 Codex 准备批次；其他 harness 使用各自的配置路径：
+准备脚本自动记录任务依据，同一内容的完整快照共用在批次父目录的 `.snapshots/`，批次内 `snapshot.json` 为相对链接；无需额外固定操作。移动或备份时同时保留共享目录，旧批次的完整快照继续兼容。
+
+例如 Codex 准备回译任务；其他 harness 使用各自的配置路径：
 
 ```sh
 python3 skills/scripts/prepare.py \
@@ -90,7 +92,7 @@ python3 skills/scripts/prepare.py \
   --output .statement-enrichment/new-batch
 ```
 
-随后按安装的 Skill 分组调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。Claude 版由主会话核对冻结范围与配置，Workflow `pipeline()` 逐组执行独立回译与预期 agents，无预期时跳过第二阶段；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。共享收集器仍只按原始回译分值安排主 Agent 复核；生成的候选和内部评估沿既有命令分别处理。完整数据契约、收集和导入命令见 [Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
+随后按安装的 Skill 分组调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。Claude 版由主会话核对固定范围与配置，Workflow `pipeline()` 逐组执行独立回译与预期 agents，无预期时跳过第二阶段；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。共享收集器仍只按原始回译分值安排主 Agent 复核；生成的候选和内部评估沿既有命令分别处理。完整数据契约、收集和导入命令见 [Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
 
 改字段规范或阶段约束时，检查三个版本的入口和提示词；改调度工具、模型选择或上下文管理时，只修改相应 harness。三份版本都不得把机器结果标为人工已审阅，或自动安装快照、部署服务。
 

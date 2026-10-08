@@ -1,6 +1,6 @@
 export const meta = {
   name: 'formaliscope-enrich-groups',
-  description: '按冻结分组流水线生成纯 Lean 回译及独立内部预期判断',
+  description: '按固定分组流水线生成纯 Lean 回译及独立内部预期判断',
   phases: [
     { title: 'Lean 回译' },
     { title: '内部预期判断' },
@@ -18,12 +18,12 @@ for (const [name, path] of Object.entries({ repoRoot, skillDir, batchDir, result
 }
 if (expectationContext !== null &&
     (typeof expectationContext !== 'string' || !/^(\/|[A-Za-z]:[\\/])/.test(expectationContext))) {
-  throw new Error('expectationContext 必须是冻结预期材料的绝对路径或 null')
+  throw new Error('expectationContext 必须是固定预期材料的绝对路径或 null')
 }
 if (config?.schema !== 'formaliscope-enrichment-config.v2' ||
     typeof config.worker?.model !== 'string' || !config.worker.model.trim() ||
     !Array.isArray(config.topics)) {
-  throw new Error('config 必须来自本批冻结的 agent-config.json')
+  throw new Error('config 必须来自本批固定的 agent-config.json')
 }
 const effort = config.worker.reasoning_effort
 if (effort !== null && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
@@ -98,7 +98,7 @@ const results = await pipeline(
     }
     const receipt = await agent(
       `执行纯 Lean 回译。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
-只读本阶段分配的材料和必要冻结 Lean 定义，不遍历批次目录或读取其他阶段文件。
+只读本阶段分配的材料和必要固定 Lean 定义，不遍历批次目录或读取其他阶段文件。
 只写指定结果，权限 0600。不要自行确认模型身份，返回文件回执。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-readback', 'Lean 回译', `${group.key}:readback`),

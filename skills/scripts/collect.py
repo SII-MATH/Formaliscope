@@ -163,7 +163,7 @@ def _collect_v1(snapshot_path, manifest_path, result_paths, review_paths, output
     return report
 
 
-def _private_write(output, documents, raw_files=None):
+def _private_write(output, documents, raw_files=None, *, symlinks=None):
     """Serialize and validate everything before publishing private batch output."""
     import os
     encoded = {name: (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
@@ -185,6 +185,8 @@ def _private_write(output, documents, raw_files=None):
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, 'wb') as stream:
             stream.write(content)
+    for name, target in (symlinks or {}).items():
+        (output / name).symlink_to(target)
 
 
 def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output,

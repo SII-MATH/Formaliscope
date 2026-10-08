@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze a selected source snapshot, model configuration and private v2 run."""
+"""Prepare a source-bound v2 task using a shared read-only snapshot."""
 from __future__ import annotations
 
 import argparse
@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path, PurePosixPath
 import sys
+import tempfile
 import uuid
 
 
@@ -26,9 +28,42 @@ def _relative(value, label):
     return str(PurePosixPath(value))
 
 
+def _shared_snapshot(snapshot, output):
+    """Publish once by content hash; never overwrite an existing pool entry."""
+    raw = (json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':'), allow_nan=False) + '\n').encode('utf-8')
+    pool = Path(output).absolute().parent / '.snapshots'
+    # Match the private batch directories, including newly created parents.
+    missing, parent = [], pool
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    target = pool / (hashlib.sha256(raw).hexdigest() + '.json')
+    if not target.exists() and not target.is_symlink():
+        descriptor, temporary = tempfile.mkstemp(prefix='.snapshot-', dir=pool)
+        try:
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fchmod(stream.fileno(), 0o400)
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                pass  # Another preparation may have published the same content.
+        finally:
+            Path(temporary).unlink()
+    if target.is_symlink() or target.read_bytes() != raw:
+        raise ValueError('shared snapshot content changed; restore the pool entry before preparing tasks')
+    return os.path.relpath(target, Path(output).absolute())
+
+
 def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
             declaration_ids=(), threshold=0.8, expectation_context=None):
-    """Validate all inputs, then create a new private directory with frozen copies."""
+    """Validate inputs, then record scope/configuration and link shared source."""
+    if Path(output).exists() or Path(output).is_symlink():
+        raise ValueError('output directory must not already exist')
     snapshot = helper._read(snapshot_path)
     helper._validate({'schema': 'statement-enrichment.v1', 'annotations': []}, snapshot)
     config = helper._read(config_path)
@@ -88,9 +123,11 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
     manifest = {'schema': 'formaliscope-enrichment-batch.v2',
                 'source_commit': snapshot['source_commit'], 'snapshot_digest': snapshot['digest'],
                 'threshold': threshold, 'declaration_ids': selected, 'run': run}
-    helper._private_write(output, {'manifest.json': manifest, 'snapshot.json': snapshot,
+    snapshot_link = _shared_snapshot(snapshot, output)
+    helper._private_write(output, {'manifest.json': manifest,
                                   'agent-config.json': config},
-                          {'expectation-context.txt': raw_context} if raw_context is not None else None)
+                          {'expectation-context.txt': raw_context} if raw_context is not None else None,
+                          symlinks={'snapshot.json': snapshot_link})
     return manifest
 
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Formaliscope 中文回译"
   short_description: "按配置分组回译、标签与内部预期评估，仅按回译置信度复核"
-  default_prompt: "使用 $formaliscope-enrich，冻结指定范围与模型配置，先保存纯 Lean 回译再填写内部预期判断，按原始回译置信度复核并输出候选快照。"
+  default_prompt: "使用 $formaliscope-enrich，准备指定范围的回译任务并记录模型配置，先保存纯 Lean 回译再填写内部预期判断，按原始回译置信度复核并输出候选快照。"
