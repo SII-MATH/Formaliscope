@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+from review_app.local_paths import local_root
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -78,4 +79,10 @@ def load_config(path):
 
 def task_output(config_path, config):
     return project_path(config['output'], 'output') if config['output'] is not None else (
-        REPO / '.statement-enrichment' / Path(config_path).stem)
+        local_root(REPO) / 'tasks' / 'batches' / Path(config_path).stem)
+
+
+def snapshot_pool(output):
+    """Project tasks share one cache; external task dirs stay self-contained."""
+    root = local_root(REPO)
+    return root / 'cache' / 'snapshots' if Path(output).resolve().is_relative_to(root.resolve()) else None

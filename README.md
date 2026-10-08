@@ -14,13 +14,15 @@ v2 已接入 Skill、校验器与数据库迁移 9：Agent 填写标题、完整
 
 Release 说明自动包含相对上一正式版本的 Changelog 和完整对比链接。中文版本摘要见 [CHANGELOG.md](CHANGELOG.md)。
 
+本地数据统一保存在被 Git 忽略的 `.formaliscope/`，目录职责、清理规则和旧目录迁移见 [本地存储说明](review_app/LOCAL_STORAGE.md)。
+
 需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
 
 ```bash
-python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
-python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .review
-python3 -m review_app preflight --preview --data-dir .review
-python3 -m review_app serve --preview --port 8876 --data-dir .review
+python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
+python3 -m review_app install-snapshot --file .formaliscope/snapshots/candidates/local-preview.json --data-dir .formaliscope/runtime
+python3 -m review_app preflight --preview --data-dir .formaliscope/runtime
+python3 -m review_app serve --preview --port 8876 --data-dir .formaliscope/runtime
 ```
 
 打开 `http://127.0.0.1:8876/`。预览使用姓名和恢复凭证，不发送邮件，只允许本机监听。它是前端演示模式；正式服务默认也使用姓名登记和私人恢复码；管理员由服务器操作员单独创建，见 [身份说明](review_app/IDENTITY.md)。
@@ -51,7 +53,7 @@ python3 -m review_app import-agent-assessments \
 
 构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 
-HK-VPS 的完整备份可加密拉取到本机项目下的 `.review-backups/hk-vps/`。目录、密钥和本机配置均被 Git 忽略；同步、校验与恢复步骤见 [本机异机备份](review_app/OFFSITE_BACKUP.md)。只有该工具另需 `deploy/requirements-offsite-backup.txt` 中的加密依赖，网页服务和回译工具仍使用 Python 标准库。
+HK-VPS 的完整备份可加密拉取到本机项目下的 `.formaliscope/backups/hk-vps/`。目录、密钥和本机配置均被 Git 忽略；同步、校验与恢复步骤见 [本机异机备份](review_app/OFFSITE_BACKUP.md)。只有该工具另需 `deploy/requirements-offsite-backup.txt` 中的加密依赖，网页服务和回译工具仍使用 Python 标准库。
 
 完整验证：
 

@@ -40,20 +40,20 @@ Agent 不填写阅读摘要、未解释对象列表、证据摘录、行号、ba
 
 ## 准备、校验与汇总
 
-Agent 开始任务前，起草 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照、范围和用户要求的覆盖项。字段和合并规则见 [任务配置说明](../skills/CONFIG.md)，默认值集中在 [共享配置](../skills/default-config.json)。
+Agent 开始任务前，起草 `.formaliscope/tasks/configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照、范围和用户要求的覆盖项。字段和合并规则见 [任务配置说明](../skills/CONFIG.md)，默认值集中在 [共享配置](../skills/default-config.json)。
 
 ```sh
-python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
 准备结果记录实际批次路径、完整合并设置和声明清单。预期材料在第一阶段落盘后提供给 Worker。任务配置、批次和结果均保存在被 Git 忽略的私密目录。
 
-脚本将完整快照按内容 SHA-256 共用保存在批次父目录的 `.snapshots/` 中，已有内容会校验后复用；批次的 `snapshot.json` 是指向它的相对链接，不再每批复制全库。共享快照为只读 0400，目录为 0700；批次保存 `agent-config.json`、`manifest.json` 和可选 `expectation-context.txt`（含 SHA-256），普通文件为 0600。运行 ID、时间、源码提交、快照摘要、模型路由、推理等级、主题、规则版本及阈值由脚本记录，Agent 不填写。任务和 Agent 结果也保持私密权限。续做使用本批入口，不重新读取最初的输入路径；换模型、材料或范围时准备新任务。移动或备份任务时同时保留同级 `.snapshots/`，不要单独移动链接或删除仍被任务引用的快照。旧批次中的完整 `snapshot.json` 仍可直接使用。
+项目内的批次将完整快照按内容 SHA-256 共用保存在 `.formaliscope/cache/snapshots/` 中；显式指定项目存储目录外的批次时，保存在该批次父目录的 `.snapshots/` 中，已有内容会校验后复用；批次的 `snapshot.json` 是指向它的相对链接，不再每批复制全库。共享快照为只读 0400，目录为 0700；批次保存 `agent-config.json`、`manifest.json` 和可选 `expectation-context.txt`（含 SHA-256），普通文件为 0600。运行 ID、时间、源码提交、快照摘要、模型路由、推理等级、主题、规则版本及阈值由脚本记录，Agent 不填写。任务和 Agent 结果也保持私密权限。续做使用本批入口，不重新读取最初的输入路径；换模型、材料或范围时准备新任务。移动或备份任务时同时保留其引用的共享快照缓存，不要单独移动链接或删除仍被任务引用的快照。旧批次中的完整 `snapshot.json` 仍可直接使用。
 
 按 Skill 完成分组两阶段输出后，将文件回执和调度记录核实的模型写入任务配置的 `collection`，然后收集：
 
 ```sh
-python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
 有预期时配置各组 `readback_results`；无预期时 `results` 指向第一阶段文件。复核后填入 `collection.reviews` 并设置新的输出目录重新收集。收集依据准备时保存的快照、manifest 和模型配置，原始输入或默认配置的后续变化不改变本批依据。

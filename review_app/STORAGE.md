@@ -116,9 +116,9 @@ digest 和主题配置。每条结果绑定精确声明和 Lean 源码 SHA-256�
 
 ## 异机交付与恢复
 
-第一版异机目的地是用户的 Mac，存放在应用项目的 `.review-backups/hk-vps/`。
+第一版异机目的地是用户的 Mac，存放在应用项目的 `.formaliscope/backups/hk-vps/`。
 独立同步工具只读取服务器已完成的 v2 时间戳备份，经过 SSH 拉取、摘要与完整性
-校验后加密归档，并实际解密复验。密钥单独保存在 `.review-backups/keys/`，
+校验后加密归档，并实际解密复验。密钥单独保存在 `.formaliscope/backups/keys/`，
 本机路径配置、密钥和归档都不进入 Git 或发布包。工具不读取活动数据库、会话、
 `auth-pepper` 或明文恢复码，也不改 VPS 的运行证据和用户数据。
 

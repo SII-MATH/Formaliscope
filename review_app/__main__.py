@@ -10,6 +10,7 @@ import sqlite3
 from .build import compare_snapshots, normalize_snapshot, write_snapshot
 from .database import database_schema_version, initialize
 from .judgments import backfill_review_basis
+from .local_paths import runtime_dir
 from .server import serve
 from .snapshot_artifacts import candidate_output_path, write_candidate_artifact
 from .storage import create_backup, install_snapshot, verify_backup
@@ -17,7 +18,7 @@ from .storage import create_backup, install_snapshot, verify_backup
 
 def main():
     app_root = Path(__file__).resolve().parents[1]
-    default_data_dir = Path(os.environ.get("REVIEW_DATA_DIR", app_root / ".review"))
+    default_data_dir = runtime_dir()
     parser = argparse.ArgumentParser(description="Formaliscope Lean Statement review")
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build", help="build a new evidence candidate; install-snapshot activates it")

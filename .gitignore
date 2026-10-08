@@ -1,3 +1,5 @@
+.formaliscope/
+# Legacy local directories remain ignored during migration.
 .DS_Store
 .review/
 .review-backups/

@@ -11,7 +11,7 @@ whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文�
 
 ## 准备回译任务
 
-开始任务前，按用户要求起草独立配置文件，命名为 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，时间使用本地时间，任务名用简短英文。
+开始任务前，按用户要求起草独立配置文件，命名为 `.formaliscope/tasks/configs/YYYYMMDD-HHMMSS-任务名.json`，时间使用本地时间，任务名用简短英文。
 
 用 `defaults` 引用本工具的配置，填写本次输入快照和范围；额外要求写为覆盖项，其余继承默认配置。字段和合并规则见 [任务配置说明](../../../skills/CONFIG.md)。例如 `20261008-150000-tower.json`：
 
@@ -26,7 +26,7 @@ whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文�
 按实际任务替换路径和范围，然后准备：
 
 ```sh
-python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
 根据准备脚本的回执读取本批 `manifest.json` 和 `agent-config.json`，按所选声明和合并后的配置执行。
@@ -60,7 +60,7 @@ python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20
 执行完成后，根据文件回执和调度记录，将各组结果、第一阶段文件及已确认的实际模型写入任务配置的 `collection`；用同一任务配置收集：
 
 ```sh
-python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
 收集路径和复核文件均在 `collection` 中配置，格式见 [任务配置说明](../../../skills/CONFIG.md)。

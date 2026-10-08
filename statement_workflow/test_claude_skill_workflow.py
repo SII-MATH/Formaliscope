@@ -31,14 +31,14 @@ class ClaudeWorkflowTests(unittest.TestCase):
         self.args = {
             'repoRoot': '/fixture/repo',
             'skillDir': '/fixture/repo/.claude/skills/formaliscope-enrich',
-            'batchDir': '/fixture/repo/.statement-enrichment/test',
+            'batchDir': '/fixture/repo/.formaliscope/tasks/batches/test',
             'config': load_config(SKILL / 'config.json'),
             'declarationIds': ['statement::Example.a', 'statement::Example.b', 'statement::Example.c'],
             'groups': [
                 {'key': 'group-1', 'declarationIds': ['statement::Example.a']},
                 {'key': 'group-2', 'declarationIds': ['statement::Example.b', 'statement::Example.c']},
             ],
-            'expectationContext': '/fixture/repo/.statement-enrichment/test/expectation-context.txt',
+            'expectationContext': '/fixture/repo/.formaliscope/tasks/batches/test/expectation-context.txt',
         }
 
     def run_workflow(self, args=..., mode='normal'):

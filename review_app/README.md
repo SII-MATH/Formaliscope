@@ -29,10 +29,10 @@
 ## 构建与本地演示
 
 ```bash
-python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
-python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .review
-python3 -m review_app preflight --preview --data-dir .review
-python3 -m review_app serve --preview --port 8876 --data-dir .review
+python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
+python3 -m review_app install-snapshot --file .formaliscope/snapshots/candidates/local-preview.json --data-dir .formaliscope/runtime
+python3 -m review_app preflight --preview --data-dir .formaliscope/runtime
+python3 -m review_app serve --preview --port 8876 --data-dir .formaliscope/runtime
 ```
 
 预览只监听 loopback，不发送验证码。姓名和恢复凭证隔离演示记录。只有 Statement 快照能使用预览身份；这个模式不能公开到生产。`--source-commit` 仅用于本机归档预览，它不能证明归档与提交一致，生产预检拒绝新生成的 `archive-unverified` 来源。
@@ -46,12 +46,12 @@ python3 -m review_app serve --preview --port 8876 --data-dir .review
 [字段标准 v2](../statement_workflow/SCHEMA_V2.md) 是当前填写依据。Agent 只填标题、完整回译、单选角色、多选项目主题、优先度、内部预期判断及两个置信度。否／不知道必填理由；没有独立预期材料时填不知道。模型、时间和源码版本由调度层记录，不填摘要、unresolved 或证据。新主题由批次配置冻结，并进入公开快照和筛选配置。
 
 ```bash
-python3 -m review_app validate-enrichment --snapshot .review/snapshot.json --file /path/to/enrichment.json
-python3 -m review_app enrich-snapshot --snapshot .review/snapshot.json \
+python3 -m review_app validate-enrichment --snapshot .formaliscope/runtime/snapshot.json --file /path/to/enrichment.json
+python3 -m review_app enrich-snapshot --snapshot .formaliscope/runtime/snapshot.json \
   --file /path/to/enrichment.json --output /tmp/enriched-snapshot.json
 python3 -m review_app import-agent-assessments --snapshot /path/to/frozen-base/snapshot.json \
   --file /path/to/enrichment.json --data-dir /path/to/review-data
-python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data-dir .review
+python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data-dir .formaliscope/runtime
 ```
 
 校验检查声明 ID、源码提交、基础快照摘要、自动计算的源码 SHA-256、分类配置、原始两个分值及复核来源。候选快照只保留公开回译和标签，不含内部判断、理由或置信度。内部入库使用批次的冻结基础快照，不要求它已安装；数据库迁移 9 与幂等事务保留机器评估历史，不写人工 verdict。目标应用须先升级，生成候选不迁移或修改数据库。v1 历史结果仍按原契约校验，不自动转换为 v2。
@@ -66,7 +66,7 @@ python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data
 
 管理员由操作员执行 `create-admin --name ... --output ...` 单独创建。恢复码只保存摘要，初次创建与轮换时才显示明文；恢复码文件不得放入发布包。部署与旧邮箱记录迁移见 [IDENTITY.md](IDENTITY.md)。旧邮件安装须显式选择 `REVIEW_AUTH_MODE=email` 才继续使用原有邮件配置和邮箱白名单。
 
-`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录、姓名身份、角色及恢复摘要，并以独立表保存内部模型评估；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.review/`，生产位于 `/var/lib/formaliscope`。备份清除会话但保留身份，恢复后用原恢复码重新登录。
+`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录、姓名身份、角色及恢复摘要，并以独立表保存内部模型评估；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.formaliscope/runtime/`，生产位于 `/var/lib/formaliscope`。备份清除会话但保留身份，恢复后用原恢复码重新登录。
 
 ## 请求、渲染与部署检查
 

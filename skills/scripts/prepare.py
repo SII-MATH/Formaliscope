@@ -19,7 +19,7 @@ SCRIPT = Path(__file__).resolve().parent / 'collect.py'
 spec = importlib.util.spec_from_file_location('formaliscope_prepare_collect', SCRIPT)
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
-from skills.scripts.config import load_config, project_path, task_output
+from skills.scripts.config import load_config, project_path, task_output, snapshot_pool
 
 _UNSET = object()
 
@@ -32,11 +32,11 @@ def _relative(value, label):
     return str(PurePosixPath(value))
 
 
-def _shared_snapshot(snapshot, output):
+def _shared_snapshot(snapshot, output, pool=None):
     """Publish once by content hash; never overwrite an existing pool entry."""
     raw = (json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
                       separators=(',', ':'), allow_nan=False) + '\n').encode('utf-8')
-    pool = Path(output).absolute().parent / '.snapshots'
+    pool = Path(pool) if pool is not None else Path(output).absolute().parent / '.snapshots'
     # Match the private batch directories, including newly created parents.
     missing, parent = [], pool
     while not parent.exists():
@@ -132,7 +132,7 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
                     selection={'directories': directories, 'files': files, 'declaration_ids': requested},
                     threshold=threshold,
                     expectation_context=str(Path(expectation_context).absolute()) if expectation_context is not None else None)
-    snapshot_link = _shared_snapshot(snapshot, output)
+    snapshot_link = _shared_snapshot(snapshot, output, snapshot_pool(output))
     helper._private_write(output, {'manifest.json': manifest,
                                   'agent-config.json': config, 'task-config.json': settings},
                           {'expectation-context.txt': raw_context} if raw_context is not None else None,

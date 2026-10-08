@@ -75,19 +75,19 @@ Kimi Code 多组任务使用原生 AgentSwarm：第一阶段为各组启动独�
 
 共享默认配置在 [default-config.json](default-config.json)，包含模型、主题、复核阈值和任务设置。三个工具的 `config.json` 引用共享配置并覆盖各自的推理设置。模型路由由用户配置，运行时从调度记录核实。
 
-每次任务开始前，Agent 起草 `.statement-enrichment/task-configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照和范围，按用户要求覆盖设置。对象字段逐项合并，数组整体替换，明确的 null 覆盖原值。省略项继承默认配置，字段和路径约定见 [任务配置说明](CONFIG.md)。
+每次任务开始前，Agent 起草 `.formaliscope/tasks/configs/YYYYMMDD-HHMMSS-任务名.json`，引用当前工具的配置，填写快照和范围，按用户要求覆盖设置。对象字段逐项合并，数组整体替换，明确的 null 覆盖原值。省略项继承默认配置，字段和路径约定见 [任务配置说明](CONFIG.md)。
 
 ## 执行与维护
 
 安装包含本 harness 的入口、配置与三份阶段提示词；Claude 版另含专用 agents 定义和分组 Workflow 脚本，Kimi 版另含单独注册的 swarm worker 定义。共享准备/收集脚本留在仓库 `skills/scripts/`。Claude 版通过 `${CLAUDE_SKILL_DIR}` 读取安装资源，Kimi 版通过 `${KIMI_SKILL_DIR}` 读取安装资源。安装与路径约定统一由本说明规定，Skill 按项目已正确安装的前提执行。
 
-准备脚本自动记录任务依据，同一内容的完整快照共用在批次父目录的 `.snapshots/`，批次内 `snapshot.json` 为相对链接；无需额外固定操作。移动或备份时同时保留共享目录，旧批次的完整快照继续兼容。
+准备脚本自动记录任务依据。项目内的任务共用 `.formaliscope/cache/snapshots/`，批次内 `snapshot.json` 为相对链接。目录职责和迁移方式见 [本地存储](../review_app/LOCAL_STORAGE.md)。
 
 起草任务配置后，准备和收集均只传配置路径：
 
 ```sh
-python3 skills/scripts/prepare.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
-python3 skills/scripts/collect.py --config .statement-enrichment/task-configs/20261008-150000-tower.json
+python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
+python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
 配置示例、执行后填写的 `collection` 字段和复核后的重新收集见 [任务配置说明](CONFIG.md)。

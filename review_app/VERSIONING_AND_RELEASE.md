@@ -83,7 +83,7 @@ flowchart LR
   B --> O[off-machine encrypted storage]
 ```
 
-开发机保存两个源码仓库和可删除的 `.review/` 测试数据，不保存生产权威数据库。CI 或开发机从干净的 KIP126 commit 生成不可变快照；VPS 不需要 KIP126 Git checkout，只接收经过校验的 `snapshot.json`。
+开发机保存两个源码仓库和可删除的 `.formaliscope/runtime/` 测试数据，不保存生产权威数据库。CI 或开发机从干净的 KIP126 commit 生成不可变快照；VPS 不需要 KIP126 Git checkout，只接收经过校验的 `snapshot.json`。
 
 VPS 是运行状态的唯一写入点：
 

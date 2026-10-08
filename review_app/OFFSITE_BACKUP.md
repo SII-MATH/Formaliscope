@@ -1,21 +1,22 @@
 # 本机异机备份
 
-HK-VPS 每日备份继续由服务器上的 `formaliscope-review-backup.timer` 生成。本机负责拉取已经完成的备份，保存到项目的 `.review-backups/hk-vps/`。定时执行调用与手动执行相同的脚本，不需要 VPS 主动连接本机。
+HK-VPS 每日备份继续由服务器上的 `formaliscope-review-backup.timer` 生成。本机负责拉取已经完成的备份，保存到项目的 `.formaliscope/backups/hk-vps/`。定时执行调用与手动执行相同的脚本，不需要 VPS 主动连接本机。
 
 ## 私有目录
 
 ```text
 Formaliscope/
-  .review-backups/
-    hk-vps/
-      config.json
-      status.json
-      <服务器备份时间>.tar.gz.fernet
-    keys/
-      hk-vps.fernet
+  .formaliscope/
+    backups/
+      hk-vps/
+        config.json
+        status.json
+        <服务器备份时间>.tar.gz.fernet
+      keys/
+        hk-vps.fernet
 ```
 
-整个 `.review-backups/` 已被 Git 忽略。目录权限为 0700，配置、密钥和归档为 0600。密钥放在归档目录之外，不上传到 VPS，也不进入归档；首次同步自动生成随机密钥，无需用户密码。已有归档但密钥丢失时拒绝生成新密钥，以免把旧归档无法恢复的情况掩盖。迁移本机存储时应同时妥善保管原密钥。
+整个 `.formaliscope/backups/` 已被 Git 忽略。目录权限为 0700，配置、密钥和归档为 0600。密钥放在归档目录之外，不上传到 VPS，也不进入归档；首次同步自动生成随机密钥，无需用户密码。已有归档但密钥丢失时拒绝生成新密钥，以免把旧归档无法恢复的情况掩盖。迁移本机存储时应同时妥善保管原密钥。
 
 ## 配置与运行
 
@@ -25,10 +26,10 @@ Formaliscope/
 python3 -m pip install -r deploy/requirements-offsite-backup.txt
 ```
 
-按 [配置模板](../deploy/offsite-backup.config.example.json) 设置 SSH 别名、服务器备份目录、本机目录及密钥路径，把本机配置保存为 `.review-backups/hk-vps/config.json`。SSH 必须已可免交互登录，主机密钥必须预先可信；工具不接受新的主机密钥、不索取密码、不把凭据写入配置。
+按 [配置模板](../deploy/offsite-backup.config.example.json) 设置 SSH 别名、服务器备份目录、本机目录及密钥路径，把本机配置保存为 `.formaliscope/backups/hk-vps/config.json`。SSH 必须已可免交互登录，主机密钥必须预先可信；工具不接受新的主机密钥、不索取密码、不把凭据写入配置。
 
 ```sh
-python3 deploy/formaliscope_offsite_backup.py sync --config .review-backups/hk-vps/config.json
+python3 deploy/formaliscope_offsite_backup.py sync --config .formaliscope/backups/hk-vps/config.json
 ```
 
 同步只选择服务器最新已经完成的 `YYYYMMDDTHHMMSSZ` 目录，接受 v2 格式。服务器用当前正式应用只读校验，传输固定三个文件：数据库、对应快照和 manifest；不复制活动数据库、认证密钥、明文恢复码或任意目录。
@@ -49,16 +50,16 @@ python3 deploy/formaliscope_offsite_backup.py sync --config .review-backups/hk-v
 
 ```sh
 python3 deploy/formaliscope_offsite_backup.py verify \
-  --config .review-backups/hk-vps/config.json \
-  --archive .review-backups/hk-vps/<时间>.tar.gz.fernet
+  --config .formaliscope/backups/hk-vps/config.json \
+  --archive .formaliscope/backups/hk-vps/<时间>.tar.gz.fernet
 ```
 
 恢复到全新的目录；工具拒绝覆盖已有目录，拒绝异常归档路径、重复条目、链接和额外文件：
 
 ```sh
 python3 deploy/formaliscope_offsite_backup.py restore \
-  --config .review-backups/hk-vps/config.json \
-  --archive .review-backups/hk-vps/<时间>.tar.gz.fernet \
+  --config .formaliscope/backups/hk-vps/config.json \
+  --archive .formaliscope/backups/hk-vps/<时间>.tar.gz.fernet \
   --output /path/to/new-private-restore-directory
 ```
 

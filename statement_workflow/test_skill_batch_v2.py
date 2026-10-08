@@ -439,9 +439,13 @@ class SkillBatchV2Tests(unittest.TestCase):
         task = self.task_config(defaults='config.json', snapshot='source-snapshot.json', output=None)
         with patch('skills.scripts.config.REPO', self.root):
             batch, manifest = preparer.prepare_from_config(task)
-        self.assertEqual(batch, self.root / '.statement-enrichment/task-config')
+        self.assertEqual(batch, self.root / '.formaliscope/tasks/batches/task-config')
         self.assertEqual(len(manifest['declaration_ids']), 3)
         self.assertTrue((batch / 'snapshot.json').is_symlink())
+        self.assertEqual((batch / 'snapshot.json').resolve().parent,
+                         (self.root / '.formaliscope/cache/snapshots').resolve())
+        self.snapshot_path.unlink()
+        self.assertEqual(collector._read(batch / 'snapshot.json'), self.snapshot)
 
     def test_config_only_prepare_and_collect_cli_use_saved_batch_inputs(self):
         context = self.root / 'reference.txt'
