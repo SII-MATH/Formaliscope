@@ -13,7 +13,7 @@ whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文�
 
 以用户指定的 Statement 快照及目录、文件或声明为范围。范围待明确时，请用户指定本次目标。
 
-读取本工具对应的 `config.json`，或用户指定的配置。`worker.model` 默认 `luna6`，由用户配置模型路由；`worker.reasoning_effort` 指定推理设置，`topics` 提供主题选项。新任务使用 `formaliscope-enrichment-config.v2`，通过 `--config` 显式传入配置。
+读取本工具对应的 `config.json`，或用户指定的配置。`worker.model` 默认 `luna6`，由用户配置模型路由；`worker.reasoning_effort` 指定推理设置，`topics` 提供主题选项。通过 `--config` 传入配置。
 
 ```sh
 python3 skills/scripts/prepare.py \
