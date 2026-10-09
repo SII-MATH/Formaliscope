@@ -15,6 +15,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 from review_app import server as service
 from review_app.auth import AuthSettings, AuthStore
+from review_app.local_paths import runtime_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 ReviewHTTPServer = getattr(service, 'ReviewHTTPServer', ThreadingHTTPServer)
@@ -27,7 +28,7 @@ def pct(values, q):
     return round(values[int((len(values)-1)*q + .5)]*1000, 2)
 
 
-snapshot = json.loads((ROOT / '.review/snapshot.json').read_text())
+snapshot = json.loads((runtime_dir() / 'snapshot.json').read_text())
 with tempfile.TemporaryDirectory() as directory:
     db = Path(directory) / 'judgments.sqlite3'
     initialize(db)

@@ -1,0 +1,25 @@
+{
+  "id": "cgwhmodelproof",
+  "name": "CGWHModelProof",
+  "roots": [
+    "."
+  ],
+  "topics": [
+    {
+      "id": "cgwh",
+      "name": "CGWH 空间"
+    },
+    {
+      "id": "model_category",
+      "name": "模型范畴"
+    },
+    {
+      "id": "homotopy",
+      "name": "同伦论"
+    }
+  ],
+  "main_targets": [
+    "CGWHTop.quillenModelStructure"
+  ],
+  "url": "https://github.com/SII-MATH/CGWHModelProof"
+}

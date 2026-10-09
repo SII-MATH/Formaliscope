@@ -1,6 +1,8 @@
 # 审核页面负载与等待时间
 
-2026-09-18，在同一台机器上比较初版提交 `52a3e54` 与并发优化版 `6aa72f1`。这些是从原 KIP126 草稿 PR 提取的应用代码提交；独立仓库迁移只改变源码目录的传入方式，未改变被测服务和前端。基准脚本和原始五轮结果保存在本目录，均使用临时 SQLite 数据库和本机临时端口，不碰真实审核记录。
+6,222 条声明的首屏、刷新恢复、切换和慢速网络测量见 [Statement 加载性能报告](PERFORMANCE_STATEMENT.md)。以下保留早期 Blueprint 模式的历史基线。
+
+2026-09-18，在同一台机器上比较初版提交 `52a3e54` 与并发优化版 `6aa72f1`。这些是从原 KIP126 草稿 PR 提取的应用代码提交；独立仓库迁移只改变源码目录的传入方式，未改变被测服务和前端。基准脚本保存在本目录，原始五轮结果仅保存在本地 `.formaliscope/logs/performance/blueprint-baseline/`，不随仓库分发。测量使用临时 SQLite 数据库和本机临时端口。
 
 | 指标（五轮中位数，越小越好） | 初版 | 改进后 | 变化 |
 |---|---:|---:|---:|
@@ -13,18 +15,21 @@
 
 “审核者之间的 p95 差距”定义为：一轮中 16 个模拟审核者各自的卡片加载 p95，取最大值减最小值。它衡量有人明显比别人等待更久的程度，是本单机服务的**请求等待公平性指标**；本项目目前没有多台服务器之间的流量分配。
 
-HTTP 工作负载：16 个客户端同时开始，各打开 24 张卡片。每次卡片加载并行请求只读证据和审核历史；每 8 张卡提交一次判断，因此每轮为 384 次卡片加载和 48 次提交。每轮重建临时数据库。表中先算每轮的 p95 与差距，再取五轮中位数。脚本：[benchmark_http.py](benchmark_http.py)；原始数据：[旧版](perf/http-before.json)、[改进版](perf/http-after.json)。
+HTTP 工作负载：16 个客户端同时开始，各打开 24 张卡片。每次卡片加载并行请求只读证据和审核历史；每 8 张卡提交一次判断，因此每轮为 384 次卡片加载和 48 次提交。每轮重建临时数据库。表中先算每轮的 p95 与差距，再取五轮中位数。脚本：[benchmark_http.py](benchmark_http.py)。
 
-浏览器工作负载：无头 Chromium 在 1440×900 视口打开页面，测量导航至首张卡片可见的时间，再以固定随机种子点击 40 张卡片，测量点击到卡片内容可见。各独立运行五次；表中为五次中位数。脚本：[benchmark_browser.py](benchmark_browser.py)；原始数据：[旧版](perf/browser-before.ndjson)、[改进版](perf/browser-after.ndjson)。浏览器测量包含本机 Playwright 调用开销，不代表远程网络延迟。
+浏览器工作负载：无头 Chromium 在 1440×900 视口打开页面，测量导航至首张卡片可见的时间，再以固定随机种子点击 40 张卡片，测量点击到卡片内容可见。各独立运行五次；表中为五次中位数。脚本：[benchmark_browser.py](benchmark_browser.py)。浏览器测量包含本机 Playwright 调用开销，不代表远程网络延迟。
 
 复测命令（在仓库根目录）：
 
 ```bash
 python3 -m review_app build --source /path/to/KIP126 --output /tmp/blueprint-candidate.json
-python3 -m review_app install-snapshot --file /tmp/blueprint-candidate.json --data-dir .review
-python3 -m review_app.benchmark_http --clients 16 --cards 24 --repeat 5
+python3 -m review_app install-snapshot --file /tmp/blueprint-candidate.json --data-dir .formaliscope/runtime
+mkdir -p .formaliscope/logs/performance/blueprint-baseline
+python3 -m review_app.benchmark_http --clients 16 --cards 24 --repeat 5 \
+  > .formaliscope/logs/performance/blueprint-baseline/http-current.json
 # 可选：安装 Playwright 和 Chromium 后
-python3 -m review_app.benchmark_browser
+python3 -m review_app.benchmark_browser \
+  > .formaliscope/logs/performance/blueprint-baseline/browser-current.ndjson
 ```
 
 本次改变了连接等待队列、SQLite 连接生命周期和写入串行化；前端优先显示证据，再读取审核历史，并在浏览暂停后加载公式渲染器。负载数据是在共享开发主机上的本机压测，轮次之间有波动；部署到真实访问入口后仍需测浏览器到服务端的完整链路。

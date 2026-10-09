@@ -2,11 +2,14 @@
 
 应用读取独立的 KIP126 源码检出并生成只读快照。Statement 模式索引 `KIP126/` 与 `KIPBase/` 中的完整声明，按目录、标签和搜索组织内容。Lean 名称作为主标题；中文副标题、独立回译和分类按 enrichment v2 补充。人工审阅使用“通过 / 没看懂 / 不通过”，与 Agent 内部预期判断分开保存。
 
+也可通过仓库配置接入其他 Lean 工程并组合多个源码版本；详见 [多仓库与版本](REPOSITORIES.md)。旧 KIP126 构建与快照继续兼容。
+
 ## 模块边界
 
 | 模块 | 职责 |
 | --- | --- |
 | `build.py` / `statements.py` | Blueprint 与 Statement 提取、源码版本、内容指纹和快照校验 |
+| `repositories.py` / `dataset_storage.py` | 仓库配置、独立数据集集合、旧记录复制与回退保留 |
 | `enrichment.py` / `enrichment_v2.py` | 字段校验、自动源码绑定、内部字段隔离、生成公开候选快照 |
 | `agent_assessments.py` | 显式事务导入私有模型判断，保存原始分值、运行版本与历史 |
 | `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |
@@ -26,10 +29,10 @@
 ## 构建与本地演示
 
 ```bash
-python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
-python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .review
-python3 -m review_app preflight --preview --data-dir .review
-python3 -m review_app serve --preview --port 8876 --data-dir .review
+python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
+python3 -m review_app install-snapshot --file .formaliscope/snapshots/candidates/local-preview.json --data-dir .formaliscope/runtime
+python3 -m review_app preflight --preview --data-dir .formaliscope/runtime
+python3 -m review_app serve --preview --port 8876 --data-dir .formaliscope/runtime
 ```
 
 预览只监听 loopback，不发送验证码。姓名和恢复凭证隔离演示记录。只有 Statement 快照能使用预览身份；这个模式不能公开到生产。`--source-commit` 仅用于本机归档预览，它不能证明归档与提交一致，生产预检拒绝新生成的 `archive-unverified` 来源。
@@ -43,12 +46,12 @@ python3 -m review_app serve --preview --port 8876 --data-dir .review
 [字段标准 v2](../statement_workflow/SCHEMA_V2.md) 是当前填写依据。Agent 只填标题、完整回译、单选角色、多选项目主题、优先度、内部预期判断及两个置信度。否／不知道必填理由；没有独立预期材料时填不知道。模型、时间和源码版本由调度层记录，不填摘要、unresolved 或证据。新主题由批次配置冻结，并进入公开快照和筛选配置。
 
 ```bash
-python3 -m review_app validate-enrichment --snapshot .review/snapshot.json --file /path/to/enrichment.json
-python3 -m review_app enrich-snapshot --snapshot .review/snapshot.json \
+python3 -m review_app validate-enrichment --snapshot .formaliscope/runtime/snapshot.json --file /path/to/enrichment.json
+python3 -m review_app enrich-snapshot --snapshot .formaliscope/runtime/snapshot.json \
   --file /path/to/enrichment.json --output /tmp/enriched-snapshot.json
 python3 -m review_app import-agent-assessments --snapshot /path/to/frozen-base/snapshot.json \
   --file /path/to/enrichment.json --data-dir /path/to/review-data
-python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data-dir .review
+python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data-dir .formaliscope/runtime
 ```
 
 校验检查声明 ID、源码提交、基础快照摘要、自动计算的源码 SHA-256、分类配置、原始两个分值及复核来源。候选快照只保留公开回译和标签，不含内部判断、理由或置信度。内部入库使用批次的冻结基础快照，不要求它已安装；数据库迁移 9 与幂等事务保留机器评估历史，不写人工 verdict。目标应用须先升级，生成候选不迁移或修改数据库。v1 历史结果仍按原契约校验，不自动转换为 v2。
@@ -63,7 +66,7 @@ python3 -m review_app install-snapshot --file /tmp/enriched-snapshot.json --data
 
 管理员由操作员执行 `create-admin --name ... --output ...` 单独创建。恢复码只保存摘要，初次创建与轮换时才显示明文；恢复码文件不得放入发布包。部署与旧邮箱记录迁移见 [IDENTITY.md](IDENTITY.md)。旧邮件安装须显式选择 `REVIEW_AUTH_MODE=email` 才继续使用原有邮件配置和邮箱白名单。
 
-`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录、姓名身份、角色及恢复摘要，并以独立表保存内部模型评估；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.review/`，生产位于 `/var/lib/formaliscope`。备份清除会话但保留身份，恢复后用原恢复码重新登录。
+`snapshot.json` 是共同证据；`judgments.sqlite3` 保存人工记录、姓名身份、角色及恢复摘要，并以独立表保存内部模型评估；`auth-pepper` 在数据库外保存认证摘要密钥。运行数据默认位于 `.formaliscope/runtime/`，生产位于 `/var/lib/formaliscope`。备份清除会话但保留身份，恢复后用原恢复码重新登录。
 
 ## 请求、渲染与部署检查
 
@@ -77,4 +80,4 @@ Lean 代码中的名称可点击追溯定义。定位仅使用当前快照：唯
 
 公开服务设置 HTTPS `REVIEW_PUBLIC_ORIGIN`，路径前缀设置 `REVIEW_COOKIE_PATH`，由代理剥去前缀再转发 loopback 服务。部署前运行 `python3 -m review_app preflight --data-dir /var/lib/formaliscope`；返回 ready=false 时命令失败，且不初始化数据库、不创建密钥、不发邮件。启动后 `GET /healthz` 无需登录，只报告就绪状态及 schema 版本，不返回条目、用户或路径。
 
-完整测试命令见 [根 README](../README.md)，存储职责见 [STORAGE.md](STORAGE.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有 [性能报告](PERFORMANCE.md) 基于早期 Blueprint 规模，新 Statement 规模需要部署演练时重新测量。
+完整测试命令见 [根 README](../README.md)，存储职责见 [STORAGE.md](STORAGE.md)，生产 readiness、备份和回滚见 [DEPLOYMENT.md](DEPLOYMENT.md)。6,222 条声明的受控浏览器测量、优化前后指标及复测方法见 [Statement 加载性能报告](PERFORMANCE_STATEMENT.md)；早期 Blueprint 基线保留在 [历史性能报告](PERFORMANCE.md)。

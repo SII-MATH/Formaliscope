@@ -129,7 +129,8 @@ def main():
     parser.add_argument("--cards", type=int, default=24)
     parser.add_argument("--repeat", type=int, default=5)
     args = parser.parse_args()
-    snapshot = json.loads((ROOT / ".review/snapshot.json").read_text())
+    from review_app.local_paths import runtime_dir
+    snapshot = json.loads((runtime_dir() / 'snapshot.json').read_text())
     trials = [run(snapshot, args.clients, args.cards) for _ in range(args.repeat)]
     print(json.dumps({"trials": trials, "median_card_p95_ms": statistics.median(t["card_p95_ms"] for t in trials),
                       "median_client_p95_gap_ms": statistics.median(t["client_p95_gap_ms"] for t in trials),

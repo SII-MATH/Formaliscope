@@ -16,6 +16,7 @@ from pathlib import Path
 from .data_lock import data_lock
 from .database import DB_SCHEMA_VERSION, connect, initialize
 from .enrichment import validate_enrichment
+from .repositories import dataset_id
 
 
 def _json(value) -> str:
@@ -68,20 +69,20 @@ def import_agent_assessments(data_dir: Path, snapshot: dict, document: dict) -> 
             db.execute('BEGIN IMMEDIATE')
             try:
                 existing = db.execute(
-                    'SELECT run_json FROM agent_assessment_runs WHERE run_id=?',
+                    'SELECT run_json, dataset_id FROM agent_assessment_runs WHERE run_id=?',
                     (run['run_id'],)).fetchone()
-                if existing is not None and existing['run_json'] != run_json:
+                if existing is not None and (existing['run_json'] != run_json or existing['dataset_id'] != dataset_id(snapshot)):
                     raise ValueError('agent run_id already has different immutable runtime or source metadata')
                 if existing is None:
                     db.execute("""INSERT INTO agent_assessment_runs
                         (run_id, model, reasoning_effort, created_at, policy_version,
                          source_commit, snapshot_digest, expectation_context_digest,
-                         threshold, run_json, imported_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         threshold, run_json, imported_at, dataset_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (run['run_id'], run['model'], run['reasoning_effort'], run['created_at'],
                          run['policy_version'], run['source_commit'], run['snapshot_digest'],
                          run['expectation_context_digest'], run['threshold'], run_json,
-                         datetime.now(timezone.utc).isoformat()))
+                         datetime.now(timezone.utc).isoformat(), dataset_id(snapshot)))
                 inserted = unchanged = 0
                 for row in rows:
                     saved = db.execute("""SELECT payload_sha256 FROM agent_assessments

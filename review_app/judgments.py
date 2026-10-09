@@ -19,6 +19,7 @@ from .auth import normalize_email
 from .name_auth import valid_name, valid_reviewer_id
 from .build import CURRENT_FINGERPRINT_SCHEME, LEGACY_FINGERPRINT_SCHEME
 from .database import connect
+from .repositories import dataset_id, datasets, dataset_info
 
 VERDICTS = frozenset({"aligned", "partial", "misaligned", "uncertain"})
 WRITE_LOCK = threading.Lock()
@@ -30,17 +31,18 @@ def backfill_review_basis(db_path: Path, snapshot: dict) -> int:
     with closing(connect(db_path)) as db:
         db.execute("BEGIN IMMEDIATE")
         try:
-            for card in snapshot["cards"]:
-                basis = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
-                if not basis:
-                    continue
-                for scheme, fingerprint in _card_fingerprints(card).items():
-                    cursor = db.execute("""UPDATE judgments
-                        SET review_basis_scheme=?, review_basis_fingerprint=?
-                        WHERE review_basis_fingerprint IS NULL AND card_id=?
-                          AND fingerprint_scheme=? AND fingerprint=?""",
-                        (CURRENT_FINGERPRINT_SCHEME, basis, card["id"], scheme, fingerprint))
-                    changed += cursor.rowcount
+            for source in datasets(snapshot):
+                for card in source["cards"]:
+                    basis = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
+                    if not basis:
+                        continue
+                    for scheme, fingerprint in _card_fingerprints(card).items():
+                        cursor = db.execute("""UPDATE judgments
+                            SET review_basis_scheme=?, review_basis_fingerprint=?
+                            WHERE review_basis_fingerprint IS NULL AND card_id=? AND dataset_id=?
+                              AND fingerprint_scheme=? AND fingerprint=?""",
+                            (CURRENT_FINGERPRINT_SCHEME, basis, card["id"], dataset_id(source), scheme, fingerprint))
+                        changed += cursor.rowcount
             db.execute("COMMIT")
         except BaseException:
             db.execute("ROLLBACK")
@@ -81,7 +83,7 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT card_id, fingerprint, fingerprint_scheme,
             review_basis_scheme, review_basis_fingerprint, verdict, created_at FROM judgments
-            WHERE reviewer=? ORDER BY created_at, rowid""", (reviewer,)).fetchall()
+            WHERE reviewer=? AND dataset_id=? ORDER BY created_at, rowid""", (reviewer, dataset_id(snapshot))).fetchall()
     by_card: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         by_card.setdefault(row["card_id"], []).append(row)
@@ -108,6 +110,7 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
         "unlinked_nodes": snapshot["unlinked_nodes"],
         "cards": cards,
         "review_mode": snapshot.get("review_mode", "blueprint"),
+        "dataset": dataset_info(snapshot),
     }
     from .enrichment_v2 import DEFAULT_TOPICS
     payload['enrichment_topics'] = snapshot.get('enrichment_topics', DEFAULT_TOPICS)
@@ -122,38 +125,38 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
     return payload
 
 
-def history(db_path: Path, card_id: str, reviewer: str) -> list[dict]:
+def history(db_path: Path, card_id: str, reviewer: str, *, dataset: str = '') -> list[dict]:
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT id, fingerprint, fingerprint_scheme,
             review_basis_scheme, review_basis_fingerprint, source_commit,
             snapshot_digest, reviewer, verdict, rationale, created_at
-            FROM judgments WHERE card_id=? AND reviewer=? ORDER BY created_at DESC, rowid DESC""",
-            (card_id, reviewer)).fetchall()
+            FROM judgments WHERE card_id=? AND reviewer=? AND dataset_id=? ORDER BY created_at DESC, rowid DESC""",
+            (card_id, reviewer, dataset)).fetchall()
     return [dict(row) for row in rows]
 
 
-def _current(db: sqlite3.Connection, card: dict, reviewer: str) -> dict | None:
-    for row in db.execute("""SELECT * FROM judgments WHERE reviewer=? AND card_id=?
-        ORDER BY created_at DESC, rowid DESC""", (reviewer, card["id"])):
+def _current(db: sqlite3.Connection, card: dict, reviewer: str, dataset: str = '') -> dict | None:
+    for row in db.execute("""SELECT * FROM judgments WHERE reviewer=? AND card_id=? AND dataset_id=?
+        ORDER BY created_at DESC, rowid DESC""", (reviewer, card["id"], dataset)):
         if _judgment_matches(card, row):
             return dict(row)
     return None
 
 
-def _draft(db: sqlite3.Connection, card: dict, reviewer: str) -> sqlite3.Row | None:
+def _draft(db: sqlite3.Connection, card: dict, reviewer: str, dataset: str = '') -> sqlite3.Row | None:
     return db.execute("""SELECT * FROM review_drafts
-        WHERE reviewer=? AND card_id=? AND fingerprint=?""",
-        (reviewer, card["id"], card["fingerprint"])).fetchone()
+        WHERE reviewer=? AND card_id=? AND fingerprint=? AND dataset_id=?""",
+        (reviewer, card["id"], card["fingerprint"], dataset)).fetchone()
 
 
 def review_state(snapshot: dict, db_path: Path, card_id: str, reviewer: str) -> dict:
     card = next(card for card in snapshot["cards"] if card["id"] == card_id)
     with closing(connect(db_path)) as db:
         db.execute("BEGIN")
-        current = _current(db, card, reviewer)
-        draft = _draft(db, card, reviewer)
-        total = db.execute("SELECT COUNT(*) FROM judgments WHERE reviewer=? AND card_id=?",
-                           (reviewer, card_id)).fetchone()[0]
+        current = _current(db, card, reviewer, dataset_id(snapshot))
+        draft = _draft(db, card, reviewer, dataset_id(snapshot))
+        total = db.execute("SELECT COUNT(*) FROM judgments WHERE reviewer=? AND card_id=? AND dataset_id=?",
+                           (reviewer, card_id, dataset_id(snapshot))).fetchone()[0]
     pending = bool(draft and draft["revision"] != draft["completed_revision"] and
                    (not current or (draft["verdict"], draft["rationale"]) !=
                     (current["verdict"], current["rationale"])))
@@ -162,10 +165,10 @@ def review_state(snapshot: dict, db_path: Path, card_id: str, reviewer: str) -> 
 
 
 def history_page(db_path: Path, card_id: str, reviewer: str, *, limit: int = 25,
-                 cursor: str | None = None) -> dict:
+                 cursor: str | None = None, dataset: str = '') -> dict:
     if not 1 <= limit <= 100:
         raise ValueError("每页历史数量应为 1–100")
-    args: list = [reviewer, card_id]
+    args: list = [reviewer, card_id, dataset]
     before = ""
     if cursor:
         try:
@@ -178,7 +181,7 @@ def history_page(db_path: Path, card_id: str, reviewer: str, *, limit: int = 25,
         args.extend([stamp, stamp, rowid])
     with closing(connect(db_path)) as db:
         rows = db.execute("SELECT rowid AS history_rowid, * FROM judgments "
-                          "WHERE reviewer=? AND card_id=?" + before +
+                          "WHERE reviewer=? AND card_id=? AND dataset_id=?" + before +
                           " ORDER BY created_at DESC, rowid DESC LIMIT ?", [*args, limit + 1]).fetchall()
     page = [dict(row) for row in rows[:limit]]
     next_cursor = None
@@ -231,6 +234,7 @@ def _record(snapshot: dict, card: dict, reviewer: str, payload: dict) -> dict:
         "review_basis_scheme": review_basis_scheme,
         "review_basis_fingerprint": review_basis_fingerprint,
         "source_commit": snapshot.get("source_commit"), "snapshot_digest": snapshot.get("digest"),
+        "dataset_id": dataset_id(snapshot),
         "verdict": payload["verdict"], "rationale": payload.get("rationale", "").strip(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -246,7 +250,7 @@ def save_draft(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> t
     record = _record(snapshot, card, reviewer, payload)
     with WRITE_LOCK, closing(connect(db_path)) as db:
         db.execute("BEGIN IMMEDIATE")
-        old = _draft(db, card, reviewer)
+        old = _draft(db, card, reviewer, dataset_id(snapshot))
         if old and old["request_id"] == record["request_id"]:
             matches = (old["verdict"], old["rationale"], old["revision"]) == (
                 record["verdict"], record["rationale"], revision + 1)
@@ -259,11 +263,11 @@ def save_draft(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> t
         db.execute("""INSERT INTO review_drafts
             (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
              fingerprint_scheme, review_basis_scheme, review_basis_fingerprint, source_commit,
-             snapshot_digest, revision)
+             snapshot_digest, revision, dataset_id)
             VALUES (:id, :request_id, :card_id, :fingerprint, :reviewer, :verdict, :rationale, :created_at,
              :fingerprint_scheme, :review_basis_scheme, :review_basis_fingerprint, :source_commit,
-             :snapshot_digest, :revision)
-            ON CONFLICT(reviewer, card_id, fingerprint) DO UPDATE SET
+             :snapshot_digest, :revision, :dataset_id)
+            ON CONFLICT(dataset_id, reviewer, card_id, fingerprint) DO UPDATE SET
              request_id=excluded.request_id, verdict=excluded.verdict, rationale=excluded.rationale,
              created_at=excluded.created_at, source_commit=excluded.source_commit,
              snapshot_digest=excluded.snapshot_digest, revision=excluded.revision""", record)
@@ -277,7 +281,7 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
         return error
     card_id, request_id = card["id"], payload["request_id"]
     verdict, rationale = payload["verdict"], payload.get("rationale", "").strip()
-    canonical = (card_id, card["fingerprint"], reviewer, verdict, rationale)
+    canonical = (card_id, card["fingerprint"], reviewer, verdict, rationale, dataset_id(snapshot))
     # This server has one process. Queue writes briefly in Python rather than
     # sending a simultaneous burst into SQLite's busy wait loop.
     with WRITE_LOCK:
@@ -285,15 +289,15 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute("""SELECT id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
                 fingerprint_scheme, review_basis_scheme, review_basis_fingerprint,
-                source_commit, snapshot_digest
+                source_commit, snapshot_digest, dataset_id
                 FROM judgments WHERE reviewer=? AND request_id=?""", (reviewer, request_id)).fetchone()
             if previous:
                 old = (previous["card_id"], previous["fingerprint"], previous["reviewer"],
-                       previous["verdict"], previous["rationale"])
+                       previous["verdict"], previous["rationale"], previous['dataset_id'])
                 db.execute("COMMIT")
                 return (200, {"judgment": dict(previous), "replayed": True}) if old == canonical else (409, {"error": "请求 ID 已用于另一条判断"})
             guarded = "draft_revision" in payload
-            draft = _draft(db, card, reviewer) if guarded else None
+            draft = _draft(db, card, reviewer, dataset_id(snapshot)) if guarded else None
             if guarded:
                 revision = payload["draft_revision"]
                 if type(revision) is not int or revision < 1:
@@ -305,7 +309,7 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
                     return 409, {"error": "请求 ID 已用于另一条判断"}
                 if not draft or draft["revision"] != revision or (draft["verdict"], draft["rationale"]) != (verdict, rationale):
                     return 409, {"error": "草稿已更新，请保留当前输入并重新打开条目"}
-                current = _current(db, card, reviewer)
+                current = _current(db, card, reviewer, dataset_id(snapshot))
                 if current and current["fingerprint"] == card["fingerprint"] and (current["verdict"], current["rationale"]) == (verdict, rationale):
                     db.execute("""UPDATE review_drafts SET completed_revision=revision,
                         completion_request_id=?, judgment_id=? WHERE id=?""",
@@ -316,10 +320,10 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
             db.execute("""INSERT INTO judgments
                 (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
                  fingerprint_scheme, review_basis_scheme, review_basis_fingerprint,
-                 source_commit, snapshot_digest)
+                 source_commit, snapshot_digest, dataset_id)
                 VALUES (:id, :request_id, :card_id, :fingerprint, :reviewer, :verdict, :rationale, :created_at,
                         :fingerprint_scheme, :review_basis_scheme, :review_basis_fingerprint,
-                        :source_commit, :snapshot_digest)""", record)
+                        :source_commit, :snapshot_digest, :dataset_id)""", record)
             if guarded:
                 db.execute("""UPDATE review_drafts SET completed_revision=revision,
                     completion_request_id=?, judgment_id=? WHERE id=?""",
@@ -353,10 +357,10 @@ def reviewer_export(snapshot: dict, db_path: Path, reviewer: str, *, mode: str =
     with closing(connect(db_path)) as db:
         if mode == "latest":
             db.execute("BEGIN")
-            rows = [row for card in snapshot["cards"] if (row := _current(db, card, reviewer))]
+            rows = [row for card in snapshot["cards"] if (row := _current(db, card, reviewer, dataset_id(snapshot)))]
         else:
             rows = [dict(row) for row in db.execute(
-                "SELECT * FROM judgments WHERE reviewer=? ORDER BY created_at, rowid", (reviewer,))]
+                "SELECT * FROM judgments WHERE reviewer=? AND dataset_id=? ORDER BY created_at, rowid", (reviewer, dataset_id(snapshot)))]
     return {
         "snapshot_schema": snapshot["schema"],
         "fingerprint_scheme": snapshot.get("fingerprint_scheme"),
@@ -365,6 +369,7 @@ def reviewer_export(snapshot: dict, db_path: Path, reviewer: str, *, mode: str =
         "source_dirty": snapshot.get("source_dirty", False),
         "reviewer": reviewer,
         "export_mode": mode,
+        "dataset": dataset_info(snapshot),
         "judgments": rows,
     }
 
@@ -373,13 +378,15 @@ def admin_summary(snapshot: dict, db_path: Path) -> dict:
     cards = {card['id']: card for card in snapshot['cards']}
     with closing(connect(db_path)) as db:
         records = [dict(row) for row in db.execute('''SELECT j.*, p.display_name FROM judgments j
-            LEFT JOIN reviewer_profiles p ON p.reviewer=j.reviewer ORDER BY j.created_at DESC, j.rowid DESC''')]
+            LEFT JOIN reviewer_profiles p ON p.reviewer=j.reviewer WHERE j.dataset_id=?
+            ORDER BY j.created_at DESC, j.rowid DESC''', (dataset_id(snapshot),))]
     latest = {}
     for row in records:
         card = cards.get(row['card_id'])
         if card and _judgment_matches(card, row):
             latest.setdefault((row['reviewer'], row['card_id']), row)
     return {'source_commit': snapshot['source_commit'], 'snapshot_digest': snapshot['digest'],
+            'dataset': dataset_info(snapshot),
             'total_cards': len(cards), 'judgments': list(latest.values()),
             'history_count': len(records), 'stale_count': sum(
                 not cards.get(row['card_id']) or not _judgment_matches(cards[row['card_id']], row)

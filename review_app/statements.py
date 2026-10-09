@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .build import (SNAPSHOT_SCHEMA, CURRENT_FINGERPRINT_SCHEME, _digest,
                     _content_fingerprint, _dependency_lock_digest, _clean_statement,
-                    INPUT_RE, NODE_RE, LABEL_RE, LEAN_RE, CHAPTER_RE,
+                    INPUT_RE, NODE_RE, LABEL_RE, lean_references, CHAPTER_RE,
                     calculate_snapshot_digest, _git_head, _git_dirty)
 
 DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|protected|noncomputable|partial|unsafe)\s+)*"
@@ -96,87 +96,90 @@ def _ordinary_comment_gap(text: str, start: int, end: int,
     return not text[position:end].strip()
 
 
-def source_declarations(repo: Path) -> list[dict]:
+def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[dict]:
+    repo = repo.resolve()
     records = []
-    for root in ('KIP126', 'KIPBase'):
-        for path in sorted((repo / root).rglob('*.lean')):
-            text = path.read_text(encoding='utf-8')
-            masked_text, comments = _mask_source(text)
-            original, masked = text.splitlines(), masked_text.splitlines()
-            comment_ends = [end for _, end in comments]
-            documentation = [(start, end) for start, end in comments
-                             if text.startswith(('/--', '/-!'), start)]
-            documentation_ends = [end for _, end in documentation]
-            previous_documentation = -1
-            line_offsets = []
-            position = 0
-            for line in text.splitlines(keepends=True):
-                line_offsets.append(position)
-                position += len(line)
-            namespace, scopes, found = [], [], []
-            for number, line in enumerate(masked):
-                ns = re.match(r'^\s*namespace\s+([\w.]+)', line)
-                if ns:
-                    namespace.extend(ns[1].split('.'))
-                    scopes.append(ns[1].split('.'))
-                    continue
-                if re.match(r'^\s*section(?:\s|$)', line):
-                    scopes.append([])
-                    continue
-                if re.match(r'^\s*end(?:\s|$)', line):
-                    if scopes:
-                        count = len(scopes.pop())
-                        if count:
-                            del namespace[-count:]
-                    continue
-                match = DECL.match(line)
-                if not match:
-                    continue
-                kind, name = match.groups()
-                # Lean's _root_ prefix explicitly escapes the current namespace.
-                fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
-                # A section heading (/-!) is a separate command, not declaration
-                # documentation. Ordinary comments are whitespace; real code,
-                # strings and other documentation remain attachment boundaries.
-                declaration_start = line_offsets[number] + len(line) - len(line.lstrip())
-                comment_index = bisect_right(documentation_ends, declaration_start) - 1
-                doc = ''
-                if comment_index >= 0 and comment_index != previous_documentation:
-                    # Only the first following declaration can consume a doc;
-                    # avoid repeatedly scanning growing gaps for later declarations.
-                    previous_documentation = comment_index
-                    start, end = documentation[comment_index]
-                    if text.startswith('/--', start) and _ordinary_comment_gap(
-                            text, end, declaration_start, comments, comment_ends):
-                        doc = text[start+3:end-2].strip()
-                found.append((fqn, kind, number, tuple(namespace), doc))
-            for offset, (name, kind, first, ns, doc) in enumerate(found):
-                last = found[offset+1][2] if offset+1 < len(found) else len(original)
-                # Do not include following namespace/section ends or the next docstring.
-                for stop in range(first+1, last):
-                    if re.match(r'^\s*(?:end|namespace|section)(?:\s|$)', masked[stop]) or re.match(
-                        r'^(?:attribute|open|variable|universe|set_option|export|#check|#eval|#print|syntax|macro|elab|initialize)(?:\s|$)', masked[stop]):
-                        last = stop
-                        break
-                while last > first+1 and not masked[last-1].strip():
-                    last -= 1
-                source = '\n'.join(original[first:last]).rstrip()
-                fields = []
-                if kind in ('structure', 'class'):
-                    field_re = re.compile(r'^([ \t]{2,})([\w\'₀-₉]+)\s*(?:\([^\n]*?\)\s*)?:', re.M)
-                    found_fields = list(field_re.finditer(source))
-                    for field_index, field in enumerate(found_fields):
-                        end = found_fields[field_index+1].start() if field_index+1 < len(found_fields) else len(source)
-                        fields.append((field[2], source[field.end():end].strip()))
-                records.append({'name': name, 'kind': kind, 'namespace': ns,
-                                'file': str(path.relative_to(repo)), 'line': first+1,
-                                'source': source, 'fields': fields, 'doc': doc[:5000],
-                                'context': '\n'.join(original[:first]),
-                                'full_source': text})
+    from .repositories import source_files
+    selected_roots = roots if roots is not None else [name for name in ('KIP126', 'KIPBase') if (repo / name).is_dir()]
+    for path in source_files(repo, selected_roots):
+        text = path.read_text(encoding='utf-8')
+        masked_text, comments = _mask_source(text)
+        original, masked = text.splitlines(), masked_text.splitlines()
+        comment_ends = [end for _, end in comments]
+        documentation = [(start, end) for start, end in comments
+                         if text.startswith(('/--', '/-!'), start)]
+        documentation_ends = [end for _, end in documentation]
+        previous_documentation = -1
+        line_offsets = []
+        position = 0
+        for line in text.splitlines(keepends=True):
+            line_offsets.append(position)
+            position += len(line)
+        namespace, scopes, found = [], [], []
+        for number, line in enumerate(masked):
+            ns = re.match(r'^\s*namespace\s+([\w.]+)', line)
+            if ns:
+                namespace.extend(ns[1].split('.'))
+                scopes.append(ns[1].split('.'))
+                continue
+            if re.match(r'^\s*section(?:\s|$)', line):
+                scopes.append([])
+                continue
+            if re.match(r'^\s*end(?:\s|$)', line):
+                if scopes:
+                    count = len(scopes.pop())
+                    if count:
+                        del namespace[-count:]
+                continue
+            match = DECL.match(line)
+            if not match:
+                continue
+            kind, name = match.groups()
+            # Lean's _root_ prefix explicitly escapes the current namespace.
+            fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
+            # A section heading (/-!) is a separate command, not declaration
+            # documentation. Ordinary comments are whitespace; real code,
+            # strings and other documentation remain attachment boundaries.
+            declaration_start = line_offsets[number] + len(line) - len(line.lstrip())
+            comment_index = bisect_right(documentation_ends, declaration_start) - 1
+            doc = ''
+            if comment_index >= 0 and comment_index != previous_documentation:
+                # Only the first following declaration can consume a doc;
+                # avoid repeatedly scanning growing gaps for later declarations.
+                previous_documentation = comment_index
+                start, end = documentation[comment_index]
+                if text.startswith('/--', start) and _ordinary_comment_gap(
+                        text, end, declaration_start, comments, comment_ends):
+                    doc = text[start+3:end-2].strip()
+            found.append((fqn, kind, number, tuple(namespace), doc))
+        for offset, (name, kind, first, ns, doc) in enumerate(found):
+            last = found[offset+1][2] if offset+1 < len(found) else len(original)
+            # Do not include following namespace/section ends or the next docstring.
+            for stop in range(first+1, last):
+                if re.match(r'^\s*(?:end|namespace|section)(?:\s|$)', masked[stop]) or re.match(
+                    r'^(?:attribute|open|variable|universe|set_option|export|#check|#eval|#print|syntax|macro|elab|initialize)(?:\s|$)', masked[stop]):
+                    last = stop
+                    break
+            while last > first+1 and not masked[last-1].strip():
+                last -= 1
+            source = '\n'.join(original[first:last]).rstrip()
+            fields = []
+            if kind in ('structure', 'class'):
+                field_re = re.compile(r'^([ \t]{2,})([\w\'₀-₉]+)\s*(?:\([^\n]*?\)\s*)?:', re.M)
+                found_fields = list(field_re.finditer(source))
+                for field_index, field in enumerate(found_fields):
+                    end = found_fields[field_index+1].start() if field_index+1 < len(found_fields) else len(source)
+                    fields.append((field[2], source[field.end():end].strip()))
+            records.append({'name': name, 'kind': kind, 'namespace': ns,
+                            'private': bool(re.search(r'\bprivate\b', masked[first][:DECL.match(masked[first]).start(1)])),
+                            'file': str(path.relative_to(repo)), 'line': first+1,
+                            'source': source, 'fields': fields, 'doc': doc[:5000],
+                            'context': '\n'.join(original[:first]),
+                            'full_source': text})
     return records
 
 
-def blueprint_prose(repo: Path) -> dict[str, dict]:
+def blueprint_references(repo: Path) -> dict[str, list[dict]]:
     result = {}
     content = repo / 'blueprint/src/content.tex'
     if not content.is_file():
@@ -190,24 +193,45 @@ def blueprint_prose(repo: Path) -> dict[str, dict]:
         for match in NODE_RE.finditer(text):
             kind, title, body = match.groups()
             label = LABEL_RE.search(body)
-            for name in LEAN_RE.findall(body):
-                result.setdefault(name.strip(), {
-                    'statement': _clean_statement(body), 'title': title or name,
+            names = list(dict.fromkeys(lean_references(body)))
+            statement = _clean_statement(body)
+            if not statement:
+                continue
+            for name in names:
+                result.setdefault(name, []).append({
+                    'statement': statement, 'title': title or name,
                     'label': label[1] if label else name,
                     'chapter': chapter[1] if chapter else path.stem,
                     'blueprint_file': str(path.relative_to(repo)),
                     'blueprint_line': text.count('\n', 0, match.start())+1,
+                    'declarations': names,
                 })
     return result
 
 
-def compile_statements(repo: Path, *, source_commit: str | None = None, annotations: Path | None = None) -> dict:
-    records = source_declarations(repo)
-    index = {row['name']: row for row in records}
+def blueprint_prose(repo: Path) -> dict[str, dict]:
+    return {name: references[0] for name, references in blueprint_references(repo).items()}
+
+
+def compile_statements(repo: Path, *, source_commit: str | None = None, annotations: Path | None = None,
+                       repository: dict | None = None) -> dict:
+    repo = repo.resolve()
+    from .repositories import repository_config
+    repository = repository_config(repository) if repository is not None else None
+    records = source_declarations(repo, roots=repository['roots'] if repository else None)
+    index = {(row['name'] + '::file=' + row['file'] if repository and row['private'] else row['name']): row
+             for row in records}
+    if repository and len(index) != len(records):
+        raise ValueError('ambiguous declaration names in configured roots; narrow roots or disambiguate source namespaces')
+    if repository and not records:
+        raise ValueError('configured roots contain no supported Lean declarations')
+    prefix = 'statement::' + (repository['id'] + '::' if repository else '')
     short = defaultdict(list)
+    full_names = defaultdict(list)
     for name in index:
-        short[name.rsplit('.', 1)[-1]].append(name)
-    prose = blueprint_prose(repo)
+        full_names[index[name]['name']].append(name)
+        short[index[name]['name'].rsplit('.', 1)[-1]].append(name)
+    references = blueprint_references(repo)
     translated = json.loads(annotations.read_text(encoding='utf-8')) if annotations else {}
     if not isinstance(translated, dict):
         raise ValueError('annotations must map declaration names to source-bound reading drafts')
@@ -218,15 +242,18 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             raise ValueError(f'annotation statement is missing: {name}')
     dependencies = {}
     def resolve(token, row):
-        if token in index:
-            return token
+        def visible(keys):
+            local = [key for key in keys if index[key]['private'] and index[key]['file'] == row['file']]
+            candidates = local or [key for key in keys if not index[key]['private']]
+            return candidates[0] if len(candidates) == 1 else None
         ns = row['namespace']
         for count in range(len(ns), -1, -1):
             candidate = '.'.join([*ns[:count], token])
-            if candidate in index:
-                return candidate
+            result = visible(full_names.get(candidate, []))
+            if result:
+                return result
         choices = short.get(token, [])
-        return choices[0] if len(choices) == 1 else None
+        return visible(choices)
     for name, row in index.items():
         refs = set()
         for token in TOKEN.findall(mask_comments(row['source'])):
@@ -240,12 +267,18 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
               name.rsplit('.', 1)[-1] in ('main', 'mainTheorem', 'kervaireInvariantOne'))]
     if not roots:
         roots = [name for name, row in index.items() if row['file'] == 'KIP126/Main.lean']
+    if repository:
+        roots = repository['main_targets']
+        if set(roots) - index.keys():
+            raise ValueError('configured main_targets are missing from the selected source roots')
     direct = {dep for name in roots for dep in dependencies[name]}
     cards = []
     for name, row in index.items():
-        bp = prose.get(name)
+        declaration = row['name']
+        blueprint = references.get(declaration, [])
+        bp = blueprint[0] if blueprint else None
         annotation = translated.get(name)
-        title = annotation.get('title', name) if annotation else bp['title'] if bp else name.rsplit('.', 1)[-1]
+        title = annotation.get('title', declaration) if annotation else bp['title'] if bp else declaration.rsplit('.', 1)[-1]
         role = ('主定理' if name in roots else '直接依赖' if name in direct else
                 '开发期假设' if row['kind'] == 'axiom' else
                 '文献输入' if '/Main/Axiom/Literature/' in row['file'] else
@@ -256,7 +289,7 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
         priority = {'主定理': 100, '直接依赖': 95, '开发期假设': 90, '文献输入': 80, '计算输入': 82, '解码协议': 85,
                     '接口对象': 75, '数学对象': 50, '基础设施': 40}[role]
         risky = row['kind'] == 'axiom' or '/Axiom/' in row['file'] or '/Interpretation/' in row['file']
-        summary = f"{name} 是一个 {'定理' if row['kind'] in ('theorem','lemma') else '结构' if row['fields'] else 'Lean '+row['kind']+' 声明'}。"
+        summary = f"{declaration} 是一个 {'定理' if row['kind'] in ('theorem','lemma') else '结构' if row['fields'] else 'Lean '+row['kind']+' 声明'}。"
         if row['fields']:
             summary += '它包含以下字段：' + '、'.join(field[0] for field in row['fields']) + '。请逐项核对字段的条件与数学含义。'
         elif row['doc']:
@@ -264,7 +297,7 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
         else:
             summary += '请结合下方完整源码及引用对象核对陈述、参数和前提。'
         card = {
-            'id': 'statement::'+name, 'declaration': name, 'label': bp['label'] if bp else name,
+            'id': prefix+name, 'declaration': declaration, 'label': bp['label'] if bp else declaration,
             'title': title, 'kind': row['kind'], 'chapter': bp['chapter'] if bp else row['file'].split('/')[0],
             'statement': annotation['statement'] if annotation else bp['statement'] if bp else summary,
             'statement_origin': 'backtranslation' if annotation else 'blueprint' if bp else 'reading-summary',
@@ -272,7 +305,7 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             'blueprint_line': bp['blueprint_line'] if bp else row['line'],
             'reading_summary': summary,
             'lean': {'file': row['file'], 'line': row['line'], 'source': row['source'], 'truncated': False},
-            'source_status': 'local', 'dependencies': ['statement::'+dep for dep in dependencies[name]],
+            'source_status': 'local', 'dependencies': [prefix+dep for dep in dependencies[name]],
             'dependency_origin': 'source-reference-candidates',
             'fields': [{'name': field[0], 'type': field[1]} for field in row['fields']],
             'role': role, 'priority': priority, 'risk': 'high' if risky else 'medium' if row['fields'] else 'normal',
@@ -281,6 +314,10 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             'module_file': row['file'],
             'annotation_source_sha256': annotation['source_sha256'] if annotation else None,
         }
+        if blueprint:
+            card['blueprint_references'] = blueprint
+        if repository and row['private']:
+            card['private'] = True
         nl, lean, fingerprint = _content_fingerprint(card, None)
         card.update(nl_digest=nl, lean_digest=lean, fingerprint=fingerprint,
                     fingerprint_scheme=CURRENT_FINGERPRINT_SCHEME,
@@ -296,5 +333,8 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
                 'unlinked_nodes': 0, 'cards': cards, 'review_mode': 'statement',
                 'review_contract': 'statement-front-end.v1',
                 'modules': {row['file']: row['full_source'] for row in records}}
+    if repository:
+        snapshot['repository'] = repository
+        snapshot['enrichment_topics'] = repository['topics']
     snapshot['digest'] = calculate_snapshot_digest(snapshot)
     return snapshot

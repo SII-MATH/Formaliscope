@@ -1,3 +1,5 @@
+.formaliscope/
+# Legacy local directories remain ignored during migration.
 .DS_Store
 .review/
 .review-backups/
@@ -14,3 +16,7 @@ __pycache__/
 .claude/agents/formaliscope-expectation.md
 .kimi-code/skills/formaliscope-enrich
 .kimi-code/agents/formaliscope-enrich
+.performance-results/
+# Local measurement logs and source-bound preview drafts.
+review_app/perf/
+review_app/preview_annotations.json

@@ -5,6 +5,7 @@
   const verdictNames = {aligned:"通过", uncertain:"没看懂", misaligned:"不通过", partial:"部分对齐（历史）"};
   let catalog=[], byId=new Map(), selected=null, card=null, sequence=0, query="", page=0, view="list";
   let saving=false, dirty=false, moduleSequence=0, reviewHistory=[], navigationTurn=0;
+  let sessionSequence=0,listCache=null;
   let reviewCurrent=null,historyTotal=0,historyCursor=null,historyLoaded=false,historyLoading=false,historyTurn=0;
   const PAGE_SIZE=60;
   let mathLoading=false, mathTimer=null;
@@ -16,7 +17,11 @@
   // until that configuration has been registered.
   const selectedLabels=new Set((new URL(location.href).searchParams.get('labels')||'').split(',').filter(Boolean));
   let labelTab='content';
-  const api=window.StatementAPI.create({onUnauthorized:()=>identities.unauthorized()});
+  const api=window.StatementAPI.create({onUnauthorized:()=>{
+    // Expiry invalidates pending reads, but keeps failed-save input available.
+    ++sessionSequence;++sequence;api.clearEvidenceCache();identities.unauthorized();
+  },dataset:new URL(location.href).searchParams.get('dataset')});
+  let availableDatasets=[];
   const json=api.request,post=api.post,evidence=api.evidence;
   const saves=window.StatementSave.create({post,onState:renderSaveState,onSaved:acceptJudgment});
   const navigation=window.StatementNavigation.create({history,capture:captureReading,restore:restoreReading,
@@ -49,16 +54,16 @@
   }
   function renderLabelUI(){
     const focusId=document.activeElement?.dataset.label,focusContainer=document.activeElement?.closest('#active-labels,#label-groups')?.id;
-    const base=baseRows(), counts=new Map();
-    for(const group of labels.groups){
-      for(const row of base){if(!labels.matches(row._labels,selectedLabels,group.id))continue;for(const id of row._labels){if(labels.definitions.get(id)?.group===group.id)counts.set(id,(counts.get(id)||0)+1);}}
-    }
     $('active-labels').hidden=!selectedLabels.size;
     $('active-labels').innerHTML=[...selectedLabels].map(id=>labelChip(id,{button:true,remove:true})).join('');
     $('label-filter-count').textContent=selectedLabels.size;
     $('reset-labels').hidden=!selectedLabels.size;
     $('label-outside-notice').hidden=!selected||!selectedLabels.size||labels.matches(byId.get(selected)?._labels||[],selectedLabels);
     if($('labels-dialog').open){
+      const base=baseRows(), counts=new Map();
+      for(const group of labels.groups){
+        for(const row of base){if(!labels.matches(row._labels,selectedLabels,group.id))continue;for(const id of row._labels){if(labels.definitions.get(id)?.group===group.id)counts.set(id,(counts.get(id)||0)+1);}}
+      }
       const visibleGroups=labels.groups.filter(group=>['role','topic'].includes(group.id)===(labelTab==='content'));
       $('label-groups').innerHTML=visibleGroups.map(group=>`<fieldset><legend>${escape(group.name)}</legend><p>${escape(group.source)}</p><div>${group.items.map(item=>labelChip(item.id,{button:true,count:counts.get(item.id)||0})).join('')}</div></fieldset>`).join('');
       $('label-tabs').querySelectorAll('button').forEach(button=>{const active=button.dataset.labelTab===labelTab;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
@@ -122,12 +127,16 @@
     return directoryRows().filter(c=>
       (scope!=="main" || c.role==="主定理" || c.role==="直接依赖") &&
       (scope!=="interface" || ['structure','class'].includes(c.kind) || c.module_file?.includes('Challenge')) &&
-      `${c.title} ${c.title_zh||''} ${c.declaration} ${c.module_file} ${c.role} ${(c._labels||[]).map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase().includes(query)
+      (!query || c._search.includes(query))
     );
   }
   function sortRows(list){return list.sort((a,b)=>$("sort").value==="name" ? a.declaration.localeCompare(b.declaration) :
     priorityScore(b)-priorityScore(a)||b.priority-a.priority||a.declaration.localeCompare(b.declaration));}
-  function rows(){return sortRows(baseRows().filter(c=>labels.matches(c._labels,selectedLabels)));}
+  function rows(){
+    const key=JSON.stringify([directory,$('scope').value,$('sort').value,query,[...selectedLabels].sort()]);
+    if(listCache?.key!==key)listCache={key,rows:sortRows(baseRows().filter(c=>labels.matches(c._labels,selectedLabels)))};
+    return listCache.rows;
+  }
   function renderList(){
     updateFilter();
     const list=rows(), pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
@@ -148,17 +157,46 @@
     if(index<0 && reset){selectedLabels.clear();query="";$("search").value="";$("scope").value="all";if(!directories.matchesPath(byId.get(selected)?.module_file,directory)){directory=(byId.get(selected)?.module_file||'').split('/').slice(0,-1).join('/');}updateLocation();index=rows().findIndex(c=>c.id===selected);}
     if(index>=0){page=Math.floor(index/PAGE_SIZE);renderList();$("card-list").querySelector('.active')?.scrollIntoView({block:"nearest"});}
   }
-  async function loadCatalog(){
-    const data=await json("./api/catalog");
+  function indexRow(row){
+    row._labels=labels.forCard(row);
+    row._search=`${row.title} ${row.title_zh||''} ${row.declaration} ${row.module_file} ${row.role} ${row._labels.map(id=>labels.definitions.get(id)?.name||'').join(' ')}`.toLowerCase();
+  }
+  async function loadCatalog(initialId,sessionTurn){
+    const [selection,data]=await Promise.all([json('./api/datasets'),json(`./api/catalog?initial=${encodeURIComponent(initialId)}`)]);
+    if(sessionTurn!==sessionSequence)return null;
+    availableDatasets=selection.datasets;api.setDataset(selection.selected);
     labels.configureTopics(data.enrichment_topics||[]);
     const normalized=labels.normalizeSelection(selectedLabels);
     selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
     catalog=data.cards;byId=new Map(catalog.map(c=>[c.id,c]));
-    for(const row of catalog)row._labels=labels.forCard(row);
+    for(const row of catalog)indexRow(row);
+    listCache=null;
     catalogInfo=data;directoryNodes=directories.buildTree(catalog);
+    renderDatasets(data.dataset);
     if(!directoryNodes.has(directory)){directory='';updateLocation();}
     $('directory-tree-version').textContent=data.source_commit;
     renderList();return data;
+  }
+  function renderDatasets(current){
+    const repositories=new Map(availableDatasets.map(item=>[item.repository_id,item.repository_name]));
+    $('repository-select').innerHTML=[...repositories].map(([id,name])=>`<option value="${escape(id)}">${escape(name)}</option>`).join('');
+    $('repository-select').value=current.repository_id;
+    $('dataset-select').innerHTML=availableDatasets.filter(item=>item.repository_id===current.repository_id).map(item=>
+      `<option value="${escape(item.id)}">${escape(item.source_commit.slice(0,12))} · ${item.card_count.toLocaleString()} 条</option>`).join('');
+    $('dataset-select').value=current.id;
+    $('dataset-provenance').textContent=`${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
+    const source=$('repository-source');source.hidden=!current.source_url;source.href=current.source_url||'#';
+    const url=new URL(location.href);if(current.id)url.searchParams.set('dataset',current.id);
+    history.replaceState(history.state,'',url);
+    const scope=current.id?`?dataset=${encodeURIComponent(current.id)}`:'';
+    $('admin-link').href='./admin'+scope;
+    document.querySelectorAll('.review-footer a').forEach(link=>{const target=new URL(link.href);target.searchParams.set('dataset',current.id);link.href=target;});
+  }
+  async function switchDataset(id){
+    if(!availableDatasets.some(item=>item.id===id)||id===catalogInfo?.dataset?.id)return;
+    if(!await mayNavigate()){renderDatasets(catalogInfo.dataset);return;}
+    const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('dataset',id);
+    location.assign(url);
   }
   function matches(c,row){
     const values=c.fingerprints||{[c.fingerprint_scheme]:c.fingerprint};
@@ -166,9 +204,9 @@
   }
   function math(){
     clearTimeout(mathTimer);
-    if(window.MathJax?.typesetPromise){window.Stage3Latex?.typeset([$("statement")]);return;}
+    if(window.MathJax?.typesetPromise){window.Stage3Latex?.typeset([$("statement"),$("blueprint-references")]);return;}
     if(mathLoading)return;
-    mathTimer=setTimeout(()=>{mathLoading=true;const script=document.createElement("script");script.src=new URL("./mathjax-tex-svg.js",document.baseURI);script.onload=()=>Promise.resolve(window.MathJax?.startup?.promise).then(()=>window.Stage3Latex?.typeset([$("statement")]));script.onerror=()=>{mathLoading=false;};document.head.appendChild(script);},350);
+    mathTimer=setTimeout(()=>{mathLoading=true;const script=document.createElement("script");script.src=new URL("./mathjax-tex-svg.js",document.baseURI);script.onload=()=>Promise.resolve(window.MathJax?.startup?.promise).then(()=>window.Stage3Latex?.typeset([$("statement"),$("blueprint-references")]));script.onerror=()=>{mathLoading=false;};document.head.appendChild(script);},350);
   }
   function codeHtml(text,options){return window.Stage3Lean?.toHtml(text,options)||escape(text);}
   function renderEvidence(c){
@@ -180,9 +218,16 @@
     renderProvenance(c);
     $("meta").innerHTML=`<span>${escape(c.declaration)}</span>`;
     renderCardLabels();
-    $("statement-origin").textContent=c.statement_origin==="blueprint"?"Blueprint 原文":c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
-    $("statement").innerHTML=window.Stage3Latex?.toHtml(c.statement)||escape(c.statement);math();
-    $("nl-location").textContent=c.statement_origin==="reading-summary"?"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。":c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":`${c.blueprint_file}:${c.blueprint_line}`;
+    const reading=c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
+    $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
+    $("statement").innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
+    $("nl-location").textContent=c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。";
+    const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
+    const present=references.filter(reference=>reference.statement?.trim());
+    $('blueprint-panel').hidden=!present.length;
+    $('blueprint-panel').open=false;
+    $('blueprint-references').innerHTML=present.map(reference=>`<div class="blueprint-reference"><h4>${escape(reference.title||reference.label)}</h4><div class="statement">${window.Stage3Latex?.toHtml(reference.statement)||escape(reference.statement)}</div>${reference.declarations?.length>1?`<p class="pane-note">这段文案关联 ${reference.declarations.length} 条声明，请核对当前声明对应的部分。</p>`:''}<div class="source-location">${escape(reference.label)} · ${escape(reference.blueprint_file)}:${reference.blueprint_line}</div></div>`).join('');
+    math();
     $("lean-code").innerHTML=codeHtml(c.lean?.source||"-- 尚未定位源码",{symbols:true,baseLine:c.lean?.line||1,scope:'declaration'});
     $("lean-location").textContent=c.lean?`${c.lean.file}:${c.lean.line} · 声明完整显示` : "源码尚未定位";
     $("module-panel").hidden=true;$("module-panel").open=false;$("toggle-module").textContent="查看完整文件";
@@ -205,7 +250,10 @@
     badge.title=!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
     $("history-count").textContent=`(${historyTotal})`;
     const row=byId.get(c.id);
-    if(row){row.verdict=current?.verdict||null;row.stale=!!historyTotal&&!current;row._labels=labels.forCard(row);}
+    if(row){
+      const verdict=current?.verdict||null,stale=!!historyTotal&&!current;
+      if(row.verdict!==verdict||row.stale!==stale){row.verdict=verdict;row.stale=stale;indexRow(row);listCache=null;}
+    }
     renderDependencies(c);
     return current;
   }
@@ -341,14 +389,20 @@
     $('module-code').scrollTop=state.moduleTop||0;$('module-code').scrollLeft=state.moduleLeft||0;
   }
 
-  async function start(){
-    const identity=await identities.load();
+  async function start({reuseIdentity=false}={}){
+    const sessionTurn=++sessionSequence;
+    const identity=reuseIdentity?identities.current:await identities.load();
+    if(sessionTurn!==sessionSequence||!identity)return;
     if(!identity.display_name){identities.show("edit");return;}
-    await loadCatalog();let fromHash='';try{fromHash=decodeURIComponent(location.hash.slice(1));}catch{}
-    const id=byId.has(fromHash)?fromHash:rows()[0]?.id;if(id){await openCard(id,true,{initial:true});locateList();}else $("empty").querySelector('h2').textContent="此快照暂无条目";
+    let fromHash='';try{fromHash=decodeURIComponent(location.hash.slice(1));}catch{}
+    const data=await loadCatalog(fromHash||'auto',sessionTurn);if(!data)return;
+    const id=byId.has(fromHash)?fromHash:rows()[0]?.id;
+    if(data.initial_evidence?.id===id)api.primeEvidence(data.initial_evidence);
+    if(id){await openCard(id,true,{initial:true});locateList();}else $("empty").querySelector('h2').textContent="此快照暂无条目";
   }
   function resetSession(){
     saves.reset();navigation.reset();symbols.clear();++navigationTurn;++historyTurn;
+    ++sessionSequence;listCache=null;
     selected=null;card=null;catalog=[];byId.clear();api.clearEvidenceCache();++sequence;
     view='list';setView('list');$("review-card").hidden=true;$("card-list").innerHTML="";
     $("admin-link").hidden=true;$("graph-panel").hidden=true;$("reviewer-name").textContent="…";$("save-global").textContent="";
@@ -375,7 +429,7 @@
   for(const id of ['active-labels','label-groups'])$(id).onclick=event=>{const button=event.target.closest('[data-label]');if(button)changeLabel(button.dataset.label);};
   $('export-scope').onclick=()=>{
     if(!catalogInfo)return;
-    const manifest={schema:'statement-review-scope.v1',source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.snapshot_digest,directory,
+    const manifest={schema:'statement-review-scope.v1',dataset:catalogInfo.dataset,source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.digest,directory,
       selection:directoryNodes.get(directory)?.file?'exact-file':'directory-with-descendants',declarations:directoryRows().map(c=>({id:c.id,declaration:c.declaration,file:c.module_file}))};
     const url=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download='formaliscope-review-scope.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -388,6 +442,8 @@
   $("locate-list").onclick=()=>locateList(true);
   $("views").onclick=event=>{const button=event.target.closest('[data-view]');if(button)setView(button.dataset.view);};
   $('back-card').onclick=()=>navigation.back();
+  $('repository-select').onchange=()=>switchDataset(availableDatasets.find(item=>item.repository_id===$('repository-select').value)?.id);
+  $('dataset-select').onchange=()=>switchDataset($('dataset-select').value);
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});
   $("save").onclick=save;$("next").onclick=()=>next();
   $('review-history').ontoggle=()=>{if($('review-history').open)loadHistory();};
@@ -411,5 +467,10 @@
     if(/^[1-3]$/.test(event.key)){const input=document.querySelectorAll('[name="verdict"]')[Number(event.key)-1];if(input&&!input.disabled){input.checked=true;editReview(true);}}
   });
   window.addEventListener('beforeunload',event=>{if(dirty||saving){event.preventDefault();event.returnValue='';}});
-  (async()=>{try{if(await identities.initialize(await json('./api/config')))await start();}catch(error){$("empty").querySelector('h2').textContent='加载失败';$("empty").querySelector('p').textContent=error.message;}})();
+  (async()=>{try{
+    const sessionTurn=sessionSequence;
+    const [config,initialIdentity]=await Promise.all([json('./api/config'),json('./api/auth/me',{optionalUnauthorized:true})]);
+    if(sessionTurn!==sessionSequence)return;
+    if(await identities.initialize(config,{initialIdentity}))await start({reuseIdentity:true});
+  }catch(error){$("empty").querySelector('h2').textContent='加载失败';$("empty").querySelector('p').textContent=error.message;}})();
 })();

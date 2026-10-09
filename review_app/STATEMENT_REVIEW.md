@@ -7,14 +7,16 @@ KIP-12 的前端功能预览固定于 KIP126 `develop` 提交 `38554617a4465bbce
 需要 Python 3.10+，应用只使用标准库：
 
 ```sh
-python3 -m review_app build --statements --source /path/to/KIP126 --output /tmp/statement-candidate.json
-python3 -m review_app install-snapshot --file /tmp/statement-candidate.json --data-dir .statement-review
-python3 -m review_app serve --preview --port 8876 --data-dir .statement-review
+python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
+python3 -m review_app install-snapshot --file .formaliscope/snapshots/candidates/local-preview.json --data-dir .formaliscope/runtime
+python3 -m review_app serve --preview --port 8876 --data-dir .formaliscope/runtime
 ```
 
 精确源码归档可额外指定 `--source-commit <完整提交 SHA>`；操作者负责确保归档与提交一致。正式构建应从干净 Git 检出使用 `--require-clean`。
 
-`--annotations review_app/preview_annotations.json` 接入三份回译草稿。草稿绑定声明的源码 SHA-256，源码变化后拒绝沿用。其余自然语言来自 Blueprint 原文或明确标注的阅读摘要。
+构建时可通过 `--annotations /absolute/path/annotations.json` 接入本地回译草稿；草稿文件保存在被 Git 忽略的 `.formaliscope/tasks/drafts/` 中。草稿绑定声明的源码 SHA-256，源码变化后拒绝沿用。Lean 回译与阅读摘要、Blueprint 参考陈述分开显示。有绑定文案时保留全部关联节点及其出处，生成回译后参考仍然存在；无绑定文案时不显示参考面板。同一节点关联多个声明时提示核对当前声明对应的部分。参考文案变化会更新审阅依据，旧判断留在历史；仅文件或行号移动不会改变数学审阅依据。
+
+回译批次默认把所选声明绑定的 Blueprint 文案冻结为第二阶段预期参考。第一阶段只读 Lean；第二阶段不能改写已保存的回译。没有本声明的参考或用户明确补充材料时，内部预期判断为不知道。自动阅读摘要不充当预期。
 
 ## 功能
 
@@ -33,7 +35,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .statement-review
 - 桌面与 390 像素手机布局。
 - 标签分数学角色、主题、优先度、本人状态和回译状态五组；七类角色固定，主题来自当前快照的项目配置。同组并集、跨组交集，计数结合目录和检索，支持逐项移除、清空和链接恢复。列表显示角色/优先度，详情显示全部标签及来源说明；面板保留零计数标签。
 - v2 的角色、主题和优先度来自 Agent 草稿；角色 null、主题 [] 和优先度 null 保持未知，不回退为目录推断或 P2。旧快照的索引候选仍可浏览。前端不提供语义风险标签，不额外展示阅读摘要、证据或内部模型判断；人工状态来自本人版本匹配记录。
-- 版本信息只在“选择目录”的折叠详情中提供。顶栏与侧栏不重复显示提交编号，条目数量由列表区域展示。
+- 仓库与源码版本可在侧栏选择，显示来源、提交和数据生成时间；目录、标签、进度与导出对应所选数据集，切换前保存当前输入。[多仓库与迁移说明](REPOSITORIES.md) 记录构建、隔离和回退操作。
 - 去重：当前版本无有效判断统一为“未审阅”，旧判断仍保存在历史中；左侧状态按钮和状态标签共用一份筛选条件。移除与计算角色近乎重合的“计算与证书”主题及混入阶段的“上下文待补”；移除重复的目录优先核对、基础设施快捷筛选和目录规则排序。删除前端语义风险标签，关注程度统一使用优先度；数学功能与主题仍分别筛选。旧标签链接映射到合并后的标签。
 - 入口按功能归拢：左侧“审核范围”“搜索与筛选”，右侧“条目详情”“依赖关系”。标签只保留一个筛选入口，分“内容分类”“审阅与回译”两页；更多筛选/排序、全部条目标签及来源默认折叠。进度置于列表底部，身份操作收进审阅者菜单。手机默认收起查找面板，点“展开查找”再使用目录、检索和标签。
 

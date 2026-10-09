@@ -1,22 +1,71 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import tempfile
 import threading
 import unittest
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .build import validate_snapshot
+from .build import validate_snapshot, _content_fingerprint
 from .statements import compile_statements, source_declarations
-from .server import ReviewHTTPServer, initialize, make_handler
+from .server import ReviewHTTPServer, initialize, make_handler, accepts_gzip
 from .preview import PreviewAuthStore
 
 
 class StatementBuildTests(unittest.TestCase):
+    def test_blueprint_binds_every_name_in_grouped_lean_tags(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'KIP126').mkdir()
+            (root / 'KIP126/Sample.lean').write_text(
+                'namespace KIP126.Sample\n'
+                'def first : Nat := 1\n'
+                'def second : Nat := 2\n'
+                'theorem third : True := by trivial\n'
+                'def helper : Nat := 3\n'
+                'end KIP126.Sample\n')
+            (root / 'blueprint/src').mkdir(parents=True)
+            (root / 'blueprint/src/content.tex').write_text('\\input{chapter}\n')
+            (root / 'blueprint/src/chapter.tex').write_text(
+                '\\begin{definition}[Shared mathematical object]'
+                '\\label{def:shared}Shared prose.'
+                '\\lean{ KIP126.Sample.first,\n KIP126.Sample.second, }'
+                '\\lean{KIP126.Sample.third}\\end{definition}\n'
+                '\\begin{remark}[Additional expectation]\\label{rem:first}'
+                'Another mathematical condition.\\lean{KIP126.Sample.first}'
+                '\\end{remark}\n')
+            snapshot = compile_statements(root, source_commit='a' * 40)
+            validate_snapshot(snapshot)
+            cards = {card['declaration']: card for card in snapshot['cards']}
+            self.assertEqual(len(cards), 4)
+            for name in ('first', 'second', 'third'):
+                card = cards['KIP126.Sample.' + name]
+                self.assertEqual(card['statement_origin'], 'blueprint')
+                self.assertEqual(card['statement'], 'Shared prose.')
+                self.assertEqual(card['label'], 'def:shared')
+                self.assertEqual(card['blueprint_file'], 'blueprint/src/chapter.tex')
+                self.assertEqual(card['blueprint_line'], 1)
+                self.assertEqual(card['id'], 'statement::KIP126.Sample.' + name)
+                self.assertEqual(card['blueprint_references'][0]['declarations'],
+                                 ['KIP126.Sample.first', 'KIP126.Sample.second', 'KIP126.Sample.third'])
+            original = cards['KIP126.Sample.first']
+            self.assertEqual(len(original['blueprint_references']), 2)
+            moved = deepcopy(original)
+            moved['blueprint_references'][0]['blueprint_line'] += 20
+            self.assertEqual(_content_fingerprint(original, None), _content_fingerprint(moved, None))
+            changed = deepcopy(original)
+            changed['blueprint_references'][1]['statement'] = 'A stronger expected conclusion.'
+            self.assertNotEqual(_content_fingerprint(original, None)[0], _content_fingerprint(changed, None)[0])
+            self.assertEqual(_content_fingerprint(original, None)[1], _content_fingerprint(changed, None)[1])
+            self.assertEqual(cards['KIP126.Sample.helper']['statement_origin'], 'reading-summary')
+            self.assertNotIn('blueprint_references', cards['KIP126.Sample.helper'])
+
     def test_full_source_base_and_candidate_dependencies(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder)
@@ -190,19 +239,52 @@ class StatementHTTPTests(unittest.TestCase):
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
 
-    def request(self,path,body=None,cookie=None):
-        headers={'Origin':self.base}
+    def request(self,path,body=None,cookie=None,extra_headers=None):
+        headers={'Origin':self.base, **(extra_headers or {})}
         if body is not None:headers['Content-Type']='application/json'
         if cookie:headers['Cookie']=cookie
         req=Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,headers=headers)
         try:response=urlopen(req,timeout=5)
         except HTTPError as error:response=error
         with response:
-            raw=response.read();return response.status,dict(response.headers),json.loads(raw) if response.headers['Content-Type'].startswith('application/json') else raw
+            raw=response.read()
+            if response.headers.get('Content-Encoding')=='gzip':raw=gzip.decompress(raw)
+            return response.status,dict(response.headers),json.loads(raw) if response.headers['Content-Type'].startswith('application/json') else raw
 
     def login(self,name):
         status,headers,_=self.request('/api/preview/session',{'display_name':name})
         self.assertEqual(status,201);return headers['Set-Cookie'].split(';',1)[0]
+
+    def test_catalog_compression_preserves_evidence_and_identity_isolation(self):
+        self.card['title']='测试标题' * 400
+        first=self.login('First');second=self.login('Second')
+        payload={'request_id':str(uuid.uuid4()),'card_id':self.card['id'],'fingerprint':self.card['fingerprint'],
+                 'verdict':'aligned','rationale':'Private review'}
+        self.assertEqual(self.request('/api/judgments',payload,first)[0],201)
+        path='/api/catalog?initial=statement%3A%3AX'
+        plain=self.request(path,cookie=first)
+        request=Request(self.base+path,headers={'Cookie':first,'Accept-Encoding':'gzip'})
+        with urlopen(request,timeout=5) as response:
+            raw=response.read()
+            self.assertEqual(response.headers['Content-Encoding'],'gzip')
+            self.assertEqual(response.headers['Vary'],'Accept-Encoding')
+            self.assertEqual(response.headers['Cache-Control'],'no-store')
+            self.assertEqual(int(response.headers['Content-Length']),len(raw))
+        compressed=json.loads(gzip.decompress(raw))
+        self.assertEqual(compressed,plain[2]);self.assertLess(len(raw),len(gzip.decompress(raw)))
+        self.assertEqual(compressed['initial_evidence'],self.card,'Embedding preserves complete evidence and fingerprints')
+        other=self.request(path,cookie=second,extra_headers={'Accept-Encoding':'gzip'})[2]
+        self.assertIsNone(other['cards'][0]['verdict'],'Compressed responses are never shared between identities')
+        denied=self.request(path,cookie=first,extra_headers={'Accept-Encoding':'gzip;q=0, *;q=1'})
+        self.assertNotIn('Content-Encoding',denied[1]);self.assertEqual(denied[2],plain[2])
+        self.assertIsNone(self.request('/api/catalog?initial=unknown',cookie=first)[2]['initial_evidence'])
+        self.assertEqual(self.request(path,extra_headers={'Accept-Encoding':'gzip'})[0],401)
+
+    def test_gzip_quality_negotiation(self):
+        for value,expected in [('',False),('br',False),('gzip',True),('GZIP; q=0.5',True),
+                               ('gzip;q=0',False),('*;q=1',True),('gzip;q=0,*;q=1',False),
+                               ('gzip;q=invalid',False),('gzip;q=2',False),('gzip;q=nan',False)]:
+            with self.subTest(value=value):self.assertEqual(accepts_gzip(value),expected)
 
     def test_names_are_independent_and_only_admin_sees_summary(self):
         first=self.login('同名');second=self.login('同名')

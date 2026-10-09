@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import ipaddress
 import json
 import os
@@ -16,6 +17,7 @@ from .name_auth import NameAuthStore, RateLimited, name_settings
 from .session_store import SessionStore
 from .symbols import SymbolIndex
 from .build import normalize_snapshot
+from .repositories import COLLECTION_SCHEMA, dataset_id, dataset_info, datasets, select_dataset
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
 from .database import DB_SCHEMA_VERSION, MIGRATIONS, connect, database_schema_version, initialize
@@ -28,13 +30,29 @@ MAX_BODY = 16_384
 SESSION_COOKIE = "kip126_review_session"
 
 
+def accepts_gzip(value: str) -> bool:
+    qualities = {}
+    for item in value.lower().split(','):
+        name, *parameters = item.strip().split(';')
+        quality = 1.0
+        for parameter in parameters:
+            if parameter.strip().startswith('q='):
+                try:
+                    quality = float(parameter.strip()[2:])
+                except ValueError:
+                    quality = 0.0
+        qualities[name.strip()] = quality if 0 <= quality <= 1 else 0.0
+    return qualities.get('gzip', qualities.get('*', 0)) > 0
+
+
 def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionStore,
                  *, preview: bool = False, admin_emails: frozenset[str] = frozenset(),
                  trust_proxy_ip: bool = False):
     name_mode = isinstance(auth, NameAuthStore)
     auth_mode = "preview" if preview else "name" if name_mode else "email"
-    cards_by_id = {card["id"]: card for card in snapshot["cards"]}
-    symbols = SymbolIndex(snapshot)
+    installed = snapshot
+    contexts = {dataset_id(item): (item, {card['id']: card for card in item['cards']}, SymbolIndex(item))
+                for item in datasets(installed)}
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
              "/favicon.svg": ("favicon.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
@@ -82,11 +100,16 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
             self.end_headers()
 
         def _json(self, code: int, payload: dict | list, *, etag: str | None = None,
-                  extra_headers: dict[str, str] | None = None):
+                  extra_headers: dict[str, str] | None = None, compress: bool = False):
             if etag and self.headers.get("If-None-Match") == etag:
                 self._headers(304, "application/json; charset=utf-8", 0, etag=etag)
                 return
-            data = json.dumps(payload, ensure_ascii=False).encode()
+            data = json.dumps(payload, ensure_ascii=False, separators=(',', ':') if compress else None).encode()
+            if compress:
+                extra_headers = {**(extra_headers or {}), 'Vary': 'Accept-Encoding'}
+                if len(data) >= 1024 and accepts_gzip(self.headers.get('Accept-Encoding', '')):
+                    data = gzip.compress(data, compresslevel=5, mtime=0)
+                    extra_headers['Content-Encoding'] = 'gzip'
             self._headers(code, "application/json; charset=utf-8", len(data), etag=etag,
                           extra_headers=extra_headers)
             try:
@@ -110,9 +133,24 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
 
         def _is_admin(self, viewer):
             if name_mode:
-                return bool(viewer and auth.is_admin(viewer))
-            profile = reviewer_profile(db_path, viewer) if viewer else {}
-            return viewer in admin_emails or bool(preview and profile.get('preview_admin'))
+                global_admin = bool(viewer and auth.is_admin(viewer))
+            else:
+                profile = reviewer_profile(db_path, viewer) if viewer else {}
+                global_admin = viewer in admin_emails or bool(preview and profile.get('preview_admin'))
+            if global_admin:
+                return True
+            from contextlib import closing
+            with closing(connect(db_path)) as db:
+                return bool(viewer and db.execute('SELECT 1 FROM dataset_admins WHERE dataset_id=? AND reviewer=?',
+                    (dataset_id(self.review_snapshot), viewer)).fetchone())
+
+        def _context(self):
+            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            if len(query.get('dataset', [])) > 1:
+                raise ValueError('请选择一个数据集')
+            selected = select_dataset(installed, query.get('dataset', [None])[0])
+            self.review_snapshot = selected
+            return contexts[dataset_id(selected)]
 
         def _cookie(self, token: str, *, max_age: int) -> str:
             value = (f"{SESSION_COOKIE}={token}; Path={auth.settings.cookie_path}; "
@@ -166,8 +204,13 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 # Static assets and the immutable snapshot have loaded before
                 # the handler is created. Readiness must not read identities,
                 # access card evidence, issue a login code, or mutate SQLite.
-                self._json(200, {"ready": True, "snapshot_schema": snapshot.get("schema"),
+                self._json(200, {"ready": True, "snapshot_schema": installed.get("schema"),
                                  "database_schema": DB_SCHEMA_VERSION})
+                return
+            try:
+                snapshot, cards_by_id, symbols = self._context()
+            except ValueError:
+                self._json(404, {'error': '仓库版本不存在，请重新选择数据集'})
                 return
             if path == '/api/config':
                 self._json(200, {'preview': preview, 'auth_mode': auth_mode, 'review_mode': snapshot.get('review_mode', 'blueprint')})
@@ -212,9 +255,13 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
             if path.startswith("/api/") and not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
                 return
+            if path == '/api/datasets':
+                self._json(200, {'datasets': [dataset_info(item) for item in datasets(installed)],
+                                 'selected': dataset_id(snapshot)})
+                return
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
-                self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial))
+                self._json(200, catalog(snapshot, db_path, viewer, initial_id=initial), compress=True)
                 return
             if path == '/api/symbol':
                 values = parse_qs(parsed.query)
@@ -240,8 +287,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 if card is None:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                records = (history_page(db_path, card_id, viewer) if snapshot.get('review_mode') == 'statement'
-                           else {"history": history(db_path, card_id, viewer)})
+                records = (history_page(db_path, card_id, viewer, dataset=dataset_id(snapshot)) if snapshot.get('review_mode') == 'statement'
+                           else {"history": history(db_path, card_id, viewer, dataset=dataset_id(snapshot))})
                 self._json(200, {"card": card, **records},
                            etag=None)  # History changes after a judgment.
                 return
@@ -261,7 +308,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 try:
                     result = history_page(db_path, card_id, viewer,
                                           limit=int(query.get("limit", ["25"])[0]),
-                                          cursor=query.get("cursor", [None])[0])
+                                          cursor=query.get("cursor", [None])[0], dataset=dataset_id(snapshot))
                 except ValueError as error:
                     self._json(400, {"error": str(error)})
                     return
@@ -397,6 +444,14 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 self._json(code, result)
                 return
             writer = save_draft if path == '/api/drafts' else submit
+            if installed.get('schema') == COLLECTION_SCHEMA and 'dataset' not in parse_qs(urlsplit(self.path).query):
+                self._json(400, {'error': '保存审阅时必须指定仓库版本，请重新打开页面'})
+                return
+            try:
+                snapshot, _, _ = self._context()
+            except ValueError:
+                self._json(404, {'error': '仓库版本不存在，请重新选择数据集'})
+                return
             code, result = writer(snapshot, db_path, viewer, payload)
             self._json(code, result)
 

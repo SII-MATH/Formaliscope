@@ -125,7 +125,7 @@ class DatabaseMigrationTests(unittest.TestCase):
         initialize(path)
         with closing(connect(path)) as db:
             for table in tables:
-                self.assertEqual([tuple(row) for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')],
+                self.assertEqual([tuple(row)[:len(before[table][0])] for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')],
                                  before[table], table)
             self.assertEqual([tuple(row) for row in db.execute(
                 'SELECT * FROM schema_migrations WHERE version<=6 ORDER BY version')], ledger)

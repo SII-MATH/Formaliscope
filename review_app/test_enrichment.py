@@ -13,6 +13,34 @@ from .statements import compile_statements
 
 
 class EnrichmentTests(unittest.TestCase):
+    def test_blueprint_reference_survives_readback_and_legacy_base_enrichment(self):
+        from .build import _content_fingerprint
+        for legacy in (False, True):
+            snapshot = deepcopy(self.snapshot)
+            card = snapshot['cards'][0]
+            reference = {'title': 'Expected value', 'statement': 'The expected natural number is one.',
+                         'label': 'def:value', 'chapter': 'fixture',
+                         'blueprint_file': 'blueprint/src/chapter.tex', 'blueprint_line': 5,
+                         'declarations': [card['declaration']]}
+            card.update(statement=reference['statement'], statement_origin='blueprint',
+                        blueprint_file=reference['blueprint_file'], blueprint_line=5,
+                        label=reference['label'], title=reference['title'], chapter=reference['chapter'])
+            if not legacy:
+                card['blueprint_references'] = [reference]
+            nl, lean, fingerprint = _content_fingerprint(card, None)
+            card.update(nl_digest=nl, lean_digest=lean, fingerprint=fingerprint,
+                        fingerprints={card['fingerprint_scheme']: fingerprint})
+            snapshot['digest'] = calculate_snapshot_digest(snapshot)
+            annotation = deepcopy(self.annotation)
+            annotation['basis']['snapshot_digest'] = snapshot['digest']
+            annotation['readback'].update(status='draft', text_zh='测试：这是自然数一。', evidence_ids=['source'])
+            result = enrich_snapshot(snapshot, {'schema': 'statement-enrichment.v1', 'annotations': [annotation]})
+            enriched = result['cards'][0]
+            self.assertEqual(enriched['statement_origin'], 'backtranslation')
+            self.assertEqual(enriched['statement'], '测试：这是自然数一。')
+            self.assertEqual(enriched['blueprint_references'], [reference])
+            self.assertEqual(enriched['blueprint_references'][0]['blueprint_file'], 'blueprint/src/chapter.tex')
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

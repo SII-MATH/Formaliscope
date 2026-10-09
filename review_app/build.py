@@ -41,6 +41,12 @@ CURRENT_FINGERPRINT_SCHEME = "kip126-review-content.v1"
 LEGACY_FINGERPRINT_SCHEME = "kip126-review-legacy.v1"
 
 
+def lean_references(body: str) -> list[str]:
+    """Expand each Blueprint Lean tag's comma-separated declaration names."""
+    return [name.strip() for group in LEAN_RE.findall(body)
+            for name in group.split(",") if name.strip()]
+
+
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -59,7 +65,8 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
         "unlinked_nodes": snapshot.get("unlinked_nodes"),
         "cards": snapshot.get("cards"),
     }
-    for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics'):
+    for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics',
+                'repository', 'datasets', 'default_dataset'):
         if key in snapshot:
             protected[key] = snapshot[key]
     return _digest(protected)
@@ -77,6 +84,25 @@ def validate_snapshot(snapshot: dict) -> None:
                 reject_internal(item)
     reject_internal(snapshot)
     schema = snapshot.get("schema")
+    from .repositories import COLLECTION_SCHEMA, dataset_id, repository_config
+    if schema == COLLECTION_SCHEMA:
+        children = snapshot.get('datasets')
+        if not isinstance(children, list) or not children or any(not isinstance(item, dict) for item in children):
+            raise ValueError('collection datasets must be a non-empty list')
+        for item in children:
+            if item.get('schema') == COLLECTION_SCHEMA or item.get('review_mode') != 'statement' or 'repository' not in item:
+                raise ValueError('collection children must be repository Statement snapshots')
+            validate_snapshot(item)
+        keys = [dataset_id(item) for item in children]
+        if len(keys) != len(set(keys)) or snapshot.get('default_dataset') not in keys:
+            raise ValueError('collection dataset IDs must be unique and include its default')
+        default = children[keys.index(snapshot['default_dataset'])]
+        if (snapshot.get('cards') != [] or snapshot.get('review_mode') != 'statement' or
+                snapshot.get('source_commit') != default['source_commit'] or
+                snapshot.get('source_dirty') != any(item['source_dirty'] for item in children) or
+                snapshot.get('digest') != calculate_snapshot_digest(snapshot)):
+            raise ValueError('invalid collection metadata or digest')
+        return
     if schema not in {LEGACY_SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA}:
         raise ValueError(f"unsupported snapshot schema: {schema!r}")
     cards = snapshot.get("cards")
@@ -85,9 +111,37 @@ def validate_snapshot(snapshot: dict) -> None:
     ids = [card.get("id") for card in cards]
     if any(not isinstance(card_id, str) or not card_id for card_id in ids) or len(ids) != len(set(ids)):
         raise ValueError("snapshot card IDs must be non-empty and unique")
+    if 'repository' in snapshot:
+        config = repository_config(snapshot['repository'])
+        if not re.fullmatch('[0-9a-f]{40}', str(snapshot.get('source_commit', ''))):
+            raise ValueError('repository snapshot must record an exact source commit')
+        prefix = 'statement::' + config['id'] + '::'
+        known_ids = set(ids)
+        if snapshot.get('review_mode') != 'statement' or any(
+                card['id'] != prefix + card.get('declaration', '') + ('::file=' + card['module_file'] if card.get('private') else '') or
+                any(item not in known_ids for item in card.get('dependencies', [])) for card in cards):
+            raise ValueError('repository declaration IDs and dependencies must be locally qualified')
+        if any('legacy_card_id' in card and (config['id'] != 'kip126' or
+                card['legacy_card_id'] != 'statement::' + card['declaration']) for card in cards):
+            raise ValueError('legacy card aliases must identify the original KIP126 declaration')
     from .enrichment_v2 import DEFAULT_TOPICS, validate_public_annotation, validate_topics
     topics = validate_topics(snapshot.get('enrichment_topics', DEFAULT_TOPICS))
     for card in cards:
+        if 'blueprint_references' in card:
+            references = card['blueprint_references']
+            keys = {'title', 'statement', 'label', 'chapter', 'blueprint_file',
+                    'blueprint_line', 'declarations'}
+            if not isinstance(references, list) or any(
+                    not isinstance(reference, dict) or set(reference) != keys or
+                    any(not isinstance(reference[key], str) for key in
+                        ('title', 'statement', 'label', 'chapter', 'blueprint_file')) or
+                    not reference['statement'].strip() or
+                    type(reference['blueprint_line']) is not int or reference['blueprint_line'] < 1 or
+                    not isinstance(reference['declarations'], list) or
+                    any(not isinstance(name, str) or not name for name in reference['declarations']) or
+                    card.get('declaration') not in reference['declarations']
+                    for reference in references):
+                raise ValueError('invalid attributed Blueprint references')
         enrichment = card.get('enrichment')
         if isinstance(enrichment, dict) and enrichment.get('schema') == 'statement-enrichment.v2':
             validate_public_annotation(enrichment, topics)
@@ -112,11 +166,17 @@ def validate_snapshot(snapshot: dict) -> None:
 
 
 def _content_fingerprint(card: dict, dependency_lock_digest: str | None) -> tuple[str, str, str]:
-    nl_digest = _digest({
+    natural_language = {
         "kind": card.get("kind"),
         "title": card.get("title"),
         "statement": card.get("statement"),
-    })
+    }
+    if card.get('blueprint_references'):
+        # Relocating a node does not change its mathematical review basis.
+        natural_language['blueprint_references'] = [
+            {key: reference[key] for key in ('title', 'statement', 'declarations')}
+            for reference in card['blueprint_references']]
+    nl_digest = _digest(natural_language)
     lean = card.get("lean")
     lean_digest = _digest({
         "declaration": card.get("declaration"),
@@ -182,6 +242,19 @@ def fingerprints_match(left: dict, right: dict) -> bool:
 
 
 def compare_snapshots(previous: dict | None, current: dict) -> dict[str, int]:
+    from .repositories import COLLECTION_SCHEMA, datasets, dataset_id
+    if current.get('schema') == COLLECTION_SCHEMA or (previous or {}).get('schema') == COLLECTION_SCHEMA:
+        old_sets = {dataset_id(item): item for item in datasets(previous)} if previous else {}
+        new_sets = {dataset_id(item): item for item in datasets(current)}
+        total = dict(unchanged=0, changed=0, added=0, removed=0)
+        for key in old_sets.keys() | new_sets.keys():
+            if key in new_sets:
+                values = compare_snapshots(old_sets.get(key), new_sets[key])
+            else:
+                values = dict(unchanged=0, changed=0, added=0, removed=len(old_sets[key]['cards']))
+            for field, count in values.items():
+                total[field] += count
+        return total
     old = {card["id"]: card for card in (previous or {}).get("cards", [])}
     new = {card["id"]: card for card in current["cards"]}
     common = old.keys() & new.keys()
@@ -258,7 +331,7 @@ def compile_snapshot(repo: Path) -> dict:
             if label in seen_labels:
                 raise ValueError(f"duplicate Blueprint label: {label}")
             seen_labels.add(label)
-            names = LEAN_RE.findall(body)
+            names = lean_references(body)
             uses = [item.strip() for group in USES_RE.findall(body) for item in group.split(",") if item.strip()]
             statement = _clean_statement(body)
             for name in names:

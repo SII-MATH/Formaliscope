@@ -130,7 +130,7 @@ python3 -m review_app verify-backup --directory /var/backups/formaliscope/<times
 
 该命令不要求原数据目录存在，不创建身份或密钥。旧 v1 没有文件摘要与目录范围，仍按既有 SQLite 完整性和快照校验步骤恢复，不进入自动保留清理。
 
-第一版异机目的地为用户 Mac 上的 `.review-backups/hk-vps/`。本机同步工具只拉取完成的 v2 备份，校验并加密保存，在解密复验成功后执行本机数量保留，不修改 VPS 的备份保留或运行数据。旧 v1 备份不自动转换或复制；若最新服务器备份格式无法验证，同步失败且保留已有本机归档。配置、定时运行及空目录恢复演练见 [本机异机备份](OFFSITE_BACKUP.md)，职责见 [存储设计](STORAGE.md)。
+第一版异机目的地为用户 Mac 上的 `.formaliscope/backups/hk-vps/`。本机同步工具只拉取完成的 v2 备份，校验并加密保存，在解密复验成功后执行本机数量保留，不修改 VPS 的备份保留或运行数据。旧 v1 备份不自动转换或复制；若最新服务器备份格式无法验证，同步失败且保留已有本机归档。配置、定时运行及空目录恢复演练见 [本机异机备份](OFFSITE_BACKUP.md)，职责见 [存储设计](STORAGE.md)。
 
 发现 readiness 或登录失败时，先暂停 `formaliscope-app-pull.timer` 和 `formaliscope-snapshot-pull.timer`，停止服务，保存失败现场。区分两类恢复：
 

@@ -2,7 +2,7 @@
 (() => {
   function create({elements:$, api, escape, restart, mayNavigate, onLogout,
     storage, redirect=()=>location.replace(new URL('./login',document.baseURI))}) {
-    let config=null, identity=null, nameMode="new";
+    let config=null, identity=null, nameMode="new",generation=0;
 
     function remembered() {
       try{
@@ -23,18 +23,21 @@
       $('resume-identity').innerHTML=saved.map((item,index)=>`<option value="${index}">${escape(item.name)} · 身份 ${index+1}</option>`).join('');
       if(!$('name-dialog').open)$('name-dialog').showModal();
     }
-    function unauthorized() {if(config?.preview)show('new');else redirect();}
-    async function load({optional=false}={}) {
-      identity=await api.request('./api/auth/me',{optionalUnauthorized:optional});
-      if(!identity){show('new');return null;}
+    function unauthorized() {++generation;identity=null;if(config?.preview)show('new');else redirect();}
+    async function load({optional=false,initialIdentity=undefined}={}) {
+      const turn=++generation;
+      const value=initialIdentity===undefined?await api.request('./api/auth/me',{optionalUnauthorized:optional}):initialIdentity;
+      if(turn!==generation)return null;
+      identity=value;
+      if(!identity){if(optional)show('new');else unauthorized();return null;}
       $('reviewer-name').textContent=identity.display_name||identity.user_id||identity.email;
       $('recovery-button').hidden=config?.auth_mode!=='name';
       $('admin-link').hidden=!identity.is_admin;$('preview-badge').hidden=!config.preview;
       return identity;
     }
-    async function initialize(nextConfig) {
+    async function initialize(nextConfig,{initialIdentity}={}) {
       config=nextConfig;
-      if(!await load({optional:config.preview}))return false;
+      if(!await load({optional:config.preview,initialIdentity})||!identity)return false;
       if(!identity.display_name){show('edit');return false;}
       return true;
     }
@@ -91,7 +94,7 @@
     $('recovery-dialog').addEventListener('close',clearRecovery);
     $('logout').onclick=async()=>{
       if(!await mayNavigate())return;
-      try{await api.post('./api/auth/logout',{});identity=null;onLogout();unauthorized();}
+      try{await api.post('./api/auth/logout',{});onLogout();unauthorized();}
       catch(error){$('save-global').textContent=error.message;}
     };
 
