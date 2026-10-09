@@ -13,9 +13,11 @@ disable-model-invocation: true
 
 先加载 `/workflow-authoring`，使用专用的独立回译和预期 Agent。第一阶段接收阶段说明、字段标准、Lean 输入和主题。
 
+先确认 Formaliscope 仓库根目录，其中同时存在 `skills/scripts/collect.py` 和 `statement_workflow/`；下列准备及收集命令在该根目录执行。`${CLAUDE_SKILL_DIR}` 只定位安装资源，批次目录只定位任务产物，二者都不是仓库根目录。配置内的相对路径相对于仓库根目录；交给阶段 Agent 的路径一律为已规范化的绝对路径，不再拼接当前工作目录或 `.formaliscope` 前缀。
+
 开始任务前，按用户要求起草独立配置文件，命名为 `.formaliscope/tasks/configs/YYYYMMDD-HHMMSS-任务名.json`，时间使用本地时间，任务名用简短英文。
 
-用 `defaults` 引用本工具的配置，填写本次输入快照和范围；额外要求写为覆盖项，其余继承默认配置。字段和合并规则见 [任务配置说明](../../../skills/CONFIG.md)。例如 `20261008-150000-tower.json`：
+用 `defaults` 引用本工具的配置，填写本次输入快照和范围；额外要求写为覆盖项，其余继承默认配置。字段和合并规则读取仓库根目录下的 `skills/CONFIG.md`。例如 `20261008-150000-tower.json`：
 
 ```json
 {
@@ -41,9 +43,11 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 主会话按声明分组，每组恰好一条精确声明 ID，组间互不重叠且恰好覆盖 `manifest.declaration_ids`。每条声明对应一组、组内两个独立 Agent 先后执行。worker 按本组 ID 提取 `cards` 的 ID 与 Lean 字段，按实际依赖读取 `modules` 的必要定义；上下文定义不增加本组目标。
 
-读取 `${CLAUDE_SKILL_DIR}/workflows/enrich.js`，按脚本的参数约定，通过 `Workflow(scriptPath=..., args=...)` 传入任务配置和分组计划。
+读取当前安装的 `${CLAUDE_SKILL_DIR}/workflows/enrich.js`，按脚本的参数约定，通过 `Workflow(scriptPath=..., args=...)` 传入任务配置和分组计划。`repoRoot` 为上述仓库根目录，`skillDir` 为安装资源目录，`batchDir` 为 prepare 回执中的批次目录，`resultDir` 为分配的新结果目录。拆批或调整并行度时通过外层调度传入不同分组，不复制重写阶段提示词或交付命令，也不沿用更新前生成的 Workflow 副本。
 
-Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二阶段另有 `check_readback_command`；原样执行，不从任务字段推测命令行参数。基线记录由脚本根据 `--readback-result` 自动定位，不传 baseline 参数。
+Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二阶段另有 `check_readback_command`；原样执行，不从任务字段推测命令行参数。基线记录由检查程序自动定位。阶段任务缺少完整命令时由调度层重新生成，不能让 Worker 自行补命令。`output_schema_path` 是本阶段文件契约，`schema_path` 是共享字段标准，不能用最终收集格式替代阶段格式。
+
+更新 Skill 或变更调度脚本后，先从本批目标中选一组验证两阶段交付及实际回执，成功文件直接计入本批收集，然后执行其余目标。遇到非法参数、路径或字段错误时先修正并重新验证这一组，再扩大调度；保持完整目标集合和失败原件。已启动的 Workflow 不会因安装更新自动更换任务或补回结果。
 
 `pipeline()` 按组推进两阶段：
 
@@ -66,7 +70,7 @@ Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二
 python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
-收集路径和复核文件均在 `collection` 中配置，格式见 [任务配置说明](../../../skills/CONFIG.md)。
+收集路径和复核文件均在 `collection` 中配置，格式见仓库根目录下的 `skills/CONFIG.md`。
 
 根据收集报告处理待复核或失败条目，保存原始结果。
 
@@ -82,6 +86,6 @@ python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-
 
 ## 交付
 
-用收集产物生成公开候选快照，按项目流程保存内部评估。具体命令见 [数据导入说明](../../../statement_workflow/README.md#公开候选与私密数据库分别导入)。
+用收集产物生成公开候选快照，按项目流程保存内部评估。具体命令读取仓库根目录下 `statement_workflow/README.md` 的“公开候选与私密数据库分别导入”一节。
 
 汇报选中、已汇总、待复核和失败数量，以及候选和内部结果位置，标明回译为机器草稿。

@@ -176,30 +176,41 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
             self.assertTrue(output['result']['complete'])
             env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep +
                        os.environ.get('PATH', ''))
+            worker_cwd = root / '.formaliscope' / 'worker'
+            worker_cwd.mkdir(parents=True)
             for call in output['calls']:
                 data = call['input']
                 identity = data['declaration_ids'][0]
                 commands = [data['delivery_command']]
+                document = deepcopy(data['output_template'])
+                self.assertEqual(document['annotations'][0]['declaration_id'], identity)
+                # The supplied shape must not accidentally deliver unanswered assessments.
+                Path(data['draft_path']).write_text(json.dumps(document))
+                rejected = subprocess.run(['bash', '-c', data['delivery_command']],
+                                          cwd=worker_cwd, env=env, capture_output=True,
+                                          text=True, timeout=20)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertFalse(Path(data['result_path']).exists())
                 if call['opts']['agentType'] == 'formaliscope-readback':
-                    annotation = {
-                        'declaration_id': identity, 'title_zh': '测试标题',
-                        'readback': {'text_zh': '[TEST] 合成协议回译。', 'confidence': 0.9},
-                        'classification': {'role': 'definition', 'topics': []}, 'priority': None,
-                    }
+                    annotation = document['annotations'][0]
+                    annotation.update(title_zh='测试标题',
+                                      readback={'text_zh': r'[TEST] 合成协议回译。 $\alpha$',
+                                                'confidence': 0.9},
+                                      classification={'role': 'definition', 'topics': []})
                     stage = 'readback'
                 else:
                     commands.insert(0, data['check_readback_command'])
-                    annotation = {'declaration_id': identity, 'expectation_assessment': {
+                    annotation = document['annotations'][0]
+                    annotation['expectation_assessment'] = {
                         'verdict': 'undetermined', 'reason_zh': '测试未提供独立预期材料。',
-                        'confidence': 0.95}}
+                        'confidence': 0.95}
                     stage = 'expectation'
-                Path(data['draft_path']).write_text(json.dumps({
-                    'schema': f'formaliscope-{stage}-batch.v1', 'annotations': [annotation]}))
+                Path(data['draft_path']).write_text(json.dumps(document))
                 for command in commands:
                     argv = shlex.split(command)
                     self.assertNotIn('--baseline', argv)
                     self.assertNotIn('--baseline-path', argv)
-                    result = subprocess.run(['bash', '-c', command], cwd=temporary, env=env,
+                    result = subprocess.run(['bash', '-c', command], cwd=worker_cwd, env=env,
                                             capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     receipt = json.loads(result.stdout)
@@ -323,6 +334,16 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                 output = self.run_workflow(args=args)
                 self.assertIn('error', output)
                 self.assertEqual(output['calls'], [])
+
+    def test_unresolved_path_segments_fail_before_any_agent_starts(self):
+        for field in ('repoRoot', 'skillDir', 'batchDir', 'resultDir', 'expectationContext'):
+            for segment in ('.', '..'):
+                args = deepcopy(self.args)
+                args[field] = f'/fixture/{segment}/repo'
+                with self.subTest(field=field, segment=segment):
+                    output = self.run_workflow(args=args)
+                    self.assertIn('error', output)
+                    self.assertEqual(output['calls'], [])
 
     def test_skipped_failed_or_invalid_receipts_are_not_reported_as_full_success(self):
         for mode in ('skip-readback', 'fail-readback', 'skip-expectation', 'wrong-path', 'wrong-count'):
