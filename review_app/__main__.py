@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 import sqlite3
 
-from .build import compare_snapshots, normalize_snapshot, write_snapshot
+from .build import calculate_snapshot_digest, compare_snapshots, normalize_snapshot, write_snapshot
 from .database import database_schema_version, initialize
 from .judgments import backfill_review_basis
 from .local_paths import runtime_dir
@@ -36,7 +36,11 @@ def main():
     build.add_argument('--annotations', type=Path, help='source-hash-bound back-translation drafts for Statement review')
     build.add_argument('--repository-config', type=Path, help='repository id/name, scan roots, main targets and topics JSON')
     build.add_argument('--expect-commit', help='refuse a source checkout that does not match this exact commit')
-    build.add_argument('--reuse-from', type=Path, help='frozen predecessor whose unchanged machine results and reviews may be reused')
+    build_reuse = build.add_mutually_exclusive_group()
+    build_reuse.add_argument('--reuse-from', type=Path, help='override the default installed predecessor with this frozen snapshot')
+    build_reuse.add_argument('--no-reuse', action='store_true', help='build fresh evidence and disable automatic reuse on installation')
+    build.add_argument('--review-data-dir', type=Path, default=default_data_dir,
+                       help='read installed predecessor here; defaults to REVIEW_DATA_DIR or the project runtime')
     build.add_argument('--reuse-dataset', help='explicit predecessor dataset when --reuse-from is a collection')
     reuse = sub.add_parser('reuse-snapshot', help='carry unchanged evidence from an explicit predecessor into a new candidate')
     reuse.add_argument('--snapshot', type=Path, required=True)
@@ -76,6 +80,7 @@ def main():
     install.add_argument("--allow-dirty-source", action="store_true",
                          help="allow a development snapshot from local changes or an unverified source archive")
     install.add_argument('--legacy-kip126-only', action='store_true', help='automatic legacy puller guard: refuse repository datasets or collections')
+    install.add_argument('--no-reuse', action='store_true', help='disable default candidate generation and human judgment inheritance')
     migrate = sub.add_parser("migrate", help="apply pending database migrations")
     migrate.add_argument("--data-dir", type=Path, default=default_data_dir,
                          help="persistent data directory (or REVIEW_DATA_DIR)")
@@ -187,8 +192,9 @@ def main():
             output = candidate_output_path(requested_output, source_tree=source)
             if args.repository_config and not args.statements:
                 parser.error('--repository-config requires --statements')
-            if args.reuse_from and not args.statements or args.reuse_dataset and not args.reuse_from:
-                parser.error('--reuse-from requires --statements; --reuse-dataset requires --reuse-from')
+            if ((args.reuse_from or args.no_reuse) and not args.statements or
+                    args.reuse_dataset and not args.reuse_from):
+                parser.error('--reuse-from/--no-reuse require --statements; --reuse-dataset requires --reuse-from')
             if args.expect_commit:
                 from .build import _git_head
                 import re
@@ -208,6 +214,14 @@ def main():
                 if args.reuse_from:
                     from .reuse import predecessor, reuse_snapshot
                     result = reuse_snapshot(result, predecessor(result, read_document(args.reuse_from), args.reuse_dataset))
+                elif args.no_reuse:
+                    result['reuse_disabled'] = True
+                    result['digest'] = calculate_snapshot_digest(result)
+                elif result.get('repository'):
+                    from .reuse import automatic_reuse
+                    installed_file = args.review_data_dir.expanduser() / 'snapshot.json'
+                    installed = read_document(installed_file) if installed_file.is_file() else None
+                    result, _ = automatic_reuse(result, installed)
                 write_candidate_artifact(result, output, source_tree=source,
                                          input_artifacts=(args.reuse_from,) if args.reuse_from else ())
             else:
@@ -296,7 +310,8 @@ def main():
         try:
             installed, comparison = install_snapshot(
                 args.file.expanduser().resolve(), data_dir,
-                allow_dirty_source=args.allow_dirty_source, legacy_kip126_only=args.legacy_kip126_only)
+                allow_dirty_source=args.allow_dirty_source, legacy_kip126_only=args.legacy_kip126_only,
+                reuse_unchanged=not args.no_reuse)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         print("source update: " + ", ".join(f"{name}={count}" for name, count in comparison.items()))

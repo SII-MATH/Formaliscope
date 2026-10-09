@@ -2,6 +2,7 @@
 from contextlib import closing
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from .enrichment import enrich_snapshot
 from .enrichment_v2 import DEFAULT_TOPICS
 from .judgments import review_state, submit, reviewer_export
 from .repositories import dataset_id, make_collection
-from .reuse import context_basis, reuse_snapshot, predecessor
+from .reuse import automatic_predecessor, automatic_reuse, context_basis, reuse_snapshot, predecessor
 from .statements import compile_statements
 from .storage import install_snapshot, create_backup, verify_backup
 from .test_enrichment_v2 import fixture_document
@@ -44,11 +45,11 @@ class ReuseTests(unittest.TestCase):
     def build(self, commit):
         return compile_statements(self.source, source_commit=commit * 40, repository=self.config)
 
-    def install(self, snapshot):
+    def install(self, snapshot, **options):
         initialize(self.db)
         path = self.root / (uuid.uuid4().hex + '.json')
         path.write_text(json.dumps(snapshot))
-        return install_snapshot(path, self.data, allow_dirty_source=True)
+        return install_snapshot(path, self.data, allow_dirty_source=True, **options)
 
     def judge(self, snapshot, reviewer=None, rationale='original decision', verdict='aligned'):
         card = next(card for card in snapshot['cards'] if card['id'] == self.card_id)
@@ -227,10 +228,11 @@ class ReuseTests(unittest.TestCase):
         self.install(self.base)
         self.judge(self.base)
         self.file.write_text('variable (n : Nat)\nnamespace Example\ndef value : Nat := 1\nend Example\n')
-        candidate = reuse_snapshot(self.build('b'), self.base)
+        candidate = self.build('b')
         self.assertEqual(candidate['cards'][0]['fingerprint'], self.base['cards'][0]['fingerprint'])
-        self.install(candidate)
-        self.assertIsNone(review_state(candidate, self.db, self.card_id, self.reviewer)['current'])
+        installed, _ = self.install(candidate)
+        self.assertEqual(installed['reuse']['cards'], {})
+        self.assertIsNone(review_state(installed, self.db, self.card_id, self.reviewer)['current'])
 
     def test_topic_removal_private_moves_and_fresh_translations_are_not_overwritten(self):
         self.config['topics'] = []
@@ -246,6 +248,87 @@ class ReuseTests(unittest.TestCase):
         prior = self.build('a')
         self.file.rename(self.source / 'Moved.lean')
         self.assertEqual(reuse_snapshot(self.build('b'), prior)['reuse']['cards'], {})
+
+    def test_install_defaults_to_reuse_without_modifying_the_input_artifact(self):
+        self.install(self.old)
+        original = self.judge(self.old)
+        path = self.root / 'plain-new.json'
+        path.write_text(json.dumps(self.new))
+        frozen = path.read_bytes()
+        installed, report = install_snapshot(path, self.data, allow_dirty_source=True)
+        self.assertEqual(path.read_bytes(), frozen)
+        self.assertEqual(report['reused_evidence'], 1)
+        self.assertEqual(report['inherited_judgments'], 1)
+        self.assertEqual(installed['cards'][0]['enrichment'], self.old['cards'][0]['enrichment'])
+        self.assertEqual(installed['reuse']['snapshot_digest'], self.old['digest'])
+        self.assertEqual(review_state(installed, self.db, self.card_id, self.reviewer)['current']['inherited_from_id'], original['id'])
+        # Reinstalling the original plain update must not erase its carried machine results.
+        replay, _ = install_snapshot(path, self.data, allow_dirty_source=True)
+        self.assertEqual(replay['digest'], installed['digest'])
+
+    def test_default_reuse_selection_is_repo_scoped_and_preserves_rollbacks(self):
+        other = compile_statements(self.source, source_commit='d' * 40, repository={**self.config, 'id': 'beta'})
+        collection = make_collection([self.old, self.new, other], default=dataset_id(self.old))
+        third = self.build('c')
+        self.assertEqual(automatic_predecessor(third, collection), self.old)
+        collection['default_dataset'] = dataset_id(other)
+        collection['source_commit'] = other['source_commit']
+        collection['digest'] = calculate_snapshot_digest(collection)
+        self.assertEqual(automatic_predecessor(third, collection), self.new)
+        self.assertIsNone(automatic_predecessor(self.new, collection))
+        self.assertEqual(automatic_reuse(self.old, self.new)[0], self.old)
+        self.assertEqual(automatic_reuse(self.new, other)[0], self.new)
+        initial, count = automatic_reuse(self.new, None)
+        self.assertEqual(initial, self.new)
+        self.assertEqual(count, 0)
+
+    def test_default_reuse_applies_independently_to_new_collection_versions(self):
+        self.install(make_collection([self.old]))
+        self.judge(self.old)
+        other = compile_statements(self.source, source_commit='d' * 40, repository={**self.config, 'id': 'beta'})
+        installed, report = self.install(make_collection([self.new, other], default=dataset_id(self.new)))
+        self.assertEqual(report['inherited_judgments'], 1)
+        alpha, beta = installed['datasets']
+        self.assertIn('reuse', alpha)
+        self.assertNotIn('reuse', beta)
+        validate_snapshot(installed)
+
+    def test_build_and_install_opt_out_keeps_versions_independent(self):
+        self.install(self.old)
+        self.judge(self.old)
+        installed, report = self.install(self.new, reuse_unchanged=False)
+        self.assertNotIn('reuse', installed)
+        self.assertNotIn('inherited_judgments', report)
+        self.assertIsNone(review_state(installed, self.db, self.card_id, self.reviewer)['current'])
+        disabled = self.build('c')
+        disabled['reuse_disabled'] = True
+        disabled['digest'] = calculate_snapshot_digest(disabled)
+        installed, _ = self.install(disabled)
+        self.assertNotIn('reuse', installed)
+        self.assertEqual(installed['digest'], disabled['digest'])
+
+    def test_build_defaults_to_installed_evidence_and_can_disable_or_override_it(self):
+        self.install(self.old)
+        config = self.root / 'repository.json'
+        config.write_text(json.dumps(self.config))
+        original = (self.data / 'snapshot.json').read_bytes()
+        command = [sys.executable, '-m', 'review_app', 'build', '--statements', '--source', str(self.source),
+                   '--source-commit', 'b' * 40, '--repository-config', str(config)]
+        for flag in ([], ['--no-reuse']):
+            with self.subTest(flag=flag):
+                output = self.root / (uuid.uuid4().hex + '.json')
+                result = subprocess.run([*command, '--output', str(output), *flag], capture_output=True, text=True,
+                                        env={**os.environ, 'REVIEW_DATA_DIR': str(self.data)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                candidate = json.loads(output.read_text())
+                self.assertEqual('reuse' in candidate, not bool(flag))
+                self.assertEqual(candidate.get('reuse_disabled', False), bool(flag))
+                self.assertEqual((self.data / 'snapshot.json').read_bytes(), original)
+        output = self.root / 'custom-data.json'
+        result = subprocess.run([*command, '--output', str(output), '--review-data-dir', str(self.data)],
+                                capture_output=True, text=True, env={**os.environ, 'REVIEW_DATA_DIR': str(self.root / 'absent')})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('reuse', json.loads(output.read_text()))
 
 
 if __name__ == '__main__':

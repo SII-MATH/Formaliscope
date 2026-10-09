@@ -28,6 +28,85 @@ def predecessor(snapshot: dict, previous: dict, selected: str | None = None) -> 
     return choices[0]
 
 
+def _generated_at(snapshot):
+    try:
+        timestamp = datetime.fromisoformat(snapshot.get('generated_at', '').replace('Z', '+00:00'))
+        return timestamp if timestamp.tzinfo is not None else None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def automatic_predecessor(snapshot: dict, previous: dict) -> dict | None:
+    """Prefer the installed default for this repo, otherwise its latest artifact.
+
+    Do not reinterpret an existing version or a historical artifact as a new
+    update. Explicit --reuse-from remains available for deliberate branching.
+    """
+    from .repositories import select_dataset
+    if not snapshot.get('repository'):
+        return None
+    children = datasets(previous)
+    if any(dataset_id(item) == dataset_id(snapshot) for item in children):
+        return None
+    choices = [item for item in children if item.get('repository') and
+               _repository(item) == _repository(snapshot)]
+    if not choices:
+        return None
+    active = select_dataset(previous)
+    if active in choices:
+        source = active
+    else:
+        dated = [(stamp, item) for item in choices if (stamp := _generated_at(item)) is not None]
+        if not dated:
+            return None
+        latest = max(stamp for stamp, _ in dated)
+        sources = [item for stamp, item in dated if stamp == latest]
+        if len(sources) != 1:
+            raise ValueError('installed repository versions have ambiguous generation times; specify --reuse-from')
+        source = sources[0]
+    new_time, old_time = _generated_at(snapshot), _generated_at(source)
+    return source if new_time is not None and old_time is not None and new_time > old_time else None
+
+
+def automatic_reuse(snapshot: dict, previous: dict | None) -> tuple[dict, int]:
+    """Create candidates for new repository versions; installed evidence is read-only."""
+    validate_snapshot(snapshot)
+    if (previous is None or snapshot.get('reuse_disabled') or
+            not any(item.get('repository') for item in datasets(snapshot)) or
+            not any(item.get('repository') for item in datasets(previous))):
+        return snapshot, 0
+    validate_snapshot(previous)
+    result, count = deepcopy(snapshot), 0
+    changed = False
+    for index, target in enumerate(datasets(result)):
+        if target.get('reuse') or target.get('reuse_disabled') or target.get('review_mode') != 'statement':
+            continue
+        installed = next((item for item in datasets(previous)
+                          if dataset_id(item) == dataset_id(target) and
+                          item.get('reuse_input_digest') == target['digest']), None)
+        if installed is not None:
+            # Reinstalling the same plain input preserves the exact previously
+            # derived artifact, including subsequent same-version enrichment.
+            candidate = deepcopy(installed)
+        else:
+            source = automatic_predecessor(target, previous)
+            if source is None:
+                continue
+            candidate = reuse_snapshot(target, source)
+            candidate['reuse_input_digest'] = target['digest']
+            candidate['digest'] = calculate_snapshot_digest(candidate)
+            count += len(candidate['reuse']['cards'])
+        changed = True
+        if result.get('datasets'):
+            result['datasets'][index] = candidate
+        else:
+            result = candidate
+    if changed:
+        result['digest'] = calculate_snapshot_digest(result)
+        validate_snapshot(result)
+    return result, count
+
+
 def _tokens(text):
     # Ignore empty positional lines outside strings, preserving indentation
     # (Lean layout is significant) and the exact contents of string literals.
@@ -139,6 +218,8 @@ def reuse_snapshot(snapshot: dict, previous: dict) -> dict:
     if snapshot['source_commit'] == previous['source_commit']:
         raise ValueError('reuse requires a different source commit')
     result = deepcopy(snapshot)
+    result.pop('reuse_disabled', None)
+    result.pop('reuse_input_digest', None)
     old = {card['id']: card for card in previous['cards']}
     manifest = {'schema': REUSE_SCHEMA, 'repository_id': _repository(previous),
                 'source_dataset': dataset_id(previous), 'source_commit': previous['source_commit'],
@@ -182,6 +263,11 @@ def reuse_snapshot(snapshot: dict, previous: dict) -> dict:
 
 
 def validate_reuse(snapshot: dict) -> None:
+    if 'reuse_disabled' in snapshot and type(snapshot['reuse_disabled']) is not bool:
+        raise ValueError('reuse_disabled must be a boolean')
+    if 'reuse_input_digest' in snapshot and (not snapshot.get('reuse') or
+            not re.fullmatch('[0-9a-f]{64}', str(snapshot['reuse_input_digest']))):
+        raise ValueError('invalid original automatic reuse input digest')
     manifest = snapshot.get('reuse')
     if manifest is None:
         return
