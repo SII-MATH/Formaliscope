@@ -567,13 +567,13 @@ def main(argv=None):
     parser.add_argument('--declaration-id', action='append', default=[])
     parser.add_argument('--next-result', type=Path, help='allocated second-stage path, omitted only when skipped')
     parser.add_argument('--config', type=Path, help='task configuration with collection receipts')
-    parser.add_argument('--snapshot', type=Path, help=argparse.SUPPRESS)
-    parser.add_argument('--manifest', type=Path, help=argparse.SUPPRESS)
-    parser.add_argument('--result', action='append', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--snapshot', type=Path, help='frozen snapshot used for delivery or collection')
+    parser.add_argument('--manifest', type=Path, help='frozen batch manifest')
+    parser.add_argument('--result', action='append', type=Path, help='allocated stage output or collection input')
     parser.add_argument('--review', action='append', type=Path, default=[], help=argparse.SUPPRESS)
     parser.add_argument('--executed-model', help=argparse.SUPPRESS)
     parser.add_argument('--readback-result', action='append', type=Path, default=[],
-                        help=argparse.SUPPRESS)
+                        help='first-stage result; its .baseline.json record is located automatically')
     parser.add_argument('--output', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:

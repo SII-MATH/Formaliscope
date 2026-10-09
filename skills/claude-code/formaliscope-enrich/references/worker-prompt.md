@@ -35,7 +35,7 @@
 
 仅输出上述五个字段，不输出占位 `expectation_assessment` 或运行元数据。按 `output_schema_path` 的严格阶段契约生成 JSON，使用序列化器正确转义 LaTeX。
 
-先保存到调度分配的 `draft_path`（新文件），再执行固定交付程序，不直接写 `result_path` 或摘要。将任务数据中的绝对路径和唯一 ID 代入：
+先保存到调度分配的 `draft_path`（新文件），再原样执行 Workflow 提供的 `delivery_command`，不直接写 `result_path` 或摘要。命令已包含分配路径和唯一 ID，不从任务字段名推测命令行参数。其格式为：
 
 ```bash
 python3 <delivery_script> --deliver-readback --snapshot <snapshot_path> --manifest <manifest_path> --input <draft_path> --result <result_path> --declaration-id <唯一ID> --next-result <next_result_path>

@@ -12,4 +12,4 @@ omitClaudeMd: true
 
 输出 `formaliscope-readback-batch.v1`，`annotations` 恰好一项，仅包含 declaration_id、title_zh、readback、classification、priority；不填占位预期判断或运行信息。
 
-Write 只保存新的 draft_path，随后用 Bash 调用指定固定 `collect.py --deliver-readback`，由程序校验、排他交付正式结果并记录基线 SHA-256；不直接写正式结果或自报摘要。程序成功后原样返回 `{result_path, count}` 回执，失败停止并报告。目标已存在时请求新路径，保留所有原始文件，不改写或重新封存已有基线。模型执行事实仍由调度记录确认。
+Write 只保存新的 draft_path，随后用 Bash 原样执行 Workflow 提供的 `delivery_command`，由程序校验、排他交付正式结果并记录基线 SHA-256；不直接写正式结果或自报摘要，不从任务字段推测参数。程序成功后原样返回 `{result_path, count}` 回执，失败停止并报告。目标已存在时请求新路径，保留所有原始文件，不改写或重新封存已有基线。模型执行事实仍由调度记录确认。

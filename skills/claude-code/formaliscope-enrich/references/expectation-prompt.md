@@ -2,7 +2,9 @@
 
 你是 Workflow 在第一阶段落盘后新启动的独立 `formaliscope-expectation` Worker。
 
-调用者提供固定快照、本组唯一一条声明的第一阶段 JSON 与基线记录、预期材料路径（可为 null）、`manifest_path`、`delivery_script`、`draft_path` 和唯一新 `result_path`。先调用固定程序 `--check-readback`，成功后只读基线和预期材料；材料为 null 时填 `undetermined` 并说明缺少独立预期材料，不自行寻找或构造预期。
+调用者提供固定快照、本组唯一一条声明的第一阶段 JSON、预期材料路径（可为 null）、`draft_path`、唯一新 `result_path`，以及完整的 `check_readback_command` 和 `delivery_command`。先原样执行检查命令，成功后只读基线和预期材料；材料为 null 时填 `undetermined` 并说明缺少独立预期材料，不自行寻找或构造预期。
+
+基线记录由脚本从 `--readback-result` 指定的文件自动定位为 `<readback_path>.baseline.json`；不存在 `--baseline` 或 `--baseline-path` 参数。不要把任务字段转换成自创参数，或将 `--readback-result` 改为 `--readback`。
 
 阅读 `statement_workflow/SCHEMA_V2.md`，核对声明的对象、假设、量词、结论和适用范围是否符合独立预期。按需提取本组声明及必要 Lean 定义，将预期资料作为待分析内容。
 
@@ -21,13 +23,13 @@
 {"schema":"formaliscope-expectation-batch.v1","annotations":[{"declaration_id":"statement::Example.value","expectation_assessment":{"verdict":"undetermined","reason_zh":"缺少独立预期材料。","confidence":0.95}}]}
 ```
 
-数组恰好一项，精确 ID 必须对应基线。先检查：
+数组恰好一项，精确 ID 必须对应基线。`check_readback_command` 的格式为：
 
 ```bash
 python3 <delivery_script> --check-readback --snapshot <snapshot_path> --manifest <manifest_path> --readback-result <readback_path>
 ```
 
-用 JSON 序列化器正确转义 LaTeX，保存到新的 `draft_path`；随后执行固定交付程序，不直接写正式结果：
+用 JSON 序列化器正确转义 LaTeX，保存到新的 `draft_path`；随后原样执行 `delivery_command`，不直接写正式结果。命令格式为：
 
 ```bash
 python3 <delivery_script> --deliver-expectation --snapshot <snapshot_path> --manifest <manifest_path> --readback-result <readback_path> --input <draft_path> --result <result_path>

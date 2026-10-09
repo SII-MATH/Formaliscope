@@ -1,11 +1,17 @@
 """Validate Workflow inputs, stage isolation and failure handling with simulated agents."""
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from skills.scripts.config import load_config, resolve_worker_model
+from skills.scripts.prepare import prepare
+from review_app.statements import compile_statements
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,12 +146,69 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                 self.assertEqual(data['next_result_path'], expectation['input']['result_path'])
                 self.assertNotIn('baseline_path', data)
             else:
-                self.assertEqual(data['baseline_path'], data['readback_path'] + '.baseline.json')
+                self.assertNotIn('baseline_path', data)
                 self.assertIn('--check-readback', call['prompt'])
                 self.assertIn('仅输出 declaration_id 和 expectation_assessment', call['prompt'])
                 self.assertIn('不复制或输出正文、标题、分类、优先度及回译分值', call['prompt'])
                 self.assertNotIn('next_result_path', data)
         self.assertEqual(len(paths), len(set(paths)))
+
+    def test_generated_stage_commands_run_actual_cli_with_quoted_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "stage's files; $literal"
+            source = root / 'source'
+            (source / 'KIP126').mkdir(parents=True)
+            (source / 'KIP126/Example.lean').write_text(
+                'namespace Example\ndef a : Nat := 1\ndef b : Nat := 2\ndef c : Nat := 3\nend Example\n')
+            snapshot = compile_statements(source, source_commit='a' * 40)
+            snapshot_path = root / 'source-snapshot.json'
+            snapshot_path.write_text(json.dumps(snapshot))
+            batch = root / 'batch'
+            manifest = prepare(snapshot_path, batch, config_path=SKILL / 'config.json',
+                               directories=['KIP126'])
+            args = deepcopy(self.args)
+            args.update(repoRoot=str(ROOT), skillDir=str(SKILL), batchDir=str(batch),
+                        declarationIds=manifest['declaration_ids'], expectationContext=None,
+                        config=json.loads((batch / 'agent-config.json').read_text()))
+            args['groups'] = [{'key': f'group-{index}', 'declarationIds': [identity]}
+                              for index, identity in enumerate(manifest['declaration_ids'], 1)]
+            output = self.run_workflow(args)
+            self.assertTrue(output['result']['complete'])
+            env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep +
+                       os.environ.get('PATH', ''))
+            for call in output['calls']:
+                data = call['input']
+                identity = data['declaration_ids'][0]
+                commands = [data['delivery_command']]
+                if call['opts']['agentType'] == 'formaliscope-readback':
+                    annotation = {
+                        'declaration_id': identity, 'title_zh': '测试标题',
+                        'readback': {'text_zh': '[TEST] 合成协议回译。', 'confidence': 0.9},
+                        'classification': {'role': 'definition', 'topics': []}, 'priority': None,
+                    }
+                    stage = 'readback'
+                else:
+                    commands.insert(0, data['check_readback_command'])
+                    annotation = {'declaration_id': identity, 'expectation_assessment': {
+                        'verdict': 'undetermined', 'reason_zh': '测试未提供独立预期材料。',
+                        'confidence': 0.95}}
+                    stage = 'expectation'
+                Path(data['draft_path']).write_text(json.dumps({
+                    'schema': f'formaliscope-{stage}-batch.v1', 'annotations': [annotation]}))
+                for command in commands:
+                    argv = shlex.split(command)
+                    self.assertNotIn('--baseline', argv)
+                    self.assertNotIn('--baseline-path', argv)
+                    result = subprocess.run(['bash', '-c', command], cwd=temporary, env=env,
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    receipt = json.loads(result.stdout)
+                    self.assertEqual(receipt['count'], 1)
+                    expected = (data['readback_path'] if '--check-readback' in argv
+                                else data['result_path'])
+                    self.assertEqual(receipt['result_path'], expected)
+                self.assertEqual(json.loads(Path(data['result_path']).read_text())['annotations'],
+                                 [annotation])
 
     def test_shared_harness_prompts_use_stage_schemas_and_fixed_delivery(self):
         for harness in ('claude-code', 'codex', 'kimi-code'):

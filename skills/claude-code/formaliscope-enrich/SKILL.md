@@ -43,6 +43,8 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 读取 `${CLAUDE_SKILL_DIR}/workflows/enrich.js`，按脚本的参数约定，通过 `Workflow(scriptPath=..., args=...)` 传入任务配置和分组计划。
 
+Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二阶段另有 `check_readback_command`；原样执行，不从任务字段推测命令行参数。基线记录由脚本根据 `--readback-result` 自动定位，不传 baseline 参数。
+
 `pipeline()` 按组推进两阶段：
 
 1. `formaliscope-readback` 读取 [回译 prompt](references/worker-prompt.md)，接收字段标准、第一阶段 schema、固定快照、主题、本组 ID、manifest、固定交付脚本及唯一 draft/result/next_result 路径。仅生成 `declaration_id`、`title_zh`、`readback`、`classification`、`priority`，不接收预期材料、不填占位判断。调用固定 `collect.py --deliver-readback`，程序校验、排他写出正式第一阶段文件并保存 `.baseline.json` 摘要后返回回执。

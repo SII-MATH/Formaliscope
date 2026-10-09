@@ -63,6 +63,8 @@ const join = (root, relative) => `${root.replace(/[\\/]$/, '')}/${relative}`
 const snapshotPath = join(batchDir, 'snapshot.json')
 const manifestPath = join(batchDir, 'manifest.json')
 const deliveryScript = join(repoRoot, 'skills/scripts/collect.py')
+const command = (...argv) => argv.map(value => `'${value.replace(/'/g, "'\\''")}'`).join(' ')
+const deliveryCommand = (...argv) => command('python3', deliveryScript, ...argv)
 const schemaPath = join(repoRoot, 'statement_workflow/SCHEMA_V2.md')
 const receiptSchema = {
   type: 'object',
@@ -103,11 +105,15 @@ const results = await pipeline(
       next_result_path: join(resultDir, `${group.key}.json`),
       result_path: path,
     }
+    input.delivery_command = deliveryCommand('--deliver-readback', '--snapshot', snapshotPath,
+      '--manifest', manifestPath, '--input', input.draft_path, '--result', path,
+      '--declaration-id', group.declarationIds[0], '--next-result', input.next_result_path)
     const receipt = await agent(
       `执行纯 Lean 回译。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
 以本组 cards 的 ID 与 Lean 字段、必要 modules 定义为回译依据。
 只填写第一阶段字段，不生成 expectation_assessment。
-先保存 draft_path，再调用 delivery_script --deliver-readback 交付至 result_path 并封存摘要；不得直接写正式结果或自报摘要。
+先保存 draft_path，再原样执行 delivery_command 交付至 result_path 并封存摘要；不得直接写正式结果或自报摘要。
+交付命令：${input.delivery_command}
 固定程序成功后返回其文件回执；失败停止本组，不改写原文件。
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-readback', 'Lean 回译', `${group.key}:readback`),
@@ -126,18 +132,25 @@ const results = await pipeline(
       manifest_path: manifestPath,
       snapshot_path: snapshotPath,
       readback_path: readback.result_path,
-      baseline_path: `${readback.result_path}.baseline.json`,
       expectation_context_path: expectationContext,
       declaration_ids: group.declarationIds,
       draft_path: `${path}.input.json`,
       result_path: path,
     }
+    input.check_readback_command = deliveryCommand('--check-readback', '--snapshot', snapshotPath,
+      '--manifest', manifestPath, '--readback-result', input.readback_path)
+    input.delivery_command = deliveryCommand('--deliver-expectation', '--snapshot', snapshotPath,
+      '--manifest', manifestPath, '--readback-result', input.readback_path,
+      '--input', input.draft_path, '--result', path)
     const receipt = await agent(
       `执行独立预期判断。先读 prompt_path 和 schema_path，再按以下 JSON 数据完成本组。
-先调用 delivery_script --check-readback 检查基线摘要，成功后只读基线和预期材料。
+先原样执行 check_readback_command 检查基线摘要，成功后只读基线和预期材料。
+检查命令：${input.check_readback_command}
+基线记录由脚本从 readback_path 自动定位，无需传入 baseline 参数。
 仅输出 declaration_id 和 expectation_assessment，不复制或输出正文、标题、分类、优先度及回译分值。
 expectation_context_path 为 null 时，判断填 undetermined 并说明缺少独立预期材料。
-保存 draft_path，再调用 delivery_script --deliver-expectation 排他交付；成功后返回程序文件回执，保留基线和原始输入。
+保存 draft_path，再原样执行 delivery_command 排他交付；成功后返回程序文件回执，保留基线和原始输入。
+交付命令：${input.delivery_command}
 任务数据：${JSON.stringify(input)}`,
       options('formaliscope-expectation', '内部预期判断', `${group.key}:expectation`),
     )
