@@ -8,6 +8,8 @@ v2 已接入 Skill、校验器与数据库迁移 9：Agent 填写标题、完整
 
 多仓库接入通过独立配置扫描根目录、主目标和主题，再把各仓库/版本的冻结快照组合成候选集合。页面可切换仓库与版本；判断、草稿、导出及管理员汇总按数据集隔离。数据库迁移 10 保留旧 KIP126 记录及快照回退能力，操作步骤见 [多仓库与版本说明](review_app/REPOSITORIES.md)。
 
+同一仓库更新时，构建可用 `--reuse-from <旧快照>` 沿用上下文未变条目的机器回译、分类、标签和优先度；安装候选时继承匹配的人工判断，保留审阅人、时间和原始证据来源。迁移 11 记录判断的跨版本来源。模块上下文、递归导入、依赖锁或工具链变化时保守地重新处理；步骤与限制见[跨版本沿用](review_app/REPOSITORIES.md#跨版本沿用)。
+
 回译 Skill 源文件按 Codex、Claude Code、Kimi Code 分别维护在 `skills/`，先按[安装说明](skills/README.md)安装当前 harness 的版本。Agent 每次先起草独立[任务配置](skills/CONFIG.md)，覆盖[共享默认配置](skills/default-config.json)，准备与收集命令只传 `--config`。先按固定 Lean 分组回译，再用独立预期材料补内部判断；没有材料时填“不知道”。原始 `readback.confidence` 低于配置阈值的成功回译进入主 Agent 复核，无法回译单列失败。脚本自动记录来源、运行与原始分值。
 
 应用仓库只保留 `main` 和 `dev`。日常开发在 `dev`（跟踪 `origin/dev`）进行，合并到 `main` 后由 GitHub Actions 自动测试并发布 `v0.0.1`、`v0.0.2` 等版本。
@@ -49,7 +51,7 @@ python3 -m review_app import-agent-assessments \
   --data-dir /path/to/review-data
 ```
 
-前两个命令不写数据库，候选快照仅含公开回译与标签。最后一个命令是 v2 内部评估的显式入库：使用该批次的冻结基础快照，支持幂等重试与版本历史，不安装快照或写入人工判断。应先升级目标应用；当前数据库使用迁移 10，旧版本不能直接打开。旧 v1 补充文件仍可校验和生成候选，但不能作为 v2 内部评估导入。
+前两个命令不写数据库，候选快照仅含公开回译与标签。最后一个命令是 v2 内部评估的显式入库：使用该批次的冻结基础快照，支持幂等重试与版本历史，不安装快照或写入人工判断。应先升级目标应用；当前数据库使用迁移 11，旧版本不能直接打开。旧 v1 补充文件仍可校验和生成候选，但不能作为 v2 内部评估导入。
 
 构建和 enrichment 只生成新的候选文件，不覆盖旧制品或人工数据库；更新运行证据统一通过 `install-snapshot`。再次构建时选择新的输出路径。正式安装、身份配置、只读预检、备份和回滚见 [部署说明](review_app/DEPLOYMENT.md)，存储职责与一致性见 [存储设计](review_app/STORAGE.md)，制品发布与 VPS 拉取见 [GitHub Actions 部署](review_app/GITHUB_ACTIONS_DEPLOYMENT.md)，模块与行为见 [应用说明](review_app/README.md) 和 [Statement 使用说明](review_app/STATEMENT_REVIEW.md)。
 

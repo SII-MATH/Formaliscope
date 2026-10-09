@@ -221,7 +221,8 @@
     const reading=c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
     $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
     $("statement").innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
-    $("nl-location").textContent=c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。";
+    const reuseNote=c.reuse_source_commit?` 沿用版本 ${c.reuse_source_commit.slice(0,12)} 的机器结果。`:"";
+    $("nl-location").textContent=(c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。")+reuseNote;
     const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
     const present=references.filter(reference=>reference.statement?.trim());
     $('blueprint-panel').hidden=!present.length;
@@ -247,7 +248,7 @@
     const badge=$("status-badge");
     badge.className=`status-badge ${current?current.verdict==="misaligned"?"rejected":current.verdict==="uncertain"||current.verdict==="partial"?"uncertain":"reviewed":""}`;
     badge.textContent=current?verdictNames[current.verdict]:"未审阅";
-    badge.title=!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
+    badge.title=current?.inherited_from_dataset?`沿用 ${current.inherited_from_dataset} 的人工判断`:!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
     $("history-count").textContent=`(${historyTotal})`;
     const row=byId.get(c.id);
     if(row){
@@ -258,7 +259,7 @@
     return current;
   }
   function renderHistory(){
-    $("history").innerHTML=reviewHistory.map(row=>`<div class="history-item ${matches(card,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(card,row)?"":" · 旧版本"}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||(historyLoaded?"暂无审阅记录。":"展开后读取审阅历史。");
+    $("history").innerHTML=reviewHistory.map(row=>`<div class="history-item ${matches(card,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(card,row)?"":" · 旧版本"}${row.inherited_from_dataset?` · 沿用 ${escape(row.inherited_from_dataset)}`:""}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||(historyLoaded?"暂无审阅记录。":"展开后读取审阅历史。");
     $('history-more').hidden=!historyCursor;$('history-more').disabled=historyLoading;
     $('history-more').textContent='加载更多历史';
   }

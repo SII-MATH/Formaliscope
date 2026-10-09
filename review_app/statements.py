@@ -333,6 +333,19 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
                 'unlinked_nodes': 0, 'cards': cards, 'review_mode': 'statement',
                 'review_contract': 'statement-front-end.v1',
                 'modules': {row['file']: row['full_source'] for row in records}}
+    from .repositories import source_files
+    scan_roots = repository['roots'] if repository else [name for name in ('KIP126', 'KIPBase') if (repo / name).is_dir()]
+    snapshot['modules'] = {str(path.relative_to(repo)): path.read_text(encoding='utf-8')
+                           for path in source_files(repo, scan_roots)}
+    snapshot['source_environment'] = {
+        name: hashlib.sha256((repo / name).read_bytes()).hexdigest() if (repo / name).is_file() else None
+        for name in ('lean-toolchain', 'lakefile.lean', 'lakefile.toml')}
+    manifest_path = repo / 'lake-manifest.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.is_file() else {}
+    snapshot['source_environment']['path_dependencies'] = any(
+        item.get('type') == 'path' for item in manifest.get('packages', []))
+    from .reuse import freeze_imports
+    snapshot['context_modules'] = freeze_imports(repo, snapshot['modules'])
     if repository:
         snapshot['repository'] = repository
         snapshot['enrichment_topics'] = repository['topics']

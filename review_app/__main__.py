@@ -36,6 +36,13 @@ def main():
     build.add_argument('--annotations', type=Path, help='source-hash-bound back-translation drafts for Statement review')
     build.add_argument('--repository-config', type=Path, help='repository id/name, scan roots, main targets and topics JSON')
     build.add_argument('--expect-commit', help='refuse a source checkout that does not match this exact commit')
+    build.add_argument('--reuse-from', type=Path, help='frozen predecessor whose unchanged machine results and reviews may be reused')
+    build.add_argument('--reuse-dataset', help='explicit predecessor dataset when --reuse-from is a collection')
+    reuse = sub.add_parser('reuse-snapshot', help='carry unchanged evidence from an explicit predecessor into a new candidate')
+    reuse.add_argument('--snapshot', type=Path, required=True)
+    reuse.add_argument('--reuse-from', type=Path, required=True)
+    reuse.add_argument('--reuse-dataset')
+    reuse.add_argument('--output', type=Path, required=True)
     collection = sub.add_parser('bundle-snapshots', help='combine frozen repository versions into a new candidate')
     collection.add_argument('--snapshot', type=Path, action='append', required=True)
     collection.add_argument('--default', help='initial dataset id: repository@commit')
@@ -135,6 +142,19 @@ def main():
             parser.exit(1, f'{error}\n')
         print(json.dumps(result, ensure_ascii=False))
         return
+    if args.command == 'reuse-snapshot':
+        from .enrichment_v2 import read_document
+        from .reuse import predecessor, reuse_snapshot
+        try:
+            base = read_document(args.snapshot)
+            previous = predecessor(base, read_document(args.reuse_from), args.reuse_dataset)
+            result = reuse_snapshot(base, previous)
+            output = write_candidate_artifact(result, args.output, input_artifacts=(args.snapshot, args.reuse_from))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            parser.exit(1, f'{error}\n')
+        print(json.dumps({'reused': len(result['reuse']['cards']), 'comparison': result['comparison'],
+                          'snapshot_digest': result['digest'], 'output': str(output)}, ensure_ascii=False))
+        return
     if args.command in {'validate-enrichment', 'enrich-snapshot'}:
         from .enrichment import enrich_snapshot, validate_enrichment
         from .enrichment_v2 import read_document
@@ -167,6 +187,8 @@ def main():
             output = candidate_output_path(requested_output, source_tree=source)
             if args.repository_config and not args.statements:
                 parser.error('--repository-config requires --statements')
+            if args.reuse_from and not args.statements or args.reuse_dataset and not args.reuse_from:
+                parser.error('--reuse-from requires --statements; --reuse-dataset requires --reuse-from')
             if args.expect_commit:
                 from .build import _git_head
                 import re
@@ -183,7 +205,11 @@ def main():
                 if args.require_clean and result['source_dirty']:
                     parser.error('reviewed source has uncommitted changes')
                 result['comparison'] = compare_snapshots(None, result)
-                write_candidate_artifact(result, output, source_tree=source)
+                if args.reuse_from:
+                    from .reuse import predecessor, reuse_snapshot
+                    result = reuse_snapshot(result, predecessor(result, read_document(args.reuse_from), args.reuse_dataset))
+                write_candidate_artifact(result, output, source_tree=source,
+                                         input_artifacts=(args.reuse_from,) if args.reuse_from else ())
             else:
                 if args.source_commit:
                     parser.error('--source-commit is only supported for --statements')
@@ -194,6 +220,8 @@ def main():
         comparison = result["comparison"]
         print("candidate content: " + ", ".join(f"{name}={count}" for name, count in comparison.items()))
         print(f"candidate snapshot {result['digest']} -> {output}")
+        if 'reuse' in result:
+            print(f"reused evidence: {len(result['reuse']['cards'])}")
         print('Next: ' + shlex.join(['python3', '-m', 'review_app', 'install-snapshot',
                                      '--file', str(output), '--data-dir', '/path/to/review-data']))
         return

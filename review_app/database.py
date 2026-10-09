@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 10
+DB_SCHEMA_VERSION = 11
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -196,6 +196,11 @@ def _migration_10(db: sqlite3.Connection) -> None:
     )''')
 
 
+def _migration_11(db: sqlite3.Connection) -> None:
+    db.execute('ALTER TABLE judgments ADD COLUMN inherited_from_id TEXT')
+    db.execute('ALTER TABLE judgments ADD COLUMN inherited_from_dataset TEXT')
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -207,6 +212,7 @@ MIGRATIONS = (
     (8, "separate-review-drafts-from-history", _migration_8),
     (9, "private-versioned-agent-assessments", _migration_9),
     (10, "independent-repository-version-datasets", _migration_10),
+    (11, "cross-version-judgment-provenance", _migration_11),
 )
 
 

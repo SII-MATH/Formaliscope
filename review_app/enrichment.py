@@ -164,6 +164,7 @@ def enrich_snapshot(snapshot: dict, document: dict) -> dict:
     cards = {card['id']: card for card in result['cards']}
     for annotation in annotations:
         card = cards[annotation['declaration_id']]
+        card.pop('reuse_source_commit', None)
         from .blueprint import card_references
         references = card_references(card)
         if references:

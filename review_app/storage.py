@@ -80,6 +80,8 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
                                       for item in (previous, payload)):
             raise ValueError('legacy KIP126 automatic updates cannot replace repository datasets; build and install a complete collection explicitly')
         comparison = compare_snapshots(previous, normalize_snapshot(payload))
+        from .reuse import installation_reuse, inherit_judgments
+        reuse_pairs = installation_reuse(previous, payload)
         # Preserve v1 judgments while their only old fingerprint mapping is
         # still available; backup must not interleave with this migration.
         database = data_dir / "judgments.sqlite3"
@@ -90,6 +92,10 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
             backfill_review_basis(database, previous)
             from .dataset_storage import preserve_legacy_records
             preserve_legacy_records(database, previous, payload)
+        if reuse_pairs and database.is_file():
+            from .database import initialize
+            initialize(database)
+            comparison['inherited_judgments'] = inherit_judgments(database, reuse_pairs)
         payload["comparison"] = comparison
         descriptor, filename = tempfile.mkstemp(prefix=".snapshot.", suffix=".tmp", dir=data_dir)
         temporary = Path(filename)

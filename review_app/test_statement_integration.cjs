@@ -330,6 +330,23 @@ async function datasetSwitchPreservesUnsavedInput(){
   assert.equal(failed.title,'B');assert.match(failed.element('rationale').value,/must survive/);
 }
 
+async function inheritedEvidenceShowsItsOriginalVersion(){
+  const source='alpha@'+'a'.repeat(40);
+  const f=fixture({configure(cards,records){
+    cards[0].statement_origin='backtranslation';cards[0].reuse_source_commit='a'.repeat(40);
+    records.set('A',[{id:'inherited',card_id:'A',fingerprint:'fp-A',verdict:'aligned',
+      reviewer:'Tester',created_at:'2026-10-04T00:00:00Z',inherited_from_dataset:source}]);
+  }});
+  await settle();
+  assert.match(f.element('nl-location').textContent,/沿用版本 aaaaaaaaaaaa 的机器结果/);
+  assert.equal(f.element('status-badge').title,`沿用 ${source} 的人工判断`);
+  f.element('review-history').open=true;f.element('review-history').ontoggle();await settle();
+  assert.match(f.element('history').innerHTML,new RegExp(`沿用 ${source}`));
+  f.click('B');await settle();
+  assert.doesNotMatch(f.element('nl-location').textContent,/沿用/);
+  assert.equal(f.element('status-badge').title,'');
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
@@ -339,6 +356,7 @@ async function datasetSwitchPreservesUnsavedInput(){
   await initialEvidenceAndSelection();await lateResponsesAndLogout();await indexedSearchAfterCompletion();
   await expiryKeepsFailedOpinion();
   await datasetSwitchPreservesUnsavedInput();
+  await inheritedEvidenceShowsItsOriginalVersion();
   await blueprintReferenceDisplay();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
