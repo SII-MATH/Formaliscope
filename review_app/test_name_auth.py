@@ -221,6 +221,32 @@ class NameHTTPTests(unittest.TestCase):
         self.assertEqual(status, 201)
         return headers['Set-Cookie'].split(';', 1)[0], data['recovery_code']
 
+    def test_global_admin_user_directory_and_details_are_read_only_and_protected(self):
+        first, recovery = self.register('同名')
+        second, _ = self.register('同名')
+        token, _ = self.auth.create_identity('后台管理员', admin=True)
+        admin = 'kip126_review_session=' + token
+        viewer = self.request('/api/auth/me', cookie=first)[2]['user_id']
+        self.assertFalse(self.request('/api/auth/me', cookie=first)[2]['can_view_users'])
+        self.assertTrue(self.request('/api/auth/me', cookie=admin)[2]['can_view_users'])
+        for path in ('/api/admin/users', '/api/admin/user?reviewer=' + viewer):
+            self.assertEqual(self.request(path)[0], 401)
+            self.assertEqual(self.request(path, cookie=first)[0], 403)
+            self.assertEqual(self.request(path, {}, admin)[0], 404)
+        directory = self.request('/api/admin/users', cookie=admin)[2]
+        self.assertEqual(directory['stats']['registered'], 3)
+        self.assertEqual(len({row['reviewer'] for row in directory['users']}), 3)
+        self.assertNotIn(recovery, json.dumps(directory))
+        body = {'request_id': str(uuid.uuid4()), 'card_id': self.card['id'],
+                'fingerprint': self.card['fingerprint'], 'verdict': 'aligned', 'rationale': '可查看的意见'}
+        self.assertEqual(self.request('/api/judgments', body, first)[0], 201)
+        detail = self.request('/api/admin/user?reviewer=' + viewer, cookie=admin)[2]
+        self.assertEqual(detail['current_count'], 1)
+        self.assertEqual(detail['reviews'][0]['rationale'], '可查看的意见')
+        self.assertEqual(self.request('/api/admin/user?reviewer=missing', cookie=admin)[0], 404)
+        for query in ('cursor=-1', 'limit=101', 'cursor=no', 'reviewer=extra'):
+            self.assertEqual(self.request('/api/admin/user?reviewer=' + viewer + '&' + query, cookie=admin)[0], 400)
+
     def test_drafts_completion_pagination_and_exports_use_authenticated_owner(self):
         first, recovery = self.register()
         second, _ = self.register()

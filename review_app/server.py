@@ -17,6 +17,7 @@ from .name_auth import NameAuthStore, RateLimited, name_settings
 from .session_store import SessionStore
 from .symbols import SymbolIndex
 from .build import normalize_snapshot
+from .admin import safe_display_name, user_directory, user_reviews
 from .repositories import COLLECTION_SCHEMA, current_datasets, dataset_id, dataset_info, datasets, select_dataset
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
@@ -57,6 +58,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
              "/favicon.svg": ("favicon.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
              "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
+             "/admin.css": ("admin.css", "text/css; charset=utf-8"),
              "/statement.js": ("statement.js", "text/javascript; charset=utf-8"),
              "/statement-api.js": ("statement-api.js", "text/javascript; charset=utf-8"),
              "/statement-identity.js": ("statement-identity.js", "text/javascript; charset=utf-8"),
@@ -131,13 +133,15 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
         def _viewer(self) -> str | None:
             return auth.session_reviewer(self._session_token())
 
-        def _is_admin(self, viewer):
+        def _is_global_admin(self, viewer):
             if name_mode:
-                global_admin = bool(viewer and auth.is_admin(viewer))
+                return bool(viewer and auth.is_admin(viewer))
             else:
                 profile = reviewer_profile(db_path, viewer) if viewer else {}
-                global_admin = viewer in admin_emails or bool(preview and profile.get('preview_admin'))
-            if global_admin:
+                return bool(viewer and (viewer in admin_emails or (preview and profile.get('preview_admin'))))
+
+        def _is_admin(self, viewer):
+            if self._is_global_admin(viewer):
                 return True
             from contextlib import closing
             with closing(connect(db_path)) as db:
@@ -233,6 +237,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 profile = reviewer_profile(db_path, viewer) if viewer else {}
                 self._json(200, {"user_id": viewer, "email": None if name_mode else viewer, 'display_name': profile.get('display_name', ''),
                     'is_admin': self._is_admin(viewer), 'auth_mode': auth_mode,
+                    'can_view_users': self._is_global_admin(viewer),
                     'preview': preview}) if viewer else self._json(401, {"error": "请先登录"})
                 return
             if path == "/":
@@ -250,7 +255,32 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 elif path == '/admin':
                     self._serve_static(path)
                 else:
-                    self._json(200, admin_summary(snapshot, db_path))
+                    summary = admin_summary(snapshot, db_path)
+                    for row in summary['judgments']:
+                        row['display_name'] = safe_display_name(row.get('display_name'))
+                    self._json(200, summary)
+                return
+            if path in {'/api/admin/users', '/api/admin/user'}:
+                if not viewer:
+                    self._json(401, {'error': '请先登录'})
+                elif not self._is_global_admin(viewer):
+                    self._json(403, {'error': '用户目录仅对全局管理员开放'})
+                elif path == '/api/admin/users':
+                    self._json(200, user_directory(installed, db_path, auth_mode=auth_mode, admin_emails=admin_emails))
+                else:
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    try:
+                        if any(len(query.get(key, [])) > 1 for key in ('reviewer', 'cursor', 'limit')):
+                            raise ValueError('请选择一个账号及分页参数')
+                        result = user_reviews(snapshot, db_path, query.get('reviewer', [''])[0],
+                            cursor=int(query.get('cursor', ['0'])[0]), limit=int(query.get('limit', ['25'])[0]),
+                            auth_mode=auth_mode, admin_emails=admin_emails)
+                    except LookupError as error:
+                        self._json(404, {'error': str(error)})
+                    except ValueError:
+                        self._json(400, {'error': '账号或分页参数无效'})
+                    else:
+                        self._json(200, result)
                 return
             if path.startswith("/api/") and not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
