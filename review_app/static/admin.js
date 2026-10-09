@@ -99,9 +99,9 @@
     const params=new URLSearchParams({reviewer:userId,dataset:$('detail-dataset').value,cursor:String(cursor)});
     try{
       const body=await request('./api/admin/user?'+params);if(turn!==detailTurn)return;detail=body;
-      $('detail-message').textContent='';$('detail-count').textContent=`当前有效 ${body.current_count} 份 · 历史保存 ${body.history_count} 条`;
-      const states={current:'当前有效',superseded:'已被后续判断替代',stale:'依据已变化或条目已移除'};
-      $('user-reviews').innerHTML=body.reviews.map(row=>`<tr><td>${row.card_available?`<a href="${reviewLink(body.dataset.id,row.card_id)}">${escape(row.title)}</a>`:escape(row.title)}<small>${escape(row.card_id)}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:''}${row.inherited_from_dataset?`<small>沿用来源 ${escape(row.inherited_from_dataset)}</small>`:''}</td><td>${badge(row.verdict)}</td><td>${states[row.status]}</td><td>${escape(date(row.created_at))}</td></tr>`).join('');
+      $('detail-message').textContent='';$('detail-count').textContent=`当前版本有效 ${body.current_count} 份 · 此仓库历史保存 ${body.history_count} 条`;
+      const states={current:'当前有效',superseded:'已被后续判断替代',stale:'依据已变化或条目已移除',historical:'旧版本审阅 · 未计入当前有效'};
+      $('user-reviews').innerHTML=body.reviews.map(row=>`<tr><td>${row.card_available?`<a href="${reviewLink(body.dataset.id,row.card_id)}">${escape(row.title)}</a>`:escape(row.title)}<small>${escape(row.card_id)}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:''}${row.source_version?`<small>记录版本 ${escape(row.source_version.slice(0,9))}</small>`:''}${row.inherited_from_dataset?`<small>沿用来源 ${escape(row.inherited_from_dataset)}</small>`:''}</td><td>${badge(row.verdict)}</td><td>${states[row.status]}</td><td>${escape(date(row.created_at))}</td></tr>`).join('');
       $('detail-empty').hidden=body.reviews.length>0;$('detail-prev').disabled=cursor===0;$('detail-next').disabled=body.next_cursor===null;
       $('detail-page').textContent=`${Math.floor(cursor/25)+1} / ${Math.max(1,Math.ceil(body.history_count/25))}`;
     }catch(error){if(turn===detailTurn)$('detail-message').textContent=error.message;}

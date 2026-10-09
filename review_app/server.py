@@ -293,7 +293,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                             raise ValueError('请选择一个账号及分页参数')
                         result = user_reviews(snapshot, db_path, query.get('reviewer', [''])[0],
                             cursor=int(query.get('cursor', ['0'])[0]), limit=int(query.get('limit', ['25'])[0]),
-                            auth_mode=auth_mode, admin_emails=admin_emails)
+                            auth_mode=auth_mode, admin_emails=admin_emails, installed=installed)
                     except LookupError as error:
                         self._json(404, {'error': str(error)})
                     except ValueError:
