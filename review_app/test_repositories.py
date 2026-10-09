@@ -18,7 +18,7 @@ from .build import calculate_snapshot_digest, validate_snapshot
 from .database import DB_SCHEMA_VERSION, connect, initialize
 from .judgments import catalog, history, review_state, reviewer_export, save_draft, submit
 from .preview import PreviewAuthStore
-from .repositories import dataset_id, make_collection, qualify_legacy, repository_config, select_dataset
+from .repositories import current_datasets, dataset_id, make_collection, qualify_legacy, repository_config, select_dataset
 from .server import ReviewHTTPServer, make_handler
 from .statements import compile_statements
 from .storage import create_backup, install_snapshot, verify_backup
@@ -55,6 +55,22 @@ class RepositoryFixture:
 
 
 class RepositoryTests(RepositoryFixture, unittest.TestCase):
+    def test_current_repository_versions_preserve_default_and_archives(self):
+        first, second, other = deepcopy(self.first), deepcopy(self.second), deepcopy(self.other)
+        first['generated_at'] = '2026-10-01T00:00:00+00:00'
+        second['generated_at'] = '2026-10-02T00:00:00+00:00'
+        older_other = deepcopy(other)
+        older_other['source_commit'] = 'c' * 40
+        older_other['generated_at'] = '2026-09-01T00:00:00+00:00'
+        for item in (first, second, other, older_other):
+            item['digest'] = calculate_snapshot_digest(item)
+        collection = make_collection([first, second, other, older_other])
+        self.assertEqual(current_datasets(collection), [first, other])
+        collection['default_dataset'] = dataset_id(second)
+        self.assertEqual(current_datasets(collection), [second, other])
+        self.assertEqual(len(collection['datasets']), 4)
+        self.assertEqual(current_datasets(first), [first])
+
     def test_roots_topics_main_targets_and_namespace_are_configurable(self):
         self.assertEqual(len(self.first['cards']), 2)
         self.assertEqual(self.first['enrichment_topics'], self.config['topics'])
@@ -222,6 +238,8 @@ class RepositoryHTTPTests(RepositoryFixture, unittest.TestCase):
         self.assertEqual(self.request('/api/datasets')[0], 401)
         selection = self.request('/api/datasets', cookie=self.cookie)[2]
         self.assertEqual(len(selection['datasets']), 3)
+        self.assertEqual({item['id'] for item in selection['current_datasets']},
+                         {dataset_id(select_dataset(self.collection)), dataset_id(self.other)})
         payload = self.payload(self.first, rationale='alpha-only')
         self.assertEqual(self.request('/api/judgments', snapshot=self.first, cookie=self.cookie, body=payload)[0], 201)
         self.assertEqual(self.request('/api/judgments', cookie=self.cookie, body=payload)[0], 400)

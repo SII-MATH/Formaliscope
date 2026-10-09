@@ -164,7 +164,14 @@
   async function loadCatalog(initialId,sessionTurn){
     const [selection,data]=await Promise.all([json('./api/datasets'),json(`./api/catalog?initial=${encodeURIComponent(initialId)}`)]);
     if(sessionTurn!==sessionSequence)return null;
-    availableDatasets=selection.datasets;api.setDataset(selection.selected);
+    availableDatasets=selection.current_datasets;
+    const selectedDataset=selection.datasets.find(item=>item.id===selection.selected);
+    const currentDataset=availableDatasets.find(item=>item.repository_id===selectedDataset?.repository_id);
+    if(currentDataset && currentDataset.id!==selection.selected){
+      const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('dataset',currentDataset.id);
+      location.assign(url);return null;
+    }
+    api.setDataset(selection.selected);
     labels.configureTopics(data.enrichment_topics||[]);
     const normalized=labels.normalizeSelection(selectedLabels);
     selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
@@ -181,10 +188,7 @@
     const repositories=new Map(availableDatasets.map(item=>[item.repository_id,item.repository_name]));
     $('repository-select').innerHTML=[...repositories].map(([id,name])=>`<option value="${escape(id)}">${escape(name)}</option>`).join('');
     $('repository-select').value=current.repository_id;
-    $('dataset-select').innerHTML=availableDatasets.filter(item=>item.repository_id===current.repository_id).map(item=>
-      `<option value="${escape(item.id)}">${escape(item.source_commit.slice(0,12))} · ${item.card_count.toLocaleString()} 条</option>`).join('');
-    $('dataset-select').value=current.id;
-    $('dataset-provenance').textContent=`${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
+    $('dataset-provenance').textContent=`当前版本 ${current.source_commit.slice(0,12)} · ${current.card_count.toLocaleString()} 条 · ${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
     const source=$('repository-source');source.hidden=!current.source_url;source.href=current.source_url||'#';
     const url=new URL(location.href);if(current.id)url.searchParams.set('dataset',current.id);
     history.replaceState(history.state,'',url);
@@ -444,7 +448,6 @@
   $("views").onclick=event=>{const button=event.target.closest('[data-view]');if(button)setView(button.dataset.view);};
   $('back-card').onclick=()=>navigation.back();
   $('repository-select').onchange=()=>switchDataset(availableDatasets.find(item=>item.repository_id===$('repository-select').value)?.id);
-  $('dataset-select').onchange=()=>switchDataset($('dataset-select').value);
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});
   $("save").onclick=save;$("next").onclick=()=>next();
   $('review-history').ontoggle=()=>{if($('review-history').open)loadHistory();};
