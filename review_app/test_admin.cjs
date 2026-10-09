@@ -66,6 +66,19 @@ async function staleDetailAndExpiry(){
   assert.equal(f.$('users-panel').hidden,true);assert.equal(f.$('users').innerHTML,'');assert.equal(f.$('user-reviews').innerHTML,'');
   assert.match(f.$('admin-message').textContent,/登录已过期/);
 }
+async function historicalReviewsAreVisibleAndEscaped(){
+  const f=fixture({hook(url){
+    if(url.startsWith('./api/admin/user?'))return response({user:users[1],dataset:alpha,current_count:0,history_count:42,next_cursor:25,
+      reviews:[{id:'old',card_id:'statement::alpha::X',title:'旧版条目',rationale:'<script>bad()</script>',verdict:'uncertain',status:'historical',card_available:true,source_version:'<img src=x onerror=bad()>',created_at:'2026-10-03T00:00:00Z'}]});
+  }});
+  await settle();f.open('u_first');await settle();
+  assert.match(f.$('detail-count').textContent,/当前版本有效 0 份 · 此仓库历史保存 42 条/);
+  assert.match(f.$('user-reviews').innerHTML,/旧版本审阅 · 未计入当前有效/);
+  assert.match(f.$('user-reviews').innerHTML,/记录版本 &lt;img/);
+  assert.doesNotMatch(f.$('user-reviews').innerHTML,/<script>|<img/);
+  assert.match(f.$('user-reviews').innerHTML,/dataset=alpha%40new/);
+  assert.equal(f.$('detail-empty').hidden,true);
+}
 async function scopedAdminAndSummary(){
   const scoped=fixture({global:false});await settle();
   assert.equal(scoped.$('users-tab').hidden,true);assert.equal(scoped.$('summary-panel').hidden,false);
@@ -96,4 +109,4 @@ async function passwordReset(){
   assert.equal(lost.$('users').innerHTML,'');assert.equal(lost.$('users-panel').hidden,true);
   assert.equal(lost.$('reset-admin-password').value,'');
 }
-(async()=>{await directoryAndDetails();await staleDetailAndExpiry();await scopedAdminAndSummary();await passwordReset();console.log('Admin directory, reset confirmation, account isolation, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await directoryAndDetails();await historicalReviewsAreVisibleAndEscaped();await staleDetailAndExpiry();await scopedAdminAndSummary();await passwordReset();console.log('Admin directory, deduplicated historical reviews, reset confirmation, account isolation, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});

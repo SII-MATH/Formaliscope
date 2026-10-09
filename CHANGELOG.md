@@ -6,6 +6,18 @@
 
 ## 未发布
 
+## [v0.0.8] — 2026-10-09
+
+### 修复
+
+- 管理后台的历史保存次数按真实提交去重，旧数据迁移和跨版本沿用的副本不再重复计数；用户真正多次保存仍分别统计，原始数据库记录全部保留。
+- 用户审阅详情覆盖选中仓库的各版本历史，标明记录版本及「旧版本审阅」状态，避免当前有效数为零时无法查看已有历史；版本副本优先展示当前版本，历史条目的链接仍打开当前版本。
+- 明确有效判断、历史保存和详情仓库范围的界面说明，并更新账号密码与历史记录的存储文档。
+
+### 兼容性说明
+
+- 数据库仍为 schema 13；本次只调整只读统计和历史展示，不重置账号密码或删除判断、草稿、迁移副本。跨版本沿用继续核对完整审阅依据，依据有变化的旧判断保留为历史。
+
 ## [v0.0.7] — 2026-10-09
 
 ### 新增
@@ -121,6 +133,8 @@
 - 合并到 `main` 后自动测试、打包并发布 GitHub Release；日常开发使用 `dev`。
 - 草稿可续传，重跑同一提交复用版本，已发布附件保持不变。
 
+[v0.0.8]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.8
+[v0.0.7]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.7
 [v0.0.6]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.6
 [v0.0.5]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.5
 [v0.0.4]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.4

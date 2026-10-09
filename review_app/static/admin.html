@@ -24,15 +24,16 @@
       <div class="stat-tile"><small>已参与审阅</small><b id="stat-participants">—</b></div>
     </div>
     <div class="admin-controls"><input id="user-search" type="search" placeholder="搜索姓名或账号 ID" aria-label="搜索用户"><select id="user-role" aria-label="按用户角色筛选"><option value="all">所有角色</option><option value="admin">全局管理员</option><option value="dataset-admin">仓库版本管理员</option><option value="reviewer">普通用户</option></select><select id="user-status" aria-label="按账号状态筛选"><option value="all">所有状态</option><option value="enabled">正常启用</option><option value="disabled">已停用</option></select></div>
-    <p class="admin-note">有效判断按各仓库当前版本统计；历史保存条数包含旧版本记录。</p>
+    <p class="admin-note">有效判断按各仓库当前版本统计；历史保存按实际提交次数统计，包含旧版本，迁移和沿用副本不重复计数。</p>
     <div class="table-scroll"><table><thead><tr><th>用户</th><th>角色与状态</th><th>有效判断 / 历史保存</th><th>最近审阅</th><th>详情</th></tr></thead><tbody id="users"></tbody></table><div id="users-empty" class="admin-empty" hidden>没有符合条件的用户。</div></div>
     <div class="admin-foot"><span id="users-note"></span><div><button id="users-prev" aria-label="用户上一页">←</button> <span id="users-page"></span> <button id="users-next" aria-label="用户下一页">→</button></div></div>
     <section id="user-detail" class="user-detail" aria-labelledby="detail-name" hidden>
       <div class="detail-heading"><div><p class="eyebrow">USER REVIEWS</p><h2 id="detail-name"></h2><p id="detail-id" class="admin-note"></p></div><button id="close-detail">关闭详情</button></div>
       <button id="reset-password" hidden>重置此用户的密码</button>
       <div class="admin-controls"><label for="detail-dataset">查看仓库</label><select id="detail-dataset"></select><span id="detail-count" class="admin-note"></span></div>
+      <p class="admin-note">历史列表包含此仓库各版本的实际保存，复制记录只显示一次。旧版本审阅保留供追溯，条目链接打开当前版本。</p>
       <p id="detail-message" role="status" aria-live="polite"></p>
-      <div class="table-scroll"><table><thead><tr><th>条目与审阅意见</th><th>判断</th><th>记录状态</th><th>保存时间</th></tr></thead><tbody id="user-reviews"></tbody></table><div id="detail-empty" class="admin-empty" hidden>该用户在这个仓库当前版本尚未提交审阅。</div></div>
+      <div class="table-scroll"><table><thead><tr><th>条目与审阅意见</th><th>判断</th><th>记录状态</th><th>保存时间</th></tr></thead><tbody id="user-reviews"></tbody></table><div id="detail-empty" class="admin-empty" hidden>该用户在这个仓库尚无已提交的审阅记录。</div></div>
       <div class="admin-foot"><span>仅展示已提交结果</span><div><button id="detail-prev" aria-label="审阅上一页">←</button> <span id="detail-page"></span> <button id="detail-next" aria-label="审阅下一页">→</button></div></div>
     </section>
   </section>
