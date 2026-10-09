@@ -16,15 +16,14 @@
     if (!response.ok) throw new Error(data.error || "请求失败，请稍后再试");
     return data;
   }
-  let recoveryCode = "";
   const enter = () => location.replace(new URL("./", document.baseURI));
   function tab(mode) {
-    for(const [name,form] of [['password','password-form'],['new','register-form'],['recover','recover-form']]){
+    for(const [name,form] of [['password','password-form'],['new','register-form']]){
       $(form).hidden=name!==mode;$(name+'-tab').setAttribute('aria-pressed',String(name===mode));
     }
-    status(""); $(mode==='recover'?"recovery-code":mode==='new'?"display-name":"account").focus();
+    status(""); $(mode==='new'?"display-name":"account").focus();
   }
-  $("new-tab").onclick=()=>tab('new'); $("recover-tab").onclick=()=>tab('recover');$("password-tab").onclick=()=>tab('password');
+  $("new-tab").onclick=()=>tab('new');$("password-tab").onclick=()=>tab('password');
   $("password-form").addEventListener('submit',async event=>{
     event.preventDefault();$('password-login').disabled=true;status('正在登录…');
     try{
@@ -38,32 +37,14 @@
     event.preventDefault(); $("register").disabled=true;status("正在创建身份…");
     try {
       const result=await post("./api/auth/register",{display_name:$("display-name").value.trim(),password:$('register-password').value});
-      $('register-password').value='';$('new-account-id').value=result.user_id;
-      recoveryCode=result.recovery_code;$("new-recovery-code").value=recoveryCode;
-      $("name-entry").hidden=true;$("recovery-panel").hidden=false;
-      $("login-hint").hidden=true;status("身份已创建，请先保存恢复码。");
+      $('register-password').value='';enter();
     } catch(error) { status(error.message,true); }
     finally { $("register").disabled=false; }
   });
-  $("recover-form").addEventListener("submit",async event=>{
-    event.preventDefault();$("recover").disabled=true;status("正在恢复身份…");
-    try { await post("./api/auth/recover",{recovery_code:$("recovery-code").value.trim()});enter(); }
-    catch(error) {status(error.message,true);$("recover").disabled=false;}
-  });
-  $("copy-recovery").onclick=async()=>{
-    try {await navigator.clipboard.writeText(recoveryCode);status("已复制，请保存在你自己的安全位置。");}
-    catch {$("new-recovery-code").select();status("请手动复制选中的恢复码。");}
-  };
-  $("download-recovery").onclick=()=>{
-    const url=URL.createObjectURL(new Blob(["Formaliscope 账号 ID："+$('new-account-id').value+"\n私人恢复码（勿分享）\n"+recoveryCode+"\n"],{type:"text/plain;charset=utf-8"}));
-    const link=document.createElement("a");link.href=url;link.download="formaliscope-recovery.txt";link.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);status("已下载恢复码，请妥善保存文件。");
-  };
-  $("continue").onclick=enter;
   fetch("./api/config",{cache:"no-store"}).then(async response=>{
     if(!response.ok)throw new Error("登录配置读取失败，请刷新重试");
     const config=await response.json();
-    if(config.auth_mode==="name") {$("name-entry").hidden=false;$("account").focus();}
+    if(config.auth_mode==="name") {AuthenticationNotice.show(config.authentication_notice);$("name-entry").hidden=false;$("account").focus();}
     else if(config.preview) {enter();}
     else {$("email-form").hidden=false;$("login-hint").textContent="输入邮箱获取一次性验证码。";}
   }).catch(error=>status(error.message,true));

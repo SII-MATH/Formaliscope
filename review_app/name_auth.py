@@ -1,4 +1,4 @@
-"""Name registration with opaque identities and private recovery credentials."""
+"""Unique name accounts with password credentials and opaque reviewer identities."""
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +6,6 @@ import hmac
 import ipaddress
 import os
 import re
-import secrets
 import uuid
 from contextlib import closing
 from typing import Mapping
@@ -14,7 +13,7 @@ from urllib.parse import urlsplit
 
 from .auth import AuthSettings
 from .session_store import SessionStore
-from .passwords import INITIAL_PASSWORD, ITERATIONS, hash_password, valid_password, verify_password
+from .passwords import INITIAL_PASSWORD, ITERATIONS, hash_password, valid_password, verify_password, name_key, name_taken
 
 NAME_SESSION_LIFETIME = 30 * 86400
 
@@ -66,10 +65,6 @@ class NameAuthStore(SessionStore):
         super().__init__(db_path, **kwargs)
         self.settings = settings or AuthSettings(mailer='none', allow_any_email=True)
 
-    @staticmethod
-    def _recovery():
-        return 'KIP-' + secrets.token_urlsafe(32)
-
     def _limit(self, action, client_ip):
         now = int(self.clock())
         digest = hmac.new(self.pepper, client_ip.encode(), hashlib.sha256).hexdigest()
@@ -105,7 +100,6 @@ class NameAuthStore(SessionStore):
             raise ValueError('请设置自己的密码，不要使用初始密码')
         password_hash = hash_password(INITIAL_PASSWORD if password is None else password)
         reviewer = existing_reviewer or 'u_' + uuid.uuid4().hex
-        recovery = self._recovery()
         now = int(self.clock())
         with self.lock, closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
@@ -116,9 +110,11 @@ class NameAuthStore(SessionStore):
                 ):
                     raise ValueError('existing reviewer has no profile or review records')
                 if db.execute('SELECT 1 FROM name_identities WHERE reviewer=?', (reviewer,)).fetchone():
-                    raise ValueError('identity already has a recovery credential')
-                db.execute('INSERT INTO name_identities VALUES (?, ?, ?, 0)',
-                           (reviewer, self._digest(recovery), int(admin)))
+                    raise ValueError('identity already has a password account')
+                if name_taken(db, name) or valid_reviewer_id(name.strip()):
+                    raise ValueError('该姓名已注册，请使用账号和密码登录；忘记密码请联系管理员')
+                db.execute('INSERT INTO name_identities VALUES (?, ?, 0, ?)',
+                           (reviewer, int(admin), name_key(name)))
                 db.execute('INSERT INTO password_credentials VALUES (?, ?, ?)',
                            (reviewer, password_hash, int(password is None)))
                 db.execute('INSERT INTO reviewer_profiles (reviewer, display_name) VALUES (?, ?) '
@@ -130,7 +126,7 @@ class NameAuthStore(SessionStore):
                 db.execute('ROLLBACK')
                 raise
             self._remember_session(token, reviewer, now)
-        return token, recovery
+        return token, reviewer
 
     def must_change_password(self, reviewer):
         with closing(self._connect()) as db:
@@ -149,10 +145,14 @@ class NameAuthStore(SessionStore):
                 JOIN password_credentials p ON p.reviewer=i.reviewer
                 WHERE i.reviewer=? AND i.disabled=0''', (account,)).fetchall()
             if not rows:
+                rows = db.execute('''SELECT i.reviewer, p.password_hash FROM account_merges a
+                    JOIN name_identities i ON i.reviewer=a.target_reviewer
+                    JOIN password_credentials p ON p.reviewer=i.reviewer
+                    WHERE a.source_reviewer=? AND i.disabled=0''', (account,)).fetchall()
+            if not rows:
                 rows = db.execute('''SELECT i.reviewer, p.password_hash FROM name_identities i
                     JOIN password_credentials p ON p.reviewer=i.reviewer
-                    JOIN reviewer_profiles r ON r.reviewer=i.reviewer
-                    WHERE r.display_name=? AND i.disabled=0''', (account,)).fetchall()
+                    WHERE i.normalized_name=? AND i.disabled=0''', (name_key(account),)).fetchall()
             if len(rows) != 1:
                 # Do the same expensive work for unknown or ambiguous accounts.
                 hashlib.pbkdf2_hmac('sha256', password.encode(), b'unknown-account!', ITERATIONS)
@@ -241,27 +241,6 @@ class NameAuthStore(SessionStore):
                 raise
             self._forget_password_sessions(reviewer)
 
-    def resume_reviewer(self, recovery, client_ip='127.0.0.1'):
-        self._limit('recover', client_ip)
-        if not isinstance(recovery, str):
-            return None
-        recovery = recovery.strip()
-        if not re.fullmatch(r'KIP-[A-Za-z0-9_-]{43}', recovery):
-            return None
-        now = int(self.clock())
-        with self.lock, closing(self._connect()) as db:
-            db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT reviewer FROM name_identities WHERE recovery_digest=? AND disabled=0',
-                             (self._digest(recovery),)).fetchone()
-            if not row:
-                db.execute('COMMIT')
-                return None
-            db.execute('DELETE FROM login_sessions WHERE expires_at<=?', (now,))
-            token = self._insert_session(db, row['reviewer'], now)
-            db.execute('COMMIT')
-            self._remember_session(token, row['reviewer'], now)
-        return token
-
     def _session_allowed(self, reviewer):
         with closing(self._connect()) as db:
             return bool(db.execute('SELECT 1 FROM name_identities WHERE reviewer=? AND disabled=0',
@@ -271,19 +250,3 @@ class NameAuthStore(SessionStore):
         with closing(self._connect()) as db:
             return bool(db.execute('SELECT 1 FROM name_identities WHERE reviewer=? AND is_admin=1 AND disabled=0',
                                    (reviewer,)).fetchone())
-
-    def rotate_recovery(self, reviewer, keep_token):
-        recovery, keep_digest = self._recovery(), self._digest(keep_token)
-        with self.lock, closing(self._connect()) as db:
-            db.execute('BEGIN IMMEDIATE')
-            changed = db.execute('UPDATE name_identities SET recovery_digest=? WHERE reviewer=? AND disabled=0',
-                                 (self._digest(recovery), reviewer)).rowcount
-            if not changed:
-                db.execute('ROLLBACK')
-                raise ValueError('身份不可用')
-            db.execute('DELETE FROM login_sessions WHERE reviewer=? AND token_digest<>?', (reviewer, keep_digest))
-            db.execute('COMMIT')
-            for digest, (owner, _) in list(self.sessions.items()):
-                if owner == reviewer and digest != keep_digest:
-                    self.sessions.pop(digest, None)
-        return recovery

@@ -36,7 +36,7 @@ class PasswordIdentityTests(unittest.TestCase):
     def test_default_change_preserves_owner_recovery_and_revokes_cached_devices(self):
         token, recovery = self.auth.create_identity('原用户', admin=True)
         owner = self.auth.session_reviewer(token)
-        other = self.auth.resume_reviewer(recovery)
+        other = self.auth.login_password(owner, INITIAL_PASSWORD)
         self.assertEqual(self.auth.session_reviewer(other), owner)
         password_token = self.auth.login_password(owner, INITIAL_PASSWORD)
         self.assertEqual(self.auth.session_reviewer(password_token), owner)
@@ -50,27 +50,30 @@ class PasswordIdentityTests(unittest.TestCase):
         self.assertEqual(self.auth.session_reviewer(token), owner)
         self.assertIsNone(self.auth.login_password(owner, INITIAL_PASSWORD))
         self.assertEqual(self.auth.session_reviewer(self.auth.login_password('原用户', 'user-private-987')), owner)
-        self.assertEqual(self.auth.session_reviewer(self.auth.resume_reviewer(recovery)), owner)
+        self.assertFalse(hasattr(self.auth, 'resume_reviewer'))
         self.assertTrue(self.auth.is_admin(owner))
         restarted = NameAuthStore(self.db, clock=lambda: self.now)
         self.assertEqual(restarted.session_reviewer(restarted.login_password(owner, 'user-private-987')), owner)
         with closing(connect(self.db)) as db:
             self.assertEqual(tuple(db.execute('SELECT * FROM name_identities').fetchone()), before)
             dump = '\n'.join(db.iterdump())
-            for secret in ('user-private-987', token, recovery):
+            for secret in ('user-private-987', token):
                 self.assertNotIn(secret, dump)
 
     def test_same_names_disabled_accounts_and_limits_across_aliases(self):
         first, _ = self.auth.create_identity('同名', password='first-password')
-        second, _ = self.auth.create_identity('同名', password='second-password')
+        with self.assertRaises(ValueError):
+            self.auth.create_identity(' 同名 ', password='second-password')
+        second, _ = self.auth.create_identity('另一用户', password='second-password')
         owner = self.auth.session_reviewer(first)
-        self.assertIsNone(self.auth.login_password('同名', 'first-password'))
+        self.assertIsNone(self.auth.login_password('同名', 'wrong-password'))
         self.assertIsNone(self.auth.login_password(owner, 'second-password'))
         self.assertEqual(self.auth.session_reviewer(self.auth.login_password(owner, 'first-password')), owner)
         self.assertNotEqual(owner, self.auth.session_reviewer(second))
         with closing(connect(self.db)) as db:
             db.execute('UPDATE reviewer_profiles SET display_name=? WHERE reviewer=?', ('唯一姓名', owner))
-        for attempt in range(3):
+            db.execute('UPDATE name_identities SET normalized_name=? WHERE reviewer=?', ('唯一姓名', owner))
+        for attempt in range(2):
             self.assertIsNone(self.auth.login_password('唯一姓名' if attempt % 2 else owner, 'wrong-password', f'10.0.0.{attempt+1}'))
         with self.assertRaises(RateLimited):
             self.auth.login_password('唯一姓名', 'first-password', '10.0.0.9')
@@ -86,7 +89,7 @@ class PasswordIdentityTests(unittest.TestCase):
         admin = self.auth.session_reviewer(admin_token)
         token, recovery = self.auth.create_identity('同名', password='user-password')
         owner = self.auth.session_reviewer(token)
-        other_token, _ = self.auth.create_identity('同名', password='other-password')
+        other_token, _ = self.auth.create_identity('另一用户', password='other-password')
         other = self.auth.session_reviewer(other_token)
         for actor, target, password in ((other, owner, 'other-password'), (admin, owner, 'wrong-password'),
                                        (admin, admin, 'admin-password'), (admin, {}, 'admin-password')):
@@ -102,7 +105,7 @@ class PasswordIdentityTests(unittest.TestCase):
         reset_token = self.auth.login_password(owner, INITIAL_PASSWORD)
         self.assertEqual(self.auth.session_reviewer(reset_token), owner)
         self.assertTrue(self.auth.must_change_password(owner))
-        self.assertEqual(self.auth.session_reviewer(self.auth.resume_reviewer(recovery)), owner)
+        self.assertFalse(hasattr(self.auth, 'resume_reviewer'))
         with closing(connect(self.db)) as db:
             self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM name_identities ORDER BY reviewer')], original)
             db.execute('UPDATE name_identities SET is_admin=0 WHERE reviewer=?', (admin,))
@@ -124,7 +127,13 @@ class PasswordIdentityTests(unittest.TestCase):
         initialize(old)
         with closing(connect(old)) as db:
             for table in tables:
-                self.assertEqual([tuple(row) for row in db.execute(f'SELECT * FROM {table}')], before[table], table)
+                if table == 'name_identities':
+                    self.assertEqual([tuple(row)[:3] for row in db.execute(f'SELECT * FROM {table}')], [('one',1,0),('two',0,1)])
+                    self.assertNotIn('recovery_digest', {row['name'] for row in db.execute('PRAGMA table_info(name_identities)')})
+                elif table == 'login_sessions':
+                    self.assertEqual(db.execute('SELECT COUNT(*) FROM login_sessions').fetchone()[0], 0)
+                else:
+                    self.assertEqual([tuple(row)[:len(before[table][0])] if before[table] else tuple(row) for row in db.execute(f'SELECT * FROM {table}')], before[table], table)
             rows = db.execute('SELECT * FROM password_credentials ORDER BY reviewer').fetchall()
             self.assertEqual([row['reviewer'] for row in rows], ['one', 'two'])
             self.assertNotEqual(rows[0]['password_hash'], rows[1]['password_hash'])
@@ -179,7 +188,7 @@ class PasswordHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/auth/password', {'current_password': INITIAL_PASSWORD, 'new_password': 'new-password'}, cookie)[0], 200)
         self.assertEqual(self.request('/api/admin/users', cookie=cookie)[0], 200)
         self.assertFalse(self.request('/api/auth/me', cookie=cookie)[2]['must_change_password'])
-        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery})[0], 200)
+        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery})[0], 404)
         self.assertEqual(self.request('/api/auth/password-login', {'account': owner, 'password': INITIAL_PASSWORD})[0], 401)
 
     def test_reset_protection_registration_and_sessions(self):

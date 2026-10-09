@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 12
+DB_SCHEMA_VERSION = 13
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -215,6 +215,35 @@ def _migration_12(db: sqlite3.Connection) -> None:
                    (row['reviewer'], hash_password(INITIAL_PASSWORD)))
 
 
+def _migration_13(db: sqlite3.Connection) -> None:
+    from .passwords import INITIAL_PASSWORD, hash_password, name_key
+    # Replace rather than rename the old table so password foreign keys keep
+    # referring to name_identities. Recovery digests are deliberately removed.
+    db.execute('''CREATE TABLE name_identities_new (
+        reviewer TEXT PRIMARY KEY, is_admin INTEGER NOT NULL DEFAULT 0,
+        disabled INTEGER NOT NULL DEFAULT 0, normalized_name TEXT UNIQUE
+    )''')
+    rows = db.execute('''SELECT i.reviewer, i.is_admin, i.disabled, p.display_name
+        FROM name_identities i LEFT JOIN reviewer_profiles p ON p.reviewer=i.reviewer''').fetchall()
+    keys = [name_key(row['display_name'] or row['reviewer']) for row in rows]
+    for row, key in zip(rows, keys):
+        # Legacy duplicate groups require an explicit, confirmed operator merge.
+        # Registration also checks their profile names under BEGIN IMMEDIATE.
+        db.execute('INSERT INTO name_identities_new VALUES (?, ?, ?, ?)',
+                   (row['reviewer'], row['is_admin'], row['disabled'], key if keys.count(key) == 1 else None))
+    db.execute('DROP TABLE name_identities')
+    db.execute('ALTER TABLE name_identities_new RENAME TO name_identities')
+    db.execute('ALTER TABLE judgments ADD COLUMN original_reviewer TEXT')
+    db.execute('''CREATE TABLE account_merges (
+        source_reviewer TEXT PRIMARY KEY, target_reviewer TEXT NOT NULL,
+        merged_at TEXT NOT NULL, archive_json TEXT NOT NULL
+    )''')
+    for row in rows:
+        db.execute('UPDATE password_credentials SET password_hash=?, must_change=1 WHERE reviewer=?',
+                   (hash_password(INITIAL_PASSWORD), row['reviewer']))
+    db.execute('DELETE FROM login_sessions WHERE reviewer IN (SELECT reviewer FROM name_identities)')
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -228,6 +257,7 @@ MIGRATIONS = (
     (10, "independent-repository-version-datasets", _migration_10),
     (11, "cross-version-judgment-provenance", _migration_11),
     (12, "account-password-credentials", _migration_12),
+    (13, "unique-password-accounts-without-recovery", _migration_13),
 )
 
 

@@ -11,7 +11,7 @@ function fixture(script,handler){
     return elements.get(id);
   }
   const context={document:{getElementById:$,baseURI:'https://example.org/review/login'},
-    location:{replace(url){redirects.push(String(url));}},URL,Blob,setTimeout,navigator:{},
+    location:{replace(url){redirects.push(String(url));}},URL,Blob,setTimeout,navigator:{},AuthenticationNotice:{show(){}},
     fetch:async(path,options)=>{calls.push({path,options});return handler(path,options);}};
   vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/'+script,'utf8'),context);
   return {$,calls,redirects,submit:id=>$(id).listeners.submit({preventDefault(){}})};
@@ -20,7 +20,7 @@ async function login(){
   const f=fixture('login.js',(path)=>{
     if(path==='./api/config')return response({auth_mode:'name'});
     if(path==='./api/auth/password-login')return response({must_change_password:true});
-    if(path==='./api/auth/register')return response({recovery_code:'test-recovery',user_id:'u_existing'});
+    if(path==='./api/auth/register')return response({user_id:'u_existing'});
     throw Error(path);
   });await settle();assert.equal(f.$('name-entry').hidden,false);
   f.$('password-tab').onclick();assert.equal(f.$('password-form').hidden,false);assert.equal(f.$('register-form').hidden,true);
@@ -28,8 +28,8 @@ async function login(){
   await f.submit('password-form');assert.deepEqual(JSON.parse(f.calls.at(-1).options.body),{account:'u_existing',password:'initial-password'});
   assert.equal(f.$('login-password').value,'');assert.equal(f.redirects.at(-1),'https://example.org/review/password');
   f.$('new-tab').onclick();f.$('display-name').value='测试用户';f.$('register-password').value='my-private-password';
-  await f.submit('register-form');assert.equal(f.$('new-account-id').value,'u_existing');assert.equal(f.$('register-password').value,'');
-  assert.equal(f.$('recovery-panel').hidden,false);
+  await f.submit('register-form');assert.equal(f.$('register-password').value,'');
+  assert.equal(f.redirects.at(-1),'https://example.org/review/');
   const failure=fixture('login.js',path=>response(path==='./api/config'?{auth_mode:'name'}:{error:'账号或密码不正确'},path==='./api/config'?200:401));
   await settle();await failure.submit('password-form');assert.equal(failure.redirects.length,0);
   assert.equal(failure.$('password-login').disabled,false);assert.match(failure.$('message').textContent,/不正确/);

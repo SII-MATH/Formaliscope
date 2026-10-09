@@ -15,11 +15,12 @@ class AdminReadModelTests(RepositoryFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
         self.auth = NameAuthStore(self.db)
-        token, self.recovery = self.auth.create_identity('管理员', admin=True)
+        token, _ = self.auth.create_identity('管理员', admin=True)
+        self.recovery = 'KIP-' + 'A'*43
         self.admin = self.auth.session_reviewer(token)
         token, _ = self.auth.create_identity('同名')
         self.first_user = self.auth.session_reviewer(token)
-        token, _ = self.auth.create_identity('同名')
+        token, _ = self.auth.create_identity('同名2')
         self.second_user = self.auth.session_reviewer(token)
         token, _ = self.auth.create_identity(self.recovery)
         self.idle = self.auth.session_reviewer(token)

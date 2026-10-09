@@ -164,7 +164,7 @@ def run_preflight(data_dir: Path, *, preview: bool = False, host: str = "127.0.0
             except (sqlite3.Error, OSError):
                 pass
             check('admin_identity', admin_ok, 'An active operator-created administrator is available.',
-                  'Run create-admin with a private --output file before starting the service.')
+                  'Run create-admin with a private account --output file before starting the service.')
         elif mode == 'email':
             mailer = settings.get("REVIEW_MAILER", "smtp").strip().lower()
             if mailer == "smtp":

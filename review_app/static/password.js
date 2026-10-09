@@ -28,6 +28,7 @@
   };
   request('./api/auth/me').then(me=>{
     if(me.auth_mode!=='name'){enter();return;}
+    AuthenticationNotice.show('password-only-v1');
     $('password-account').value=me.user_id;
     if(me.must_change_password){$('back').hidden=true;$('password-hint').textContent='当前使用初始密码，请先设置自己的密码，再进入工作台。忘记密码请联系管理员重置。';}
   }).catch(error=>status(error.message,true));

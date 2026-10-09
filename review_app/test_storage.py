@@ -98,24 +98,26 @@ class StorageTests(unittest.TestCase):
             self.assertEqual((result / "snapshot.json").read_bytes(), original)
             self.assertEqual(verify_backup(result)["snapshot_digest"], json.loads(original)["digest"])
 
-    def test_backup_keeps_identity_recovery_digest_without_runtime_secrets(self):
+    def test_backup_keeps_password_hash_without_runtime_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data = self._data(root)
             auth = NameAuthStore(data / "judgments.sqlite3")
-            token, recovery = auth.create_identity("Reviewer", admin=True)
+            token, _ = auth.create_identity("Reviewer", admin=True, password="private-password")
             reviewer = auth.session_email(token)
-            (data / "recovery.txt").write_text(recovery)
+            (data / "private-password.txt").write_text("private-password")
             result = create_backup(data, root / "backups", now=self._at(1))
             self.assertEqual({path.name for path in result.iterdir()},
                              {"snapshot.json", "judgments.sqlite3", "manifest.json"})
             content = (result / "judgments.sqlite3").read_bytes()
-            for secret in (token.encode(), recovery.encode(), auth.pepper):
+            for secret in (token.encode(), b"private-password", auth.pepper):
                 self.assertNotIn(secret, content)
             with sqlite3.connect(result / "judgments.sqlite3") as db:
-                row = db.execute("SELECT recovery_digest, is_admin FROM name_identities WHERE reviewer=?",
+                row = db.execute("SELECT p.password_hash, i.is_admin FROM name_identities i JOIN password_credentials p ON p.reviewer=i.reviewer WHERE i.reviewer=?",
                                  (reviewer,)).fetchone()
-                self.assertEqual(row, (hashlib.sha256(recovery.encode()).hexdigest(), 1))
+                from .passwords import verify_password
+                self.assertTrue(verify_password("private-password", row[0]))
+                self.assertEqual(row[1], 1)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM login_sessions").fetchone()[0], 0)
 
     def test_backup_waits_until_snapshot_install_finishes_backfill_and_replace(self):

@@ -2,9 +2,21 @@
 import hashlib
 import hmac
 import secrets
+import unicodedata
 
 INITIAL_PASSWORD = '12345678'
 ITERATIONS = 600_000
+
+
+def name_key(value):
+    return unicodedata.normalize('NFKC', value.strip()).casefold()
+
+
+def name_taken(db, name, *, exclude=None):
+    key = name_key(name)
+    return any(row['reviewer'] != exclude and name_key(row['display_name']) == key
+               for row in db.execute('''SELECT p.reviewer, p.display_name FROM reviewer_profiles p
+                   JOIN name_identities i ON i.reviewer=p.reviewer'''))
 
 
 def valid_password(value):
