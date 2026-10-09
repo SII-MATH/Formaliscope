@@ -64,7 +64,7 @@ def _validate_install_payload(payload: dict, allow_dirty_source: bool) -> None:
 
 
 def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool = False,
-                     legacy_kip126_only: bool = False) -> tuple[dict, dict[str, int]]:
+                     legacy_kip126_only: bool = False, reuse_unchanged: bool = True) -> tuple[dict, dict[str, int]]:
     """Validate and atomically install an immutable reviewed-source artifact."""
     # Reject an invalid artifact without creating a production directory. The
     # captured bytes are immutable even if the source path changes meanwhile.
@@ -79,7 +79,26 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
         if legacy_kip126_only and any(item and (item.get('repository') or item.get('datasets'))
                                       for item in (previous, payload)):
             raise ValueError('legacy KIP126 automatic updates cannot replace repository datasets; build and install a complete collection explicitly')
+        from .reuse import automatic_reuse, installation_reuse, inherit_judgments
+        reused = 0
+        if reuse_unchanged and not payload.get('reuse_disabled'):
+            candidate, reused = automatic_reuse(payload, previous)
+            if candidate['digest'] != payload['digest']:
+                # Generate a separate immutable candidate before activation,
+                # preserving the input artifact even for remote-built updates.
+                from .snapshot_artifacts import write_candidate_artifact
+                with tempfile.TemporaryDirectory(prefix='formaliscope-reuse-') as staging:
+                    artifact = write_candidate_artifact(candidate, Path(staging) / 'snapshot.json')
+                    payload = json.loads(artifact.read_bytes())
+                _validate_install_payload(payload, allow_dirty_source)
         comparison = compare_snapshots(previous, normalize_snapshot(payload))
+        if reused:
+            comparison['reused_evidence'] = reused
+        reuse_pairs = installation_reuse(previous, payload)
+        if not reuse_unchanged or payload.get('reuse_disabled'):
+            reuse_pairs = []
+        else:
+            reuse_pairs = [(old, new) for old, new in reuse_pairs if not new.get('reuse_disabled')]
         # Preserve v1 judgments while their only old fingerprint mapping is
         # still available; backup must not interleave with this migration.
         database = data_dir / "judgments.sqlite3"
@@ -90,6 +109,10 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
             backfill_review_basis(database, previous)
             from .dataset_storage import preserve_legacy_records
             preserve_legacy_records(database, previous, payload)
+        if reuse_pairs and database.is_file():
+            from .database import initialize
+            initialize(database)
+            comparison['inherited_judgments'] = inherit_judgments(database, reuse_pairs)
         payload["comparison"] = comparison
         descriptor, filename = tempfile.mkstemp(prefix=".snapshot.", suffix=".tmp", dir=data_dir)
         temporary = Path(filename)

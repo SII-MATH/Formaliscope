@@ -129,10 +129,13 @@ def history(db_path: Path, card_id: str, reviewer: str, *, dataset: str = '') ->
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT id, fingerprint, fingerprint_scheme,
             review_basis_scheme, review_basis_fingerprint, source_commit,
-            snapshot_digest, reviewer, verdict, rationale, created_at
+            snapshot_digest, reviewer, verdict, rationale, created_at,
+            inherited_from_id, inherited_from_dataset
             FROM judgments WHERE card_id=? AND reviewer=? AND dataset_id=? ORDER BY created_at DESC, rowid DESC""",
             (card_id, reviewer, dataset)).fetchall()
-    return [dict(row) for row in rows]
+    return [{key: value for key, value in dict(row).items()
+             if key not in ('inherited_from_id', 'inherited_from_dataset') or value is not None}
+            for row in rows]
 
 
 def _current(db: sqlite3.Connection, card: dict, reviewer: str, dataset: str = '') -> dict | None:

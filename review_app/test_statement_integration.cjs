@@ -14,7 +14,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   let apiOptions;
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
-    assert.ok(!['structure-panel','structure-fields','field-count','reading-summary','enrichment-provenance'].includes(id),'Removed structure and enrichment detail elements are absent from the page');
+    assert.ok(!['dataset-select','structure-panel','structure-fields','field-count','reading-summary','enrichment-provenance'].includes(id),'Removed elements are absent from the page');
     if(!elements.has(id))elements.set(id,{id,value:"",textContent:"",innerHTML:"",hidden:false,open:false,
       disabled:false,scrollTop:0,scrollLeft:0,offsetTop:0,style:{},dataset:{},classList:classes(),
       parentElement:{open:false},setAttribute(){},scrollIntoView(){},showModal(){this.open=true;},close(){this.open=false;},
@@ -47,7 +47,10 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
       reads.push(url);
       const pending=readHook(url);if(pending)return pending;
       if(url==="./api/config")return {preview:false};
-      if(url==='./api/datasets')return {selected:'',datasets:[dataset,{...dataset,id:'beta@version',repository_id:'beta',repository_name:'Beta'}]};
+      if(url==='./api/datasets'){
+        const beta={...dataset,id:'beta@version',repository_id:'beta',repository_name:'Beta'};
+        return {selected:'',datasets:[dataset,{...beta,id:'beta@old'},beta],current_datasets:[dataset,beta]};
+      }
       if(url==="./api/auth/me")return clone(identity.current);
       if(url.startsWith("./api/catalog"))return {cards:clone(cards.map(card=>({...card,
         verdict:currentReview(card.id)?.verdict||null,stale:!!records.get(card.id)?.length&&!currentReview(card.id)}))),
@@ -317,17 +320,47 @@ async function expiryKeepsFailedOpinion(){
 }
 
 async function datasetSwitchPreservesUnsavedInput(){
-  const f=await prepare();f.element('dataset-select').value='beta@version';
-  const switching=f.element('dataset-select').onchange();await settle();
+  const f=await prepare();f.element('repository-select').value='beta';
+  const switching=f.element('repository-select').onchange();await settle();
   assert.deepEqual(f.assignments,[],'Changing repository waits for draft and completed-review acknowledgements');
   await finishBoundary(f);await switching;
   assert.equal(new URL(f.assignments[0]).searchParams.get('dataset'),'beta@version');
   assert.equal(new URL(f.assignments[0]).hash,'','A new dataset starts without another repository’s selected declaration');
-  const failed=await prepare();failed.element('dataset-select').value='beta@version';
-  const blocked=failed.element('dataset-select').onchange();failed.requests[0].reject(new Error('保存失败'));
+  const failed=await prepare();failed.element('repository-select').value='beta';
+  const blocked=failed.element('repository-select').onchange();failed.requests[0].reject(new Error('保存失败'));
   await blocked;await settle();
-  assert.deepEqual(failed.assignments,[]);assert.equal(failed.element('dataset-select').value,'');
+  assert.deepEqual(failed.assignments,[]);assert.equal(failed.element('repository-select').value,'kip126');
   assert.equal(failed.title,'B');assert.match(failed.element('rationale').value,/must survive/);
+}
+
+async function historicalLinksOpenCurrentRepository(){
+  const current={id:'beta@new',repository_id:'beta',repository_name:'Beta'};
+  const old={...current,id:'beta@old'};
+  const f=fixture({initialURL:'https://review.example/?dataset=beta@old#A',readHook(url){
+    if(url==='./api/datasets')return Promise.resolve({selected:old.id,datasets:[old,current],current_datasets:[current]});
+  }});
+  await settle();
+  assert.equal(f.assignments.length,1);
+  assert.equal(new URL(f.assignments[0]).searchParams.get('dataset'),current.id);
+  assert.equal(f.title,'','Historical evidence must not be rendered before opening the current version');
+  assert.equal(f.requests.length,0);
+}
+
+async function inheritedEvidenceShowsItsOriginalVersion(){
+  const source='alpha@'+'a'.repeat(40);
+  const f=fixture({configure(cards,records){
+    cards[0].statement_origin='backtranslation';cards[0].reuse_source_commit='a'.repeat(40);
+    records.set('A',[{id:'inherited',card_id:'A',fingerprint:'fp-A',verdict:'aligned',
+      reviewer:'Tester',created_at:'2026-10-04T00:00:00Z',inherited_from_dataset:source}]);
+  }});
+  await settle();
+  assert.match(f.element('nl-location').textContent,/沿用版本 aaaaaaaaaaaa 的机器结果/);
+  assert.equal(f.element('status-badge').title,`沿用 ${source} 的人工判断`);
+  f.element('review-history').open=true;f.element('review-history').ontoggle();await settle();
+  assert.match(f.element('history').innerHTML,new RegExp(`沿用 ${source}`));
+  f.click('B');await settle();
+  assert.doesNotMatch(f.element('nl-location').textContent,/沿用/);
+  assert.equal(f.element('status-badge').title,'');
 }
 
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
@@ -339,6 +372,8 @@ async function datasetSwitchPreservesUnsavedInput(){
   await initialEvidenceAndSelection();await lateResponsesAndLogout();await indexedSearchAfterCompletion();
   await expiryKeepsFailedOpinion();
   await datasetSwitchPreservesUnsavedInput();
+  await historicalLinksOpenCurrentRepository();
+  await inheritedEvidenceShowsItsOriginalVersion();
   await blueprintReferenceDisplay();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

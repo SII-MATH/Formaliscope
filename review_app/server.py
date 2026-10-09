@@ -17,7 +17,7 @@ from .name_auth import NameAuthStore, RateLimited, name_settings
 from .session_store import SessionStore
 from .symbols import SymbolIndex
 from .build import normalize_snapshot
-from .repositories import COLLECTION_SCHEMA, dataset_id, dataset_info, datasets, select_dataset
+from .repositories import COLLECTION_SCHEMA, current_datasets, dataset_id, dataset_info, datasets, select_dataset
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
 from .database import DB_SCHEMA_VERSION, MIGRATIONS, connect, database_schema_version, initialize
@@ -257,6 +257,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 return
             if path == '/api/datasets':
                 self._json(200, {'datasets': [dataset_info(item) for item in datasets(installed)],
+                                 'current_datasets': [dataset_info(item) for item in current_datasets(installed)],
                                  'selected': dataset_id(snapshot)})
                 return
             if path == "/api/catalog":

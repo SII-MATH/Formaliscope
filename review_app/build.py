@@ -66,7 +66,8 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
         "cards": snapshot.get("cards"),
     }
     for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics',
-                'repository', 'datasets', 'default_dataset'):
+                'repository', 'datasets', 'default_dataset', 'source_environment', 'context_modules',
+                'reuse', 'reuse_disabled', 'reuse_input_digest'):
         if key in snapshot:
             protected[key] = snapshot[key]
     return _digest(protected)
@@ -86,6 +87,8 @@ def validate_snapshot(snapshot: dict) -> None:
     schema = snapshot.get("schema")
     from .repositories import COLLECTION_SCHEMA, dataset_id, repository_config
     if schema == COLLECTION_SCHEMA:
+        if 'reuse_disabled' in snapshot and type(snapshot['reuse_disabled']) is not bool:
+            raise ValueError('reuse_disabled must be a boolean')
         children = snapshot.get('datasets')
         if not isinstance(children, list) or not children or any(not isinstance(item, dict) for item in children):
             raise ValueError('collection datasets must be a non-empty list')
@@ -149,6 +152,8 @@ def validate_snapshot(snapshot: dict) -> None:
                 raise ValueError('public annotation declaration does not match its card')
     if snapshot.get("digest") != calculate_snapshot_digest(snapshot):
         raise ValueError("snapshot digest does not match its card content")
+    from .reuse import validate_reuse
+    validate_reuse(snapshot)
     if schema == SNAPSHOT_SCHEMA:
         if not isinstance(snapshot.get("source_dirty"), bool):
             raise ValueError("snapshot must record whether the reviewed source was dirty")

@@ -59,6 +59,26 @@ def datasets(snapshot: dict) -> list[dict]:
     return snapshot['datasets'] if snapshot.get('schema') == COLLECTION_SCHEMA else [snapshot]
 
 
+def current_datasets(snapshot: dict) -> list[dict]:
+    """One active version per repository, retaining all historical datasets."""
+    def generated(item):
+        try:
+            value = datetime.fromisoformat(item.get('generated_at') or '')
+            return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        except (TypeError, ValueError):
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    selected = select_dataset(snapshot)
+    current = {}
+    for item in datasets(snapshot):
+        identity = dataset_info(item)['repository_id']
+        previous = current.get(identity)
+        if previous is None or generated(item) >= generated(previous):
+            current[identity] = item
+    current[dataset_info(selected)['repository_id']] = selected
+    return list(current.values())
+
+
 def dataset_info(snapshot: dict) -> dict:
     repository = snapshot.get('repository', {'id': 'kip126', 'name': 'KIP126', 'url': ''})
     return {'id': dataset_id(snapshot), 'repository_id': repository['id'],

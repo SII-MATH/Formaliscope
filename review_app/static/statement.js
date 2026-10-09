@@ -164,7 +164,14 @@
   async function loadCatalog(initialId,sessionTurn){
     const [selection,data]=await Promise.all([json('./api/datasets'),json(`./api/catalog?initial=${encodeURIComponent(initialId)}`)]);
     if(sessionTurn!==sessionSequence)return null;
-    availableDatasets=selection.datasets;api.setDataset(selection.selected);
+    availableDatasets=selection.current_datasets;
+    const selectedDataset=selection.datasets.find(item=>item.id===selection.selected);
+    const currentDataset=availableDatasets.find(item=>item.repository_id===selectedDataset?.repository_id);
+    if(currentDataset && currentDataset.id!==selection.selected){
+      const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('dataset',currentDataset.id);
+      location.assign(url);return null;
+    }
+    api.setDataset(selection.selected);
     labels.configureTopics(data.enrichment_topics||[]);
     const normalized=labels.normalizeSelection(selectedLabels);
     selectedLabels.clear();for(const id of normalized)selectedLabels.add(id);
@@ -181,10 +188,7 @@
     const repositories=new Map(availableDatasets.map(item=>[item.repository_id,item.repository_name]));
     $('repository-select').innerHTML=[...repositories].map(([id,name])=>`<option value="${escape(id)}">${escape(name)}</option>`).join('');
     $('repository-select').value=current.repository_id;
-    $('dataset-select').innerHTML=availableDatasets.filter(item=>item.repository_id===current.repository_id).map(item=>
-      `<option value="${escape(item.id)}">${escape(item.source_commit.slice(0,12))} · ${item.card_count.toLocaleString()} 条</option>`).join('');
-    $('dataset-select').value=current.id;
-    $('dataset-provenance').textContent=`${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
+    $('dataset-provenance').textContent=`当前版本 ${current.source_commit.slice(0,12)} · ${current.card_count.toLocaleString()} 条 · ${current.source_origin==='archive-unverified'?'源码包 · 提交未核实':current.source_dirty?'含本地修改':'固定源码提交'} · 数据生成 ${current.generated_at?new Date(current.generated_at).toLocaleString('zh-CN'):'时间未记录'}`;
     const source=$('repository-source');source.hidden=!current.source_url;source.href=current.source_url||'#';
     const url=new URL(location.href);if(current.id)url.searchParams.set('dataset',current.id);
     history.replaceState(history.state,'',url);
@@ -221,7 +225,8 @@
     const reading=c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
     $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
     $("statement").innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
-    $("nl-location").textContent=c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。";
+    const reuseNote=c.reuse_source_commit?` 沿用版本 ${c.reuse_source_commit.slice(0,12)} 的机器结果。`:"";
+    $("nl-location").textContent=(c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。")+reuseNote;
     const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
     const present=references.filter(reference=>reference.statement?.trim());
     $('blueprint-panel').hidden=!present.length;
@@ -247,7 +252,7 @@
     const badge=$("status-badge");
     badge.className=`status-badge ${current?current.verdict==="misaligned"?"rejected":current.verdict==="uncertain"||current.verdict==="partial"?"uncertain":"reviewed":""}`;
     badge.textContent=current?verdictNames[current.verdict]:"未审阅";
-    badge.title=!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
+    badge.title=current?.inherited_from_dataset?`沿用 ${current.inherited_from_dataset} 的人工判断`:!current&&historyTotal?"内容已更新，当前版本尚未审阅；旧判断保留在审阅历史。":"";
     $("history-count").textContent=`(${historyTotal})`;
     const row=byId.get(c.id);
     if(row){
@@ -258,7 +263,7 @@
     return current;
   }
   function renderHistory(){
-    $("history").innerHTML=reviewHistory.map(row=>`<div class="history-item ${matches(card,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(card,row)?"":" · 旧版本"}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||(historyLoaded?"暂无审阅记录。":"展开后读取审阅历史。");
+    $("history").innerHTML=reviewHistory.map(row=>`<div class="history-item ${matches(card,row)?"":"stale"}"><b>${escape(verdictNames[row.verdict])}</b><small>${escape(identities.current?.display_name||row.reviewer)} · ${escape(new Date(row.created_at).toLocaleString("zh-CN"))}${matches(card,row)?"":" · 旧版本"}${row.inherited_from_dataset?` · 沿用 ${escape(row.inherited_from_dataset)}`:""}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:""}</div>`).join("")||(historyLoaded?"暂无审阅记录。":"展开后读取审阅历史。");
     $('history-more').hidden=!historyCursor;$('history-more').disabled=historyLoading;
     $('history-more').textContent='加载更多历史';
   }
@@ -443,7 +448,6 @@
   $("views").onclick=event=>{const button=event.target.closest('[data-view]');if(button)setView(button.dataset.view);};
   $('back-card').onclick=()=>navigation.back();
   $('repository-select').onchange=()=>switchDataset(availableDatasets.find(item=>item.repository_id===$('repository-select').value)?.id);
-  $('dataset-select').onchange=()=>switchDataset($('dataset-select').value);
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});
   $("save").onclick=save;$("next").onclick=()=>next();
   $('review-history').ontoggle=()=>{if($('review-history').open)loadHistory();};
