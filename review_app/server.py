@@ -17,6 +17,7 @@ from .name_auth import NameAuthStore, RateLimited, name_settings
 from .session_store import SessionStore
 from .symbols import SymbolIndex
 from .build import normalize_snapshot
+from .admin import safe_display_name, user_directory, user_reviews
 from .repositories import COLLECTION_SCHEMA, current_datasets, dataset_id, dataset_info, datasets, select_dataset
 # Keep the historical server imports working for existing integrations. New
 # database consumers can import these modules without loading HTTP transport.
@@ -57,6 +58,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
              "/favicon.svg": ("favicon.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
              "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
+             "/admin.css": ("admin.css", "text/css; charset=utf-8"),
              "/statement.js": ("statement.js", "text/javascript; charset=utf-8"),
              "/statement-api.js": ("statement-api.js", "text/javascript; charset=utf-8"),
              "/statement-identity.js": ("statement-identity.js", "text/javascript; charset=utf-8"),
@@ -70,6 +72,10 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
              "/login": ("login.html", "text/html; charset=utf-8"),
              "/login.js": ("login.js", "text/javascript; charset=utf-8"),
              "/login.css": ("login.css", "text/css; charset=utf-8"),
+             "/password": ("password.html", "text/html; charset=utf-8"),
+             "/password.js": ("password.js", "text/javascript; charset=utf-8"),
+             "/auth-notice.js": ("auth-notice.js", "text/javascript; charset=utf-8"),
+             "/auth-notice.css": ("auth-notice.css", "text/css; charset=utf-8"),
              "/app.js": ("app.js", "text/javascript; charset=utf-8"),
              "/app.css": ("app.css", "text/css; charset=utf-8"),
              "/latex-renderer.js": ("latex-renderer.js", "text/javascript; charset=utf-8"),
@@ -131,13 +137,15 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
         def _viewer(self) -> str | None:
             return auth.session_reviewer(self._session_token())
 
-        def _is_admin(self, viewer):
+        def _is_global_admin(self, viewer):
             if name_mode:
-                global_admin = bool(viewer and auth.is_admin(viewer))
+                return bool(viewer and auth.is_admin(viewer))
             else:
                 profile = reviewer_profile(db_path, viewer) if viewer else {}
-                global_admin = viewer in admin_emails or bool(preview and profile.get('preview_admin'))
-            if global_admin:
+                return bool(viewer and (viewer in admin_emails or (preview and profile.get('preview_admin'))))
+
+        def _is_admin(self, viewer):
+            if self._is_global_admin(viewer):
                 return True
             from contextlib import closing
             with closing(connect(db_path)) as db:
@@ -213,16 +221,16 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 self._json(404, {'error': '仓库版本不存在，请重新选择数据集'})
                 return
             if path == '/api/config':
-                self._json(200, {'preview': preview, 'auth_mode': auth_mode, 'review_mode': snapshot.get('review_mode', 'blueprint')})
+                self._json(200, {'preview': preview, 'auth_mode': auth_mode, 'authentication_notice': 'password-only-v1' if name_mode else None, 'review_mode': snapshot.get('review_mode', 'blueprint')})
                 return
             if path == "/login":
                 viewer = self._viewer()
                 if viewer:
-                    self._redirect("./")
+                    self._redirect("./password" if name_mode and auth.must_change_password(viewer) else "./")
                 else:
                     self._serve_static(path)
                 return
-            if path in static_payloads and path not in {"/", "/admin"}:
+            if path in static_payloads and path not in {"/", "/admin", "/password"}:
                 self._serve_static(path)
                 return
             viewer = self._viewer()
@@ -233,7 +241,23 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 profile = reviewer_profile(db_path, viewer) if viewer else {}
                 self._json(200, {"user_id": viewer, "email": None if name_mode else viewer, 'display_name': profile.get('display_name', ''),
                     'is_admin': self._is_admin(viewer), 'auth_mode': auth_mode,
+                    'can_view_users': self._is_global_admin(viewer),
+                    'must_change_password': bool(name_mode and auth.must_change_password(viewer)),
                     'preview': preview}) if viewer else self._json(401, {"error": "请先登录"})
+                return
+            if path == '/password':
+                if not name_mode:
+                    self._json(404, {'error': '页面不存在'})
+                elif not viewer:
+                    self._redirect('./login')
+                else:
+                    self._serve_static(path)
+                return
+            if viewer and name_mode and auth.must_change_password(viewer):
+                if path in {'/', '/admin'}:
+                    self._redirect('./password')
+                else:
+                    self._json(403, {'error': '请先修改初始密码', 'password_change_required': True})
                 return
             if path == "/":
                 self._serve_static(path)
@@ -250,7 +274,32 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 elif path == '/admin':
                     self._serve_static(path)
                 else:
-                    self._json(200, admin_summary(snapshot, db_path))
+                    summary = admin_summary(snapshot, db_path)
+                    for row in summary['judgments']:
+                        row['display_name'] = safe_display_name(row.get('display_name'))
+                    self._json(200, summary)
+                return
+            if path in {'/api/admin/users', '/api/admin/user'}:
+                if not viewer:
+                    self._json(401, {'error': '请先登录'})
+                elif not self._is_global_admin(viewer):
+                    self._json(403, {'error': '用户目录仅对全局管理员开放'})
+                elif path == '/api/admin/users':
+                    self._json(200, user_directory(installed, db_path, auth_mode=auth_mode, admin_emails=admin_emails))
+                else:
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    try:
+                        if any(len(query.get(key, [])) > 1 for key in ('reviewer', 'cursor', 'limit')):
+                            raise ValueError('请选择一个账号及分页参数')
+                        result = user_reviews(snapshot, db_path, query.get('reviewer', [''])[0],
+                            cursor=int(query.get('cursor', ['0'])[0]), limit=int(query.get('limit', ['25'])[0]),
+                            auth_mode=auth_mode, admin_emails=admin_emails)
+                    except LookupError as error:
+                        self._json(404, {'error': str(error)})
+                    except ValueError:
+                        self._json(400, {'error': '账号或分页参数无效'})
+                    else:
+                        self._json(200, result)
                 return
             if path.startswith("/api/") and not viewer:
                 self._json(401, {"error": "登录已过期，请重新登录"})
@@ -336,8 +385,9 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if path not in {"/api/auth/register", "/api/auth/recover", "/api/auth/recovery", "/api/judgments", "/api/drafts", "/api/auth/request-code",
-                            "/api/auth/verify-code", "/api/auth/logout", '/api/profile', '/api/preview/session', '/api/preview/resume'}:
+            if path not in {"/api/auth/register", "/api/judgments", "/api/drafts", "/api/auth/request-code",
+                            "/api/auth/verify-code", "/api/auth/logout", '/api/profile', '/api/preview/session', '/api/preview/resume',
+                            '/api/auth/password-login', '/api/auth/password', '/api/admin/reset-password'}:
                 self._json(404, {"error": "页面不存在"})
                 return
             if (not self._origin_ok() or
@@ -355,36 +405,56 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
             if not isinstance(payload, dict):
                 self._json(400, {"error": "请求格式错误"})
                 return
-            if path in {'/api/auth/register', '/api/auth/recover', '/api/auth/recovery'}:
+            viewer = self._viewer()
+            if (viewer and name_mode and auth.must_change_password(viewer)
+                    and path not in {'/api/auth/password', '/api/auth/password-login', '/api/auth/logout'}):
+                self._json(403, {'error': '请先修改初始密码', 'password_change_required': True})
+                return
+            if path in {'/api/auth/password-login', '/api/auth/password', '/api/admin/reset-password'}:
                 if not name_mode:
                     self._json(404, {'error': '页面不存在'})
                     return
                 try:
-                    if path == '/api/auth/register':
-                        if self._viewer():
-                            self._json(409, {'error': '已登录，请先退出后再创建新身份'})
-                            return
-                        token, recovery = auth.create_reviewer(payload.get('display_name'), self._client_ip())
-                        self._json(201, {'ok': True, 'recovery_code': recovery}, extra_headers={
-                            'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
-                    elif path == '/api/auth/recover':
-                        token = auth.resume_reviewer(payload.get('recovery_code'), self._client_ip())
+                    if path == '/api/auth/password-login':
+                        token = auth.login_password(payload.get('account'), payload.get('password'), self._client_ip())
                         if not token:
-                            self._json(401, {'error': '恢复码无效，请检查是否完整，或联系管理员'})
+                            self._json(401, {'error': '账号或密码不正确；忘记密码请联系管理员重置'})
                         else:
-                            self._json(200, {'ok': True}, extra_headers={
-                                'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
-                    else:
-                        viewer = self._viewer()
-                        if not viewer:
-                            self._json(401, {'error': '请先登录'})
+                            owner = auth.session_reviewer(token)
+                            self._json(200, {'ok': True, 'must_change_password': auth.must_change_password(owner)},
+                                extra_headers={'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
+                    elif not viewer:
+                        self._json(401, {'error': '请先登录'})
+                    elif path == '/api/admin/reset-password':
+                        if not self._is_global_admin(viewer):
+                            self._json(403, {'error': '重置密码仅对全局管理员开放'})
                             return
-                        recovery = auth.rotate_recovery(viewer, self._session_token())
-                        self._json(200, {'recovery_code': recovery})
+                        auth.reset_password(viewer, payload.get('reviewer'), payload.get('current_password'), self._client_ip())
+                        self._json(200, {'ok': True, 'message': '密码已重置为 12345678，该用户的所有设备已退出，下次登录须修改密码'})
+                    else:
+                        auth.change_password(viewer, payload.get('current_password'), payload.get('new_password'),
+                                             self._session_token(), self._client_ip())
+                        self._json(200, {'ok': True})
+                except RateLimited:
+                    self._json(429, {'error': '操作过于频繁，请稍后再试'}, extra_headers={'Retry-After': '600'})
+                except ValueError as error:
+                    self._json(400, {'error': str(error)})
+                return
+            if path == '/api/auth/register':
+                if not name_mode:
+                    self._json(404, {'error': '页面不存在'})
+                    return
+                try:
+                    if self._viewer():
+                        self._json(409, {'error': '已登录，请先退出后再注册'})
+                        return
+                    token, reviewer = auth.create_reviewer(payload.get('display_name'), self._client_ip(), password=payload.get('password'))
+                    self._json(201, {'ok': True, 'user_id': reviewer}, extra_headers={
+                        'Set-Cookie': self._cookie(token, max_age=auth.session_lifetime)})
                 except RateLimited:
                     self._json(429, {'error': '操作过于频繁，请稍后再试'}, extra_headers={'Retry-After': '60'})
                 except ValueError as error:
-                    self._json(400, {'error': str(error)})
+                    self._json(409 if '已注册' in str(error) else 400, {'error': str(error)})
                 return
             if path == '/api/preview/session':
                 name = payload.get('display_name')

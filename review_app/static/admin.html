@@ -1,1 +1,58 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Formaliscope · 管理汇总</title><link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./statement.css"><script src="./admin.js" defer></script></head><body><header class="topbar"><a class="brand" href="./"><span class="brand-mark" aria-hidden="true">F</span><span><b>Formaliscope</b><small>Statement 审阅工作台</small></span></a><span class="revision">ADMIN / REVIEW RESULTS</span><div class="top-actions"><a href="./">← 返回独立审阅</a><button id="refresh">刷新</button><button id="export">导出汇总</button></div></header><main class="admin-wrap"><div class="admin-head"><p class="eyebrow">REVIEW OVERVIEW</p><h1>独立评审结果汇总</h1><p>每位审阅者的判断分别保存。这里展示当前内容版本的有效结论，保留同名审阅者的独立身份。</p></div><section class="admin-stats"><div class="stat-tile"><small>参与审阅的人数</small><b id="stat-reviewers">—</b></div><div class="stat-tile"><small>通过</small><b id="stat-aligned">—</b></div><div class="stat-tile"><small>没看懂</small><b id="stat-uncertain">—</b></div><div class="stat-tile"><small>不通过</small><b id="stat-misaligned">—</b></div></section><div class="admin-controls"><input id="search" type="search" placeholder="搜索声明或审阅意见" aria-label="搜索汇总"><select id="reviewer" aria-label="按审阅者筛选"><option value="all">所有审阅者</option></select><select id="verdict" aria-label="按结论筛选"><option value="all">所有结论</option><option value="aligned">通过</option><option value="uncertain">没看懂</option><option value="misaligned">不通过</option></select></div><div id="admin-message" role="status"></div><div class="table-scroll"><table><thead><tr><th>条目与意见</th><th>审阅者</th><th>判断</th><th>保存时间</th></tr></thead><tbody id="results"></tbody></table><div id="admin-empty" class="admin-empty" hidden>还没有符合条件的记录。先在独立审阅入口保存一份判断。</div></div><div class="admin-foot"><span id="summary-note"></span><div><button id="prev-page">←</button> <span id="page-label"></span> <button id="next-page">→</button></div></div></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Formaliscope · 管理后台</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./statement.css"><link rel="stylesheet" href="./admin.css">
+  <script src="./admin.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">F</span><span><b>Formaliscope</b><small>管理后台</small></span></a>
+  <div class="top-actions"><a id="review-link" href="./">← 返回审阅</a><a id="admin-password-link" href="./password" hidden>修改密码</a><button id="refresh">刷新</button><button id="export" hidden>导出汇总</button></div>
+</header>
+<main class="admin-wrap">
+  <div class="admin-head"><p class="eyebrow">ADMINISTRATION</p><h1>管理后台</h1><p>查看用户与已提交的审阅结果，或为忘记密码的用户重置密码。同名用户保留各自独立的账号。</p></div>
+  <div id="admin-message" role="status" aria-live="polite">正在读取后台…</div>
+  <nav class="admin-tabs" aria-label="后台页面"><button id="users-tab" aria-current="page" hidden>用户与审阅</button><button id="summary-tab">审阅汇总</button></nav>
+  <section id="users-panel" aria-label="用户与审阅" hidden>
+    <div class="admin-stats">
+      <div class="stat-tile"><small>注册账号</small><b id="stat-users">—</b></div>
+      <div class="stat-tile"><small>正常启用</small><b id="stat-enabled">—</b></div>
+      <div class="stat-tile"><small>全局管理员</small><b id="stat-admins">—</b></div>
+      <div class="stat-tile"><small>已参与审阅</small><b id="stat-participants">—</b></div>
+    </div>
+    <div class="admin-controls"><input id="user-search" type="search" placeholder="搜索姓名或账号 ID" aria-label="搜索用户"><select id="user-role" aria-label="按用户角色筛选"><option value="all">所有角色</option><option value="admin">全局管理员</option><option value="dataset-admin">仓库版本管理员</option><option value="reviewer">普通用户</option></select><select id="user-status" aria-label="按账号状态筛选"><option value="all">所有状态</option><option value="enabled">正常启用</option><option value="disabled">已停用</option></select></div>
+    <p class="admin-note">有效判断按各仓库当前版本统计；历史保存条数包含旧版本记录。</p>
+    <div class="table-scroll"><table><thead><tr><th>用户</th><th>角色与状态</th><th>有效判断 / 历史保存</th><th>最近审阅</th><th>详情</th></tr></thead><tbody id="users"></tbody></table><div id="users-empty" class="admin-empty" hidden>没有符合条件的用户。</div></div>
+    <div class="admin-foot"><span id="users-note"></span><div><button id="users-prev" aria-label="用户上一页">←</button> <span id="users-page"></span> <button id="users-next" aria-label="用户下一页">→</button></div></div>
+    <section id="user-detail" class="user-detail" aria-labelledby="detail-name" hidden>
+      <div class="detail-heading"><div><p class="eyebrow">USER REVIEWS</p><h2 id="detail-name"></h2><p id="detail-id" class="admin-note"></p></div><button id="close-detail">关闭详情</button></div>
+      <button id="reset-password" hidden>重置此用户的密码</button>
+      <div class="admin-controls"><label for="detail-dataset">查看仓库</label><select id="detail-dataset"></select><span id="detail-count" class="admin-note"></span></div>
+      <p id="detail-message" role="status" aria-live="polite"></p>
+      <div class="table-scroll"><table><thead><tr><th>条目与审阅意见</th><th>判断</th><th>记录状态</th><th>保存时间</th></tr></thead><tbody id="user-reviews"></tbody></table><div id="detail-empty" class="admin-empty" hidden>该用户在这个仓库当前版本尚未提交审阅。</div></div>
+      <div class="admin-foot"><span>仅展示已提交结果</span><div><button id="detail-prev" aria-label="审阅上一页">←</button> <span id="detail-page"></span> <button id="detail-next" aria-label="审阅下一页">→</button></div></div>
+    </section>
+  </section>
+  <section id="summary-panel" aria-label="审阅汇总" hidden>
+    <div class="admin-controls"><label for="summary-dataset">查看仓库</label><select id="summary-dataset"></select></div>
+    <section class="admin-stats"><div class="stat-tile"><small>参与审阅的人数</small><b id="stat-reviewers">—</b></div><div class="stat-tile"><small>通过</small><b id="stat-aligned">—</b></div><div class="stat-tile"><small>没看懂</small><b id="stat-uncertain">—</b></div><div class="stat-tile"><small>不通过</small><b id="stat-misaligned">—</b></div></section>
+    <div class="admin-controls"><input id="search" type="search" placeholder="搜索声明或审阅意见" aria-label="搜索汇总"><select id="reviewer" aria-label="按审阅者筛选"><option value="all">所有审阅者</option></select><select id="verdict" aria-label="按结论筛选"><option value="all">所有结论</option><option value="aligned">通过</option><option value="uncertain">没看懂</option><option value="misaligned">不通过</option></select></div>
+    <div class="table-scroll"><table><thead><tr><th>条目与意见</th><th>审阅者</th><th>判断</th><th>保存时间</th></tr></thead><tbody id="results"></tbody></table><div id="admin-empty" class="admin-empty" hidden>没有符合条件的审阅结果。</div></div>
+    <div class="admin-foot"><span id="summary-note"></span><div><button id="prev-page" aria-label="汇总上一页">←</button> <span id="page-label"></span> <button id="next-page" aria-label="汇总下一页">→</button></div></div>
+  </section>
+</main>
+<dialog id="reset-password-dialog">
+  <form id="reset-password-form">
+    <h2>重置用户密码</h2><p id="reset-target"></p>
+    <p>密码将重置为 12345678，所有设备上的登录会退出，用户下次登录须修改密码。</p>
+    <label for="reset-admin-password">输入你的管理员密码确认</label>
+    <input id="reset-admin-password" type="password" autocomplete="current-password" maxlength="128" required>
+    <p id="reset-message" role="status" aria-live="polite"></p>
+    <div class="admin-controls"><button id="confirm-reset" type="submit">确认重置</button><button id="cancel-reset" type="button">取消</button></div>
+  </form>
+</dialog>
+</body>
+</html>

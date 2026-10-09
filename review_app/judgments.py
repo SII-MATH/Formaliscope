@@ -347,9 +347,18 @@ def update_reviewer_profile(db_path: Path, reviewer: str, name: object) -> tuple
         return 400, {'error': '请输入 1–60 字的姓名'}
     name = name.strip()
     with closing(connect(db_path)) as db:
+        from .passwords import name_key, name_taken
+        db.execute('BEGIN IMMEDIATE')
+        identity = db.execute('SELECT 1 FROM name_identities WHERE reviewer=?', (reviewer,)).fetchone()
+        if identity:
+            if name_taken(db, name, exclude=reviewer) or valid_reviewer_id(name):
+                db.execute('ROLLBACK')
+                return 409, {'error': '该姓名已被其他账号使用'}
+            db.execute('UPDATE name_identities SET normalized_name=? WHERE reviewer=?', (name_key(name), reviewer))
         db.execute('''INSERT INTO reviewer_profiles (reviewer, display_name) VALUES (?, ?)
             ON CONFLICT(reviewer) DO UPDATE SET display_name=excluded.display_name''',
             (reviewer, name))
+        db.execute('COMMIT')
     return 200, {'display_name': name}
 
 

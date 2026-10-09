@@ -38,34 +38,20 @@ class NameIdentityTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_same_names_rename_restart_and_expiry(self):
-        first, key = self.auth.create_reviewer('同名')
-        second, _ = self.auth.create_reviewer('同名')
-        owner = self.auth.session_email(first)
+    def test_unique_names_rename_restart_and_expiry(self):
+        first, owner = self.auth.create_reviewer('用户', password='private-password')
+        with self.assertRaises(ValueError):
+            self.auth.create_reviewer(' 用户 ')
+        second, _ = self.auth.create_reviewer('另一用户')
         self.assertNotEqual(owner, self.auth.session_email(second))
         self.assertFalse(self.auth.is_admin(owner))
-        update_reviewer_profile(self.db, owner, '改名')
+        self.assertEqual(update_reviewer_profile(self.db, owner, '改名')[0], 200)
         restarted = NameAuthStore(self.db, clock=lambda: self.now)
         self.assertEqual(restarted.session_email(first), owner)
-        resumed = restarted.resume_reviewer(key)
+        resumed = restarted.login_password('改名', 'private-password')
         self.assertEqual(restarted.session_email(resumed), owner)
         self.now += NAME_SESSION_LIFETIME
         self.assertIsNone(restarted.session_email(resumed))
-
-    def test_recovery_rotation_revokes_other_sessions_and_old_key(self):
-        token, key = self.auth.create_identity('用户')
-        other = self.auth.resume_reviewer(key)
-        self.assertTrue(self.auth.session_email(other))  # populate cache
-        owner = self.auth.session_email(token)
-        replacement = self.auth.rotate_recovery(owner, token)
-        self.assertIsNone(self.auth.resume_reviewer(key))
-        self.assertIsNone(self.auth.session_email(other))
-        self.assertEqual(self.auth.session_email(token), owner)
-        self.assertEqual(self.auth.session_email(self.auth.resume_reviewer(replacement)), owner)
-        with sqlite3.connect(self.db) as db:
-            text = '\n'.join(db.iterdump())
-        for secret in (token, key, replacement):
-            self.assertNotIn(secret, text)
 
     def test_disabled_identity_rejects_cached_session_and_recovery(self):
         token, key = self.auth.create_identity('用户', admin=True)
@@ -73,7 +59,7 @@ class NameIdentityTests(unittest.TestCase):
         with sqlite3.connect(self.db) as db:
             db.execute('UPDATE name_identities SET disabled=1 WHERE reviewer=?', (owner,))
         self.assertIsNone(self.auth.session_email(token))
-        self.assertIsNone(self.auth.resume_reviewer(key))
+        self.assertIsNone(self.auth.login_password(owner, '12345678'))
         self.assertFalse(self.auth.is_admin(owner))
 
     def test_name_sessions_validate_identity_without_email_allowlist(self):
@@ -84,54 +70,54 @@ class NameIdentityTests(unittest.TestCase):
         self.assertEqual(auth.session_email(token), owner)
         restarted = NameAuthStore(self.db, auth.settings, clock=lambda: self.now)
         self.assertEqual(restarted.session_reviewer(token), owner)
-        self.assertEqual(restarted.session_reviewer(restarted.resume_reviewer(recovery)), owner)
+        self.assertEqual(restarted.session_reviewer(restarted.login_password(owner, '12345678')), owner)
         with sqlite3.connect(self.db) as db:
             db.execute('UPDATE name_identities SET disabled=1 WHERE reviewer=?', (owner,))
         self.assertIsNone(restarted.session_reviewer(token))
         self.assertIsNone(restarted.session_email(token))
 
     def test_credential_guesses_are_limited_and_origin_is_required(self):
-        for _ in range(60):
-            self.assertIsNone(self.auth.resume_reviewer('not-a-key'))
+        for _ in range(20):
+            self.assertIsNone(self.auth.login_password('unknown', 'short'))
         with self.assertRaises(RateLimited):
-            self.auth.resume_reviewer('not-a-key')
+            self.auth.login_password('unknown', 'short')
         self.now += 601
-        self.assertIsNone(self.auth.resume_reviewer('not-a-key'))
+        self.assertIsNone(self.auth.login_password('unknown', 'short'))
         for origin in ('', 'http://public.example.org', 'https://u:p@example.org', 'https://example.org/path', 'https://example.org:99999'):
             with self.subTest(origin=origin), self.assertRaises(ValueError):
                 name_settings({'REVIEW_PUBLIC_ORIGIN': origin})
         self.assertEqual(name_settings({'REVIEW_PUBLIC_ORIGIN': 'http://127.0.0.1:8890'}).mailer, 'none')
 
     def test_backup_preserves_recovery_without_old_sessions_or_pepper(self):
-        token, key = self.auth.create_identity('管理员', admin=True)
+        token, key = self.auth.create_identity('管理员', admin=True, password='private-password')
         owner = self.auth.session_email(token)
         (self.db.parent / 'snapshot.json').write_text(json.dumps({'digest': 'a'*64, 'source_commit': 'b'*40}))
         backup = create_backup(self.db.parent, self.root / 'backups')
         restored = NameAuthStore(backup / 'judgments.sqlite3')
         self.assertNotEqual(restored.pepper, self.auth.pepper)
         self.assertIsNone(restored.session_email(token))
-        self.assertEqual(restored.session_email(restored.resume_reviewer(key)), owner)
+        self.assertEqual(restored.session_email(restored.login_password(owner, 'private-password')), owner)
         self.assertTrue(restored.is_admin(owner))
 
     def test_operator_cli_private_file_and_existing_identity_binding(self):
-        output = self.root / 'admin-recovery.txt'
+        output = self.root / 'admin-account.txt'
         command = [sys.executable, '-m', 'review_app', 'create-admin', '--data-dir', str(self.db.parent),
                    '--name', '管理员', '--output', str(output)]
         first = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(first.returncode, 0, first.stderr)
-        key = output.read_text().strip()
+        account_file = output.read_text().strip()
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn(key, first.stdout + first.stderr)
+        self.assertNotIn('12345678', first.stdout + first.stderr)
         owner = json.loads(first.stdout)['reviewer']
         self.assertTrue(self.auth.is_admin(owner))
         self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
-        self.assertEqual(output.read_text().strip(), key)
+        self.assertEqual(output.read_text().strip(), account_file)
         update_reviewer_profile(self.db, 'legacy@example.org', '旧用户')
         bound = self.root / 'legacy.txt'
-        result = subprocess.run([sys.executable, '-m', 'review_app', 'bind-recovery', '--data-dir', str(self.db.parent),
+        result = subprocess.run([sys.executable, '-m', 'review_app', 'bind-account', '--data-dir', str(self.db.parent),
                                  '--reviewer', 'legacy@example.org', '--name', '旧用户', '--output', str(bound)], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        recovered = self.auth.resume_reviewer(bound.read_text())
+        recovered = self.auth.login_password('legacy@example.org', '12345678')
         self.assertEqual(self.auth.session_email(recovered), 'legacy@example.org')
         self.assertFalse(self.auth.is_admin('legacy@example.org'))
 
@@ -216,10 +202,38 @@ class NameHTTPTests(unittest.TestCase):
             content = response.read()
             return response.status, dict(response.headers), json.loads(content) if content else None
 
-    def register(self, name='同名'):
-        status, headers, data = self.request('/api/auth/register', {'display_name': name, 'is_admin': True, 'reviewer': 'spoof'})
+    def register(self, name=None):
+        self.registration_sequence = getattr(self, 'registration_sequence', 0) + 1
+        name = name or '用户' + str(self.registration_sequence)
+        status, headers, data = self.request('/api/auth/register', {'display_name': name, 'password': 'test-pass-987', 'is_admin': True, 'reviewer': 'spoof'})
         self.assertEqual(status, 201)
-        return headers['Set-Cookie'].split(';', 1)[0], data['recovery_code']
+        return headers['Set-Cookie'].split(';', 1)[0], data['user_id']
+
+    def test_global_admin_user_directory_and_details_are_read_only_and_protected(self):
+        first, recovery = self.register('同名')
+        second, _ = self.register('另一用户')
+        token, _ = self.auth.create_identity('后台管理员', admin=True, password='test-pass-987')
+        admin = 'kip126_review_session=' + token
+        viewer = self.request('/api/auth/me', cookie=first)[2]['user_id']
+        self.assertFalse(self.request('/api/auth/me', cookie=first)[2]['can_view_users'])
+        self.assertTrue(self.request('/api/auth/me', cookie=admin)[2]['can_view_users'])
+        for path in ('/api/admin/users', '/api/admin/user?reviewer=' + viewer):
+            self.assertEqual(self.request(path)[0], 401)
+            self.assertEqual(self.request(path, cookie=first)[0], 403)
+            self.assertEqual(self.request(path, {}, admin)[0], 404)
+        directory = self.request('/api/admin/users', cookie=admin)[2]
+        self.assertEqual(directory['stats']['registered'], 3)
+        self.assertEqual(len({row['reviewer'] for row in directory['users']}), 3)
+        self.assertNotIn('test-pass-987', json.dumps(directory))
+        body = {'request_id': str(uuid.uuid4()), 'card_id': self.card['id'],
+                'fingerprint': self.card['fingerprint'], 'verdict': 'aligned', 'rationale': '可查看的意见'}
+        self.assertEqual(self.request('/api/judgments', body, first)[0], 201)
+        detail = self.request('/api/admin/user?reviewer=' + viewer, cookie=admin)[2]
+        self.assertEqual(detail['current_count'], 1)
+        self.assertEqual(detail['reviews'][0]['rationale'], '可查看的意见')
+        self.assertEqual(self.request('/api/admin/user?reviewer=missing', cookie=admin)[0], 404)
+        for query in ('cursor=-1', 'limit=101', 'cursor=no', 'reviewer=extra'):
+            self.assertEqual(self.request('/api/admin/user?reviewer=' + viewer + '&' + query, cookie=admin)[0], 400)
 
     def test_drafts_completion_pagination_and_exports_use_authenticated_owner(self):
         first, recovery = self.register()
@@ -261,7 +275,7 @@ class NameHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/export?mode=latest', cookie=second)[2]['judgments'], [])
         self.assertEqual(self.request('/api/export?mode=invalid', cookie=first)[0], 400)
         self.request('/api/auth/logout', {}, first)
-        _, headers, _ = self.request('/api/auth/recover', {'recovery_code': recovery})
+        _, headers, _ = self.request('/api/auth/password-login', {'account': recovery, 'password': 'test-pass-987'})
         recovered = headers['Set-Cookie'].split(';', 1)[0]
         self.assertEqual(self.request(path, cookie=recovered)[2]['history_count'], 31)
 
@@ -279,22 +293,22 @@ class NameHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/auth/me', cookie=first)[2]['user_id'], owner)
         self.assertEqual(self.request('/api/auth/logout', {}, first)[0], 200)
         self.assertEqual(self.request('/api/auth/me', cookie=first)[0], 401)
-        status, headers, _ = self.request('/api/auth/recover', {'recovery_code': key})
+        status, headers, _ = self.request('/api/auth/password-login', {'account': key, 'password': 'test-pass-987'})
         self.assertEqual(status, 200)
         recovered = headers['Set-Cookie'].split(';', 1)[0]
         self.assertEqual(self.request('/api/auth/me', cookie=recovered)[2]['display_name'], '改名')
         history_data = self.request('/api/history?id='+self.card['id'], cookie=recovered)[2]['history']
         self.assertEqual(len(history_data), 1)
         self.assertEqual(history_data[0]['reviewer'], owner)
-        self.assertNotIn(key, json.dumps(self.request('/api/auth/me', cookie=recovered)[2]))
+        self.assertNotIn('test-pass-987', json.dumps(self.request('/api/auth/me', cookie=recovered)[2]))
         self.assertEqual(self.request('/api/auth/register', {'display_name': 'new'}, recovered)[0], 409)
 
     def test_no_admin_by_name_or_first_registration_and_operator_login(self):
         cookie, _ = self.register('管理员')
         self.assertFalse(self.request('/api/auth/me', cookie=cookie)[2]['is_admin'])
         self.assertEqual(self.request('/api/admin/summary', cookie=cookie)[0], 403)
-        _, key = self.auth.create_identity('管理员', admin=True)
-        status, headers, _ = self.request('/api/auth/recover', {'recovery_code': key})
+        _, key = self.auth.create_identity('后台操作员', admin=True, password='test-pass-987')
+        status, headers, _ = self.request('/api/auth/password-login', {'account': key, 'password': 'test-pass-987'})
         self.assertEqual(status, 200)
         admin_cookie = headers['Set-Cookie'].split(';', 1)[0]
         self.assertTrue(self.request('/api/auth/me', cookie=admin_cookie)[2]['is_admin'])
@@ -305,7 +319,7 @@ class NameHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/auth/request-code', {'email': 'x@example.org'})[0], 404)
         self.assertEqual(self.request('/api/auth/verify-code', {'email': 'x@example.org', 'code': '12345678'})[0], 404)
         self.assertEqual(self.request('/api/preview/session', {'display_name': 'X'})[0], 404)
-        self.assertEqual(self.request('/api/auth/recovery', {})[0], 401)
+        self.assertEqual(self.request('/api/auth/recovery', {})[0], 404)
         self.auth.settings = AuthSettings(mailer='none', allow_any_email=True,
                                          public_origin='https://review.example.org', cookie_path='/review/')
         status, headers, _ = self.request('/api/auth/register', {'display_name': 'X'}, origin='https://review.example.org')
@@ -314,13 +328,12 @@ class NameHTTPTests(unittest.TestCase):
             self.assertIn(attribute, headers['Set-Cookie'])
         self.assertEqual(headers['Cache-Control'], 'no-store')
 
-    def test_rotation_keeps_current_login_and_revokes_old_recovery(self):
-        cookie, key = self.register()
-        status, _, data = self.request('/api/auth/recovery', {}, cookie)
-        self.assertEqual(status, 200)
-        self.assertEqual(self.request('/api/auth/me', cookie=cookie)[0], 200)
-        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': key})[0], 401)
-        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': data['recovery_code']})[0], 200)
+    def test_recovery_routes_are_removed_and_names_cannot_be_registered_twice(self):
+        cookie, owner = self.register('唯一姓名')
+        for path in ('/api/auth/recovery', '/api/auth/recover'):
+            self.assertEqual(self.request(path, {'recovery_code': 'KIP-'+'A'*43}, cookie)[0], 404)
+        self.assertEqual(self.request('/api/auth/register', {'display_name': ' 唯一姓名 ', 'password': 'test-pass-987'})[0], 409)
+        self.assertEqual(self.request('/api/auth/me', cookie=cookie)[2]['user_id'], owner)
 
     def ip_digest(self, address, auth=None):
         return hmac.new((auth or self.auth).pepper, address.encode(), hashlib.sha256).hexdigest()
@@ -331,7 +344,7 @@ class NameHTTPTests(unittest.TestCase):
         with sqlite3.connect(self.db) as db:
             # Existing requests fill one address's quotas, outside the separate
             # global minute limit; another student must still be able to enter.
-            for action, count in (('register', 120), ('recover', 60)):
+            for action, count in (('register', 120), ('password', 20)):
                 db.executemany('INSERT INTO identity_requests VALUES (?, ?, ?)',
                                [(action, self.ip_digest(first), self.now-120)]*count)
         self.assertEqual(self.request('/api/auth/register', {'display_name': 'A'},
@@ -339,15 +352,15 @@ class NameHTTPTests(unittest.TestCase):
         status, _, data = self.request('/api/auth/register', {'display_name': 'B'},
                                        extra_headers={'X-Real-IP': '2001:0db8:0:0:0:0:0:20'})
         self.assertEqual(status, 201)
-        recovery = data['recovery_code']
-        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery},
+        account = data['user_id']
+        self.assertEqual(self.request('/api/auth/password-login', {'account': account, 'password': '12345678'},
                                       extra_headers={'X-Real-IP': first})[0], 429)
-        self.assertEqual(self.request('/api/auth/recover', {'recovery_code': recovery},
+        self.assertEqual(self.request('/api/auth/password-login', {'account': account, 'password': '12345678'},
                                       extra_headers={'X-Real-IP': second})[0], 200)
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute('SELECT action, COUNT(*) FROM identity_requests WHERE ip_digest=? '
                                         'GROUP BY action ORDER BY action', (self.ip_digest(second),)).fetchall(),
-                             [('recover', 1), ('register', 1)])
+                             [('password', 1), ('register', 1)])
         self.assertEqual(self.request('/api/auth/register', {'display_name': 'C'},
                                       origin='https://evil.example', extra_headers={'X-Real-IP': second})[0], 403)
         with sqlite3.connect(self.db) as db:
@@ -361,9 +374,9 @@ class NameHTTPTests(unittest.TestCase):
                 with sqlite3.connect(self.db) as db:
                     db.execute('DELETE FROM identity_requests')
                 for address in ('198.51.100.10', '198.51.100.20'):
-                    self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'},
+                    self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'+str(trust)+address},
                                                   extra_headers={'X-Real-IP': address})[0], 201)
-                self.assertEqual(self.request('/api/auth/recover', {'recovery_code': 'not-a-key'},
+                self.assertEqual(self.request('/api/auth/password-login', {'account': 'unknown', 'password': 'short'},
                                               extra_headers={'X-Real-IP': '198.51.100.30'})[0], 401)
                 with sqlite3.connect(self.db) as db:
                     self.assertEqual(db.execute('SELECT DISTINCT ip_digest FROM identity_requests').fetchall(),
@@ -375,13 +388,13 @@ class NameHTTPTests(unittest.TestCase):
         cases.extend({'X-Real-IP': value} for value in
                      ('not-an-ip', '198.51.100.10, 198.51.100.20', 'example.org',
                       '198.51.100.10:4321', '[2001:db8::1]', 'fe80::1%lo', ''))
-        for headers in cases:
+        for index, headers in enumerate(cases):
             with self.subTest(headers=headers):
-                self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'},
+                self.assertEqual(self.request('/api/auth/register', {'display_name': '学生'+str(index)},
                                               extra_headers=headers)[0], 201)
         connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
         try:
-            body = json.dumps({'display_name': '学生'}).encode()
+            body = json.dumps({'display_name': '最后学生'}).encode()
             connection.putrequest('POST', '/api/auth/register')
             connection.putheader('Content-Type', 'application/json')
             connection.putheader('Origin', self.base)

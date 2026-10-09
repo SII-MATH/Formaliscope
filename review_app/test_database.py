@@ -125,8 +125,15 @@ class DatabaseMigrationTests(unittest.TestCase):
         initialize(path)
         with closing(connect(path)) as db:
             for table in tables:
-                self.assertEqual([tuple(row)[:len(before[table][0])] for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')],
-                                 before[table], table)
+                if table == 'name_identities':
+                    self.assertEqual([tuple(row)[:3] for row in db.execute('SELECT * FROM name_identities ORDER BY rowid')],
+                                     [(owner,1,0),(disabled,1,1)])
+                    self.assertNotIn('recovery_digest', {row['name'] for row in db.execute('PRAGMA table_info(name_identities)')})
+                elif table == 'login_sessions':
+                    self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM login_sessions ORDER BY rowid')],
+                                     [row for row in before[table] if row[1] in (email, preview)])
+                else:
+                    self.assertEqual([tuple(row)[:len(before[table][0])] for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')], before[table], table)
             self.assertEqual([tuple(row) for row in db.execute(
                 'SELECT * FROM schema_migrations WHERE version<=6 ORDER BY version')], ledger)
             migrated = list(db.iterdump())
@@ -135,14 +142,14 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(list(db.iterdump()), migrated)
 
         name_auth = NameAuthStore(path, clock=lambda: now)
-        self.assertEqual(name_auth.session_reviewer('name-token'), owner)
-        self.assertEqual(name_auth.session_email('name-token'), owner)
+        self.assertIsNone(name_auth.session_reviewer('name-token'))
+        self.assertIsNone(name_auth.session_email('name-token'))
         self.assertTrue(name_auth.is_admin(owner))
         self.assertIsNone(name_auth.session_reviewer('disabled-token'))
         self.assertFalse(name_auth.is_admin(disabled))
         self.assertIsNone(name_auth.session_reviewer('expired-token'))
-        self.assertIsNone(name_auth.resume_reviewer(disabled_recovery))
-        self.assertEqual(name_auth.session_reviewer(name_auth.resume_reviewer(recovery)), owner)
+        self.assertIsNone(name_auth.login_password(disabled, '12345678'))
+        self.assertEqual(name_auth.session_reviewer(name_auth.login_password(owner, '12345678')), owner)
 
         email_auth = AuthStore(path, AuthSettings(mailer='none', allowed_emails=frozenset({email})),
                                clock=lambda: now)

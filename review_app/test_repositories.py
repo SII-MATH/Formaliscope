@@ -262,6 +262,9 @@ class RepositoryHTTPTests(RepositoryFixture, unittest.TestCase):
             db.execute('INSERT INTO dataset_admins VALUES (?, ?)', (dataset_id(self.first), viewer))
         self.assertTrue(self.request('/api/auth/me', snapshot=self.first, cookie=self.cookie)[2]['is_admin'])
         self.assertEqual(self.request('/api/admin/summary', snapshot=self.first, cookie=self.cookie)[0], 200)
+        self.assertFalse(self.request('/api/auth/me', snapshot=self.first, cookie=self.cookie)[2]['can_view_users'])
+        self.assertEqual(self.request('/api/admin/users', snapshot=self.first, cookie=self.cookie)[0], 403)
+        self.assertEqual(self.request('/api/admin/user?reviewer=' + viewer, snapshot=self.first, cookie=self.cookie)[0], 403)
         for snapshot in (self.second, self.other):
             self.assertFalse(self.request('/api/auth/me', snapshot=snapshot, cookie=self.cookie)[2]['is_admin'])
             self.assertEqual(self.request('/api/admin/summary', snapshot=snapshot, cookie=self.cookie)[0], 403)

@@ -1,0 +1,7 @@
+.auth-notice{width:min(92vw,460px);padding:28px;border:1px solid #dbe7db;border-radius:14px;background:#fff;color:#20332e;font-family:system-ui,'Noto Sans SC',sans-serif;box-shadow:0 14px 55px #243d2926}
+.auth-notice::backdrop{background:#10291c66}
+.auth-notice .auth-notice-label{font-size:11px;font-weight:700;letter-spacing:.1em;color:#5c9875;margin:0 0 14px}
+.auth-notice h2{margin:0 0 20px;font-size:23px}
+.auth-notice p{font-size:14px;line-height:1.8;margin:12px 0}
+.auth-notice strong{color:#174a3c}
+.auth-notice button{width:100%;margin-top:18px;padding:12px;border:1px solid #23734c;border-radius:8px;background:#23734c;color:white;font:600 14px system-ui;cursor:pointer}

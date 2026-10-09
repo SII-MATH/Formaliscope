@@ -105,15 +105,19 @@ def main():
                              help='collected statement-enrichment.v2 result with original worker records')
     assessments.add_argument('--data-dir', type=Path, required=True,
                              help='explicit target persistent data directory; requires the schema 9 application')
-    for command, description in [('create-admin', 'create an administrator with a private recovery file'),
-                                 ('bind-recovery', 'bind an existing reviewer to name login without moving records')]:
+    for command, description in [('create-admin', 'create a password administrator with a private account file'),
+                                 ('bind-account', 'bind an existing reviewer to password login without moving records')]:
         operation = sub.add_parser(command, help=description)
         operation.add_argument('--data-dir', type=Path, default=default_data_dir)
         operation.add_argument('--name', required=True)
-        operation.add_argument('--output', type=Path, required=True, help='new private recovery file; never overwritten')
-        if command == 'bind-recovery':
+        operation.add_argument('--output', type=Path, required=True, help='new private account file; never overwritten')
+        if command == 'bind-account':
             operation.add_argument('--reviewer', required=True, help='exact existing internal reviewer key')
             operation.add_argument('--admin', action='store_true', help='explicitly grant operator role')
+    merge = sub.add_parser('merge-accounts', help='offline merge of confirmed same-name accounts; back up and stop service first')
+    merge.add_argument('--data-dir', type=Path, required=True)
+    merge.add_argument('--source', required=True)
+    merge.add_argument('--target', required=True)
     args = parser.parse_args()
     if args.command == 'bundle-snapshots':
         from .repositories import make_collection
@@ -262,7 +266,15 @@ def main():
             parser.error(str(exc))
         print(json.dumps({'dataset_id': dataset_id(selected), 'reviewer': args.reviewer, 'granted': not args.revoke}))
         return
-    if args.command in {'create-admin', 'bind-recovery'}:
+    if args.command == 'merge-accounts':
+        from .account_merge import merge_accounts
+        try:
+            result = merge_accounts(data_dir, args.source, args.target)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    if args.command in {'create-admin', 'bind-account'}:
         from .name_auth import NameAuthStore, valid_name
         if not valid_name(args.name):
             parser.error('请输入 1–60 字的姓名，不含控制字符')
@@ -271,14 +283,14 @@ def main():
         try:
             descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except OSError:
-            parser.exit(1, 'Cannot create a new private recovery file; choose a new --output path.\n')
+            parser.exit(1, 'Cannot create a new private account file; choose a new --output path.\n')
         try:
             with os.fdopen(descriptor, 'w', encoding='utf-8') as secret_file:
                 auth = NameAuthStore(data_dir / 'judgments.sqlite3')
-                token, recovery = auth.create_identity(args.name,
+                token, reviewer = auth.create_identity(args.name,
                     admin=args.command == 'create-admin' or args.admin,
                     existing_reviewer=getattr(args, 'reviewer', None))
-                secret_file.write(recovery + '\n')
+                secret_file.write('账号 ID：' + reviewer + '\n初始密码：12345678\n首次登录须修改密码。\n')
                 secret_file.flush()
                 os.fsync(secret_file.fileno())
                 reviewer = auth.session_reviewer(token)
@@ -286,7 +298,7 @@ def main():
         except (OSError, ValueError) as error:
             output.unlink(missing_ok=True)
             parser.exit(1, str(error) + '\n')
-        print(json.dumps({'reviewer': reviewer, 'name': args.name.strip(), 'recovery_file': str(output)}, ensure_ascii=False))
+        print(json.dumps({'reviewer': reviewer, 'name': args.name.strip(), 'account_file': str(output)}, ensure_ascii=False))
         return
     snapshot = data_dir / "snapshot.json"
     if args.command == "serve":

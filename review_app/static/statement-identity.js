@@ -30,8 +30,9 @@
       if(turn!==generation)return null;
       identity=value;
       if(!identity){if(optional)show('new');else unauthorized();return null;}
+      if(identity.must_change_password){location.replace(new URL('./password',document.baseURI));return null;}
       $('reviewer-name').textContent=identity.display_name||identity.user_id||identity.email;
-      $('recovery-button').hidden=config?.auth_mode!=='name';
+      $('password-button').hidden=config?.auth_mode!=='name';
       $('admin-link').hidden=!identity.is_admin;$('preview-badge').hidden=!config.preview;
       return identity;
     }
@@ -64,34 +65,7 @@
       finally{$('resume-button').disabled=false;}
     };
     $('profile-button').onclick=async()=>{if(!await mayNavigate())return;$('account-menu').open=false;show('edit');};
-    $('recovery-button').onclick=async()=>{
-      if(!await mayNavigate())return;
-      $('account-menu').open=false;$('recovery-result').hidden=true;$('generate-recovery').hidden=false;
-      $('account-recovery-code').value='';$('recovery-error').textContent='';
-      $('recovery-help').textContent='原恢复码将失效，其他设备上的登录也会退出。当前浏览器继续保留身份。';
-      $('recovery-dialog').showModal();
-    };
-    $('recovery-form').addEventListener('submit',async event=>{
-      event.preventDefault();$('generate-recovery').disabled=true;
-      try{
-        const result=await api.post('./api/auth/recovery',{});
-        $('account-recovery-code').value=result.recovery_code;$('recovery-result').hidden=false;
-        $('generate-recovery').hidden=true;$('recovery-help').textContent='新恢复码已生效，原恢复码已失效。请先保存再关闭。';
-      }catch(error){$('recovery-error').textContent=error.message;}
-      finally{$('generate-recovery').disabled=false;}
-    });
-    $('copy-account-recovery').onclick=async()=>{
-      try{await navigator.clipboard.writeText($('account-recovery-code').value);$('recovery-error').textContent='已复制，请私下保存。';}
-      catch{$('account-recovery-code').select();$('recovery-error').textContent='请手动复制选中的恢复码。';}
-    };
-    $('download-account-recovery').onclick=()=>{
-      const url=URL.createObjectURL(new Blob(['Formaliscope 私人恢复码（勿分享）\n'+$('account-recovery-code').value+'\n'],{type:'text/plain;charset=utf-8'}));
-      const link=document.createElement('a');link.href=url;link.download='formaliscope-recovery.txt';link.click();
-      setTimeout(()=>URL.revokeObjectURL(url),1000);
-    };
-    function clearRecovery(){$('account-recovery-code').value='';$('recovery-result').hidden=true;}
-    $('close-recovery').onclick=()=>{$('recovery-dialog').close();clearRecovery();};
-    $('recovery-dialog').addEventListener('close',clearRecovery);
+    $('password-button').onclick=async()=>{if(!await mayNavigate())return;location.assign(new URL('./password',document.baseURI));};
     $('logout').onclick=async()=>{
       if(!await mayNavigate())return;
       try{await api.post('./api/auth/logout',{});onLogout();unauthorized();}

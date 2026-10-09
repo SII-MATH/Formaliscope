@@ -5,20 +5,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>进入审阅 · Formaliscope</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./login.css">
+  <link rel="stylesheet" href="./auth-notice.css"><script src="./auth-notice.js" defer></script>
   <script src="./login.js" defer></script>
 </head>
 <body>
   <main class="login-card">
     <div class="mark" aria-hidden="true">F</div>
+    <p id="environment-hint" class="hint" hidden>本地环境 · 请使用本地账号</p>
     <p class="eyebrow">FORMALISCOPE · REVIEW</p>
     <h1>进入审阅工作台</h1>
-    <p id="login-hint" class="hint">首次使用填写姓名即可。已有身份请使用恢复码，继续原来的审阅记录。</p>
+    <p id="login-hint" class="hint">使用账号和密码继续审阅。已有用户请直接登录，首次使用请注册。</p>
     <section id="name-entry" hidden>
-      <div class="login-tabs" role="group" aria-label="进入方式"><button id="new-tab" class="quiet" aria-pressed="true">首次使用</button><button id="recover-tab" class="quiet" aria-pressed="false">使用恢复码</button></div>
-      <form id="register-form"><label for="display-name">姓名</label><input id="display-name" autocomplete="name" maxlength="60" required placeholder="请输入你的姓名"><button id="register" type="submit">创建我的审阅身份 →</button></form>
-      <form id="recover-form" hidden><label for="recovery-code">恢复码</label><input id="recovery-code" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="100" placeholder="KIP-…"><button id="recover" type="submit">恢复我的审阅记录 →</button><p class="hint">管理员也从这里登录。请勿输入姓名或日常密码。</p></form>
+      <div class="login-tabs" role="group" aria-label="进入方式"><button id="password-tab" class="quiet" aria-pressed="true">密码登录</button><button id="new-tab" class="quiet" aria-pressed="false">注册账号</button></div>
+      <form id="password-form"><label for="account">账号（姓名或 ID）</label><input id="account" autocomplete="username" maxlength="254" required placeholder="请输入注册姓名或账号 ID"><label for="login-password">密码</label><input id="login-password" type="password" autocomplete="current-password" required maxlength="128"><button id="password-login" type="submit">登录审阅工作台 →</button><p class="hint">忘记密码请联系管理员重置。初始密码登录后须修改；账号 ID 可在个人信息或管理后台查看。</p></form>
+      <form id="register-form" hidden><label for="display-name">姓名</label><input id="display-name" autocomplete="name" maxlength="60" required placeholder="请输入你的姓名"><label for="register-password">设置密码</label><input id="register-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="8–128 个字符"><button id="register" type="submit">注册账号 →</button></form>
+
     </section>
-    <section id="recovery-panel" hidden><h2>保存你的恢复码</h2><p class="hint">同一浏览器会记住你。换设备、退出或清除浏览器数据后，用它找回原来的身份和记录。请私下保存，勿分享给别人。</p><label for="new-recovery-code">你的恢复码（仅此次显示）</label><input id="new-recovery-code" readonly autocomplete="off" spellcheck="false"><div class="login-tabs"><button id="copy-recovery" class="quiet">复制恢复码</button><button id="download-recovery" class="quiet">下载保存</button></div><button id="continue">我已保存，进入审阅 →</button></section>
+
     <form id="email-form" hidden>
       <label for="email">邮箱地址</label>
       <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com">
