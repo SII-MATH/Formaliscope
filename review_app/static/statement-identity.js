@@ -30,8 +30,10 @@
       if(turn!==generation)return null;
       identity=value;
       if(!identity){if(optional)show('new');else unauthorized();return null;}
+      if(identity.must_change_password){location.replace(new URL('./password',document.baseURI));return null;}
       $('reviewer-name').textContent=identity.display_name||identity.user_id||identity.email;
       $('recovery-button').hidden=config?.auth_mode!=='name';
+      $('password-button').hidden=config?.auth_mode!=='name';
       $('admin-link').hidden=!identity.is_admin;$('preview-badge').hidden=!config.preview;
       return identity;
     }
@@ -64,6 +66,7 @@
       finally{$('resume-button').disabled=false;}
     };
     $('profile-button').onclick=async()=>{if(!await mayNavigate())return;$('account-menu').open=false;show('edit');};
+    $('password-button').onclick=async()=>{if(!await mayNavigate())return;location.assign(new URL('./password',document.baseURI));};
     $('recovery-button').onclick=async()=>{
       if(!await mayNavigate())return;
       $('account-menu').open=false;$('recovery-result').hidden=true;$('generate-recovery').hidden=false;

@@ -13,7 +13,7 @@
 | `enrichment.py` / `enrichment_v2.py` | 字段校验、自动源码绑定、内部字段隔离、生成公开候选快照 |
 | `agent_assessments.py` | 显式事务导入私有模型判断，保存原始分值、运行版本与历史 |
 | `database.py` / `judgments.py` | 数据库版本迁移、人工判断、当前有效记录和管理员汇总 |
-| `session_store.py` / `name_auth.py` / `auth.py` / `preview.py` | 共享会话、正式姓名身份、兼容邮箱验证码与本机预览 |
+| `session_store.py` / `name_auth.py` / `passwords.py` / `auth.py` / `preview.py` | 共享会话、正式账号密码与恢复码、兼容邮箱验证码与本机预览 |
 | `server.py` | HTTP 路由、资源、会话、授权和 API 适配 |
 | `storage.py` / `data_lock.py` / `preflight.py` | 安装与备份共用锁、在线备份和保留策略、无写入部署预检 |
 | `snapshot_artifacts.py` | 排他写入候选证据，不覆盖已有制品或运行数据 |

@@ -11,16 +11,19 @@
   let selectedDataset=new URL(location.href).searchParams.get('dataset');
   let data=null,directory=null,page=0,userPage=0,selectedUser=null,detailCursor=0,detail=null,view='summary';
   let canViewUsers=false,initialized=false,epoch=0,loadTurn=0,summaryTurn=0,usersTurn=0,detailTurn=0;
+  let passwordMode=false,ownId=null,resetTarget=null;
   function clearPrivateViews(){
     ++epoch;++detailTurn;++summaryTurn;++usersTurn;
     directory=null;data=null;detail=null;selectedUser=null;
     for(const id of ['users','user-reviews','results'])$(id).innerHTML='';
     for(const id of ['users-panel','summary-panel','user-detail'])$(id).hidden=true;
     $('export').hidden=true;
+    $('reset-password-dialog').close();resetTarget=null;$('reset-admin-password').value='';
   }
-  async function request(path){
-    const started=epoch,response=await fetch(path,{cache:'no-store'}),body=await response.json();
-    if(response.status===401||(response.status===403&&path.startsWith('./api/admin/user'))){
+  async function request(path,payload){
+    const started=epoch,response=await fetch(path,payload===undefined?{cache:'no-store'}:{cache:'no-store',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),body=await response.json();
+    if(body.password_change_required){clearPrivateViews();location.replace(new URL('./password',document.baseURI));}
+    if(response.status===401||(response.status===403&&path.startsWith('./api/admin/'))){
       clearPrivateViews();
       $('admin-message').textContent=body.error||'登录已过期，请重新登录';
     }
@@ -89,6 +92,7 @@
     const turn=++detailTurn,user=directory?.users.find(item=>item.reviewer===userId);if(!user)return;
     selectedUser=userId;detailCursor=cursor;detail=null;
     $('user-detail').hidden=false;$('detail-name').textContent=user.display_name;$('detail-id').textContent=`账号 ${user.reviewer} · ${role(user)} · ${user.disabled?'已停用':'正常启用'}`;
+    $('reset-password').hidden=!passwordMode||!canViewUsers||user.disabled||user.reviewer===ownId;
     $('user-reviews').innerHTML='';$('detail-empty').hidden=true;$('detail-count').textContent='';$('detail-message').textContent='正在读取已提交的审阅…';
     $('detail-prev').disabled=true;$('detail-next').disabled=true;$('detail-page').textContent='—';renderUsers();
     if(scroll)$('user-detail').scrollIntoView({behavior:'smooth',block:'start'});
@@ -106,7 +110,9 @@
     const turn=++loadTurn;
     try{
       const me=await request('./api/auth/me'+suffix(selectedDataset));if(turn!==loadTurn)return;
+      if(me.must_change_password){clearPrivateViews();location.replace(new URL('./password',document.baseURI));return;}
       if(!me.is_admin){clearPrivateViews();throw new Error('此入口仅对管理员开放');}
+      passwordMode=me.auth_mode==='name';ownId=me.user_id;$('admin-password-link').hidden=!passwordMode;
       canViewUsers=!!me.can_view_users;$('users-tab').hidden=!canViewUsers;$('summary-dataset').parentElement.hidden=!canViewUsers;
       if(canViewUsers){await loadUsers();if(turn!==loadTurn)return;if(!directory)return;showView(initialized?view:'users');}
       else {++usersTurn;directory=null;closeDetail();$('users').innerHTML='';showView('summary');}
@@ -124,6 +130,22 @@
   $('users-prev').onclick=()=>{if(userPage>0){userPage--;renderUsers();}};$('users-next').onclick=()=>{userPage++;renderUsers();};
   $('users').onclick=event=>{const button=event.target.closest('[data-user]');if(button)loadDetail(button.dataset.user,{scroll:true});};
   $('close-detail').onclick=closeDetail;$('detail-dataset').onchange=()=>{if(selectedUser)loadDetail(selectedUser);};
+  $('reset-password').onclick=()=>{
+    const user=directory?.users.find(item=>item.reviewer===selectedUser);
+    if(!passwordMode||!canViewUsers||!user||user.disabled||user.reviewer===ownId)return;
+    resetTarget=user.reviewer;$('reset-target').textContent=`${user.display_name} · ${user.reviewer}`;
+    $('reset-admin-password').value='';$('reset-message').textContent='';$('reset-password-dialog').showModal();
+  };
+  $('reset-password-dialog').addEventListener('close',()=>{resetTarget=null;$('reset-admin-password').value='';});
+  $('cancel-reset').onclick=()=>{$('reset-password-dialog').close();};
+  $('reset-password-form').addEventListener('submit',async event=>{
+    event.preventDefault();if(!resetTarget)return;$('confirm-reset').disabled=true;
+    try{
+      const result=await request('./api/admin/reset-password',{reviewer:resetTarget,current_password:$('reset-admin-password').value});
+      $('reset-password-dialog').close();$('admin-message').textContent=result.message;
+    }catch(error){$('reset-message').textContent=error.message;}
+    finally{$('confirm-reset').disabled=false;$('reset-admin-password').value='';}
+  });
   $('detail-prev').onclick=()=>{if(selectedUser&&detailCursor>0)loadDetail(selectedUser,{cursor:Math.max(0,detailCursor-25)});};
   $('detail-next').onclick=()=>{if(selectedUser&&detail&&detail.next_cursor!==null)loadDetail(selectedUser,{cursor:detail.next_cursor});};
   $('export').onclick=()=>{if(!data)return;const blob=new Blob([JSON.stringify({...data,judgments:filtered()},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='formaliscope-review-summary.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};

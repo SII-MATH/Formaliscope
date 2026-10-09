@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .build import LEGACY_FINGERPRINT_SCHEME
 
-DB_SCHEMA_VERSION = 11
+DB_SCHEMA_VERSION = 12
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -201,6 +201,20 @@ def _migration_11(db: sqlite3.Connection) -> None:
     db.execute('ALTER TABLE judgments ADD COLUMN inherited_from_dataset TEXT')
 
 
+def _migration_12(db: sqlite3.Connection) -> None:
+    from .passwords import INITIAL_PASSWORD, hash_password
+    db.execute('''CREATE TABLE password_credentials (
+        reviewer TEXT PRIMARY KEY, password_hash TEXT NOT NULL,
+        must_change INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY(reviewer) REFERENCES name_identities(reviewer)
+    )''')
+    # Each existing identity gets its own random salt. Re-running initialization
+    # never overwrites changed passwords or the original recovery credentials.
+    for row in db.execute('SELECT reviewer FROM name_identities').fetchall():
+        db.execute('INSERT INTO password_credentials VALUES (?, ?, 1)',
+                   (row['reviewer'], hash_password(INITIAL_PASSWORD)))
+
+
 MIGRATIONS = (
     (1, "create-judgments", _migration_1),
     (2, "scope-request-id-by-reviewer", _migration_2),
@@ -213,6 +227,7 @@ MIGRATIONS = (
     (9, "private-versioned-agent-assessments", _migration_9),
     (10, "independent-repository-version-datasets", _migration_10),
     (11, "cross-version-judgment-provenance", _migration_11),
+    (12, "account-password-credentials", _migration_12),
 )
 
 

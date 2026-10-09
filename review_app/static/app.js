@@ -23,6 +23,7 @@
     let data;
     try { data = await response.json(); } catch { throw new Error("服务器返回了无法读取的内容"); }
     if (response.status === 401) { location.replace(new URL("./login", document.baseURI)); throw new Error("登录已过期"); }
+    if (data.password_change_required) { location.replace(new URL('./password',document.baseURI)); throw new Error('请先修改初始密码'); }
     if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
     return data;
   }
@@ -279,6 +280,7 @@
 
   Promise.all([json("./api/auth/me"), loadCatalog({includeInitial: true})]).then(([identity]) => {
     $("reviewer-email").textContent = identity.display_name || identity.user_id || identity.email;
+    $('password-link').hidden=identity.auth_mode!=='name';
     const fromHash = decodeURIComponent(location.hash.slice(1));
     const start = catalog.find((item) => item.id === fromHash) || visible()[0] || catalog[0];
     if (start) openCard(start.id);

@@ -1,6 +1,7 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
+  $('environment-hint').hidden=!['localhost','127.0.0.1','[::1]'].includes(location.hostname);
   let email = "";
   const status = (message, error = false) => {
     $("message").textContent = message;
@@ -17,17 +18,27 @@
   }
   let recoveryCode = "";
   const enter = () => location.replace(new URL("./", document.baseURI));
-  function tab(recover) {
-    $("register-form").hidden=recover; $("recover-form").hidden=!recover;
-    $("new-tab").setAttribute("aria-pressed",String(!recover));
-    $("recover-tab").setAttribute("aria-pressed",String(recover));
-    status(""); $(recover?"recovery-code":"display-name").focus();
+  function tab(mode) {
+    for(const [name,form] of [['password','password-form'],['new','register-form'],['recover','recover-form']]){
+      $(form).hidden=name!==mode;$(name+'-tab').setAttribute('aria-pressed',String(name===mode));
+    }
+    status(""); $(mode==='recover'?"recovery-code":mode==='new'?"display-name":"account").focus();
   }
-  $("new-tab").onclick=()=>tab(false); $("recover-tab").onclick=()=>tab(true);
+  $("new-tab").onclick=()=>tab('new'); $("recover-tab").onclick=()=>tab('recover');$("password-tab").onclick=()=>tab('password');
+  $("password-form").addEventListener('submit',async event=>{
+    event.preventDefault();$('password-login').disabled=true;status('正在登录…');
+    try{
+      const result=await post('./api/auth/password-login',{account:$('account').value.trim(),password:$('login-password').value});
+      $('login-password').value='';
+      if(result.must_change_password)location.replace(new URL('./password',document.baseURI));else enter();
+    }catch(error){status(error.message,true);}
+    finally{$('password-login').disabled=false;}
+  });
   $("register-form").addEventListener("submit",async event=>{
     event.preventDefault(); $("register").disabled=true;status("正在创建身份…");
     try {
-      const result=await post("./api/auth/register",{display_name:$("display-name").value.trim()});
+      const result=await post("./api/auth/register",{display_name:$("display-name").value.trim(),password:$('register-password').value});
+      $('register-password').value='';$('new-account-id').value=result.user_id;
       recoveryCode=result.recovery_code;$("new-recovery-code").value=recoveryCode;
       $("name-entry").hidden=true;$("recovery-panel").hidden=false;
       $("login-hint").hidden=true;status("身份已创建，请先保存恢复码。");
@@ -44,7 +55,7 @@
     catch {$("new-recovery-code").select();status("请手动复制选中的恢复码。");}
   };
   $("download-recovery").onclick=()=>{
-    const url=URL.createObjectURL(new Blob(["Formaliscope 私人恢复码（勿分享）\n"+recoveryCode+"\n"],{type:"text/plain;charset=utf-8"}));
+    const url=URL.createObjectURL(new Blob(["Formaliscope 账号 ID："+$('new-account-id').value+"\n私人恢复码（勿分享）\n"+recoveryCode+"\n"],{type:"text/plain;charset=utf-8"}));
     const link=document.createElement("a");link.href=url;link.download="formaliscope-recovery.txt";link.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);status("已下载恢复码，请妥善保存文件。");
   };
@@ -52,7 +63,7 @@
   fetch("./api/config",{cache:"no-store"}).then(async response=>{
     if(!response.ok)throw new Error("登录配置读取失败，请刷新重试");
     const config=await response.json();
-    if(config.auth_mode==="name") {$("name-entry").hidden=false;$("display-name").focus();}
+    if(config.auth_mode==="name") {$("name-entry").hidden=false;$("account").focus();}
     else if(config.preview) {enter();}
     else {$("email-form").hidden=false;$("login-hint").textContent="输入邮箱获取一次性验证码。";}
   }).catch(error=>status(error.message,true));

@@ -26,7 +26,7 @@ sudo install -o root -g formaliscope-review -m 0640 deploy/review.env.example /e
 sudo install -o root -g formaliscope-review -m 0640 deploy/backup.env.example /etc/formaliscope/backup.env
 ```
 
-配置 `REVIEW_AUTH_MODE=name`、HTTPS Origin 和 Cookie 路径，不需要邮箱服务、学生名单或密码。管理员由服务账号在候选应用目录执行下列命令创建；凭证文件只读给本人，勿打包或上传：
+配置 `REVIEW_AUTH_MODE=name`、HTTPS Origin 和 Cookie 路径，无需邮箱服务或学生名单。管理员由服务账号在候选应用目录执行下列命令创建；凭证文件只读给本人，勿打包或上传：
 
 ```bash
 sudo -u formaliscope-review python3 -m review_app create-admin \
@@ -34,7 +34,7 @@ sudo -u formaliscope-review python3 -m review_app create-admin \
   --output /var/lib/formaliscope/admin-recovery.txt
 ```
 
-管理员在登录页选“使用恢复码”。更多身份、恢复码保存及旧记录迁移步骤见 [IDENTITY.md](IDENTITY.md)。已有邮箱部署继续使用时必须显式设置 `REVIEW_AUTH_MODE=email`。正式服务不使用 `--preview`。`REVIEW_PUBLIC_ORIGIN=https://review.example.org` 不包含应用路径；前缀入口 `/review/` 使用 `REVIEW_COOKIE_PATH=/review/`。
+管理员在登录页使用账号 ID 与初始密码 `12345678`，或选择“恢复码”，进入后须先修改密码。schema 12 迁移为已有姓名账号初始化同样的初始密码，保留原记录和权限；升级前备份、停服，不能用旧应用运行迁移后的数据库。更多身份、恢复码保存及旧记录迁移步骤见 [IDENTITY.md](IDENTITY.md)。已有邮箱部署继续使用时必须显式设置 `REVIEW_AUTH_MODE=email`。正式服务不使用 `--preview`。`REVIEW_PUBLIC_ORIGIN=https://review.example.org` 不包含应用路径；前缀入口 `/review/` 使用 `REVIEW_COOKIE_PATH=/review/`。
 
 在开发机或 CI 的固定提交、干净 Git checkout 构建 Statement 快照：
 
@@ -67,7 +67,7 @@ sudo systemd-run --wait --pipe --uid=formaliscope-review \
 
 兼容开关允许保留尚未记录 clean 状态的既有 v1 Blueprint 快照，并在预检中明确报告来源限制；它不允许新 Statement 快照跳过干净来源要求。再次发布新证据时重新构建。
 
-预检只读查询身份表中的管理员配置，不初始化数据库、不创建密钥、不发邮件、不测试代理。仍需在测试部署中完成姓名注册、同名双用户隔离、退出恢复、管理员汇总与恢复码轮换。
+预检只读查询身份表中的管理员配置，不初始化数据库、不创建密钥、不发邮件、不测试代理。仍需在测试部署中完成账号注册、密码登录、首次改密、同名双用户隔离、管理员重置、退出恢复、管理员汇总与恢复码轮换。
 
 ## 启动与 readiness
 
@@ -82,7 +82,7 @@ sudo systemctl enable --now formaliscope-review.service
 curl --fail http://127.0.0.1:8765/healthz
 ```
 
-`/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源与姓名注册和恢复码登录。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
+`/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源、密码登录与恢复码登录。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
 
 Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已有全局认证或旧应用路由，明确新路径所用身份模式，并同时验证旧入口继续可用。此文档不假定既有站点路径或认证规则可直接覆盖。
 
@@ -118,7 +118,7 @@ sudo systemctl restart formaliscope-review.service
 sudo /usr/local/sbin/formaliscope-review-backup
 ```
 
-时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份与快照安装共用数据目录的 `.data.lock`；快照只读取一次，清单记录该副本及数据库的 SHA-256 和大小。备份移除验证码、会话、限流与预览凭证，保留姓名身份、角色和恢复摘要；恢复后用原恢复码重新登录。`auth-pepper` 不在应用备份中，恢复时可以重新生成。明文恢复码文件不在备份或应用包中，用户自行保存。
+时间戳目录包含一致数据库、对应快照与 manifest，并完成 `PRAGMA integrity_check`。备份与快照安装共用数据目录的 `.data.lock`；快照只读取一次，清单记录该副本及数据库的 SHA-256 和大小。备份移除验证码、会话、限流与预览凭证，保留姓名身份、角色、密码哈希和恢复摘要；恢复后用原密码或恢复码重新登录。`auth-pepper` 不在应用备份中，恢复时可以重新生成。明文恢复码文件不在备份或应用包中，用户自行保存。
 
 每日 helper 默认保留最近 30 份已验证的 v2 备份。可在 `/etc/formaliscope/backup.env` 设置 `REVIEW_BACKUP_KEEP`；该文件由 backup service 读取，直接运行 helper 时需显式导出环境变量。保留数量必须为正整数；只有新备份成功完成后才清理。旧 v1 备份、其他数据目录的备份、符号链接、不完整目录和未知文件不自动删除，升级后的历史备份需单独评估。直接运行 `python3 -m review_app backup --data-dir ... --output ...` 默认不清理；加 `--keep 30` 才启用数量保留。helper 与旧应用组合时自动退回旧版备份命令，保留全部历史。
 

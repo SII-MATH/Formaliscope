@@ -217,14 +217,14 @@ class NameHTTPTests(unittest.TestCase):
             return response.status, dict(response.headers), json.loads(content) if content else None
 
     def register(self, name='同名'):
-        status, headers, data = self.request('/api/auth/register', {'display_name': name, 'is_admin': True, 'reviewer': 'spoof'})
+        status, headers, data = self.request('/api/auth/register', {'display_name': name, 'password': 'test-pass-987', 'is_admin': True, 'reviewer': 'spoof'})
         self.assertEqual(status, 201)
         return headers['Set-Cookie'].split(';', 1)[0], data['recovery_code']
 
     def test_global_admin_user_directory_and_details_are_read_only_and_protected(self):
         first, recovery = self.register('同名')
         second, _ = self.register('同名')
-        token, _ = self.auth.create_identity('后台管理员', admin=True)
+        token, _ = self.auth.create_identity('后台管理员', admin=True, password='test-pass-987')
         admin = 'kip126_review_session=' + token
         viewer = self.request('/api/auth/me', cookie=first)[2]['user_id']
         self.assertFalse(self.request('/api/auth/me', cookie=first)[2]['can_view_users'])
@@ -319,7 +319,7 @@ class NameHTTPTests(unittest.TestCase):
         cookie, _ = self.register('管理员')
         self.assertFalse(self.request('/api/auth/me', cookie=cookie)[2]['is_admin'])
         self.assertEqual(self.request('/api/admin/summary', cookie=cookie)[0], 403)
-        _, key = self.auth.create_identity('管理员', admin=True)
+        _, key = self.auth.create_identity('管理员', admin=True, password='test-pass-987')
         status, headers, _ = self.request('/api/auth/recover', {'recovery_code': key})
         self.assertEqual(status, 200)
         admin_cookie = headers['Set-Cookie'].split(';', 1)[0]

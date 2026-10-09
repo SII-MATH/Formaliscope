@@ -15,7 +15,8 @@ function fixture({global=true,hook=()=>null}={}){
   const elements=new Map(),calls=[];let href='http://review.example/admin?dataset=alpha@old';
   function $(id){
     if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,disabled:false,
-      parentElement:{hidden:false},setAttribute(name,value){this[name]=value;},scrollIntoView(){},click(){}});
+      listeners:{},parentElement:{hidden:false},setAttribute(name,value){this[name]=value;},scrollIntoView(){},click(){},
+      addEventListener(name,handler){this.listeners[name]=handler;},showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();}});
     return elements.get(id);
   }
   for(const id of ['user-role','user-status','reviewer','verdict'])$(id).value='all';
@@ -23,8 +24,8 @@ function fixture({global=true,hook=()=>null}={}){
     location:{get href(){return href;}},history:{state:null,replaceState(_,__,url){href=String(url);}},
     URL,URLSearchParams,Blob,setTimeout,console,
     async fetch(url,options){
-      calls.push({url,options});const pending=hook(url);if(pending)return pending;
-      if(url.startsWith('./api/auth/me'))return response({is_admin:true,can_view_users:global});
+      calls.push({url,options});const pending=hook(url,options);if(pending)return pending;
+      if(url.startsWith('./api/auth/me'))return response({is_admin:true,can_view_users:global,auth_mode:'name',user_id:'u_admin'});
       if(url==='./api/admin/users')return response({users,datasets:[alpha,beta],stats:{registered:3,enabled:3,admins:1,reviewers:1}});
       if(url.startsWith('./api/admin/user?')){
         const params=new URL(url,'http://review.example').searchParams,user=users.find(item=>item.reviewer===params.get('reviewer'));
@@ -32,6 +33,7 @@ function fixture({global=true,hook=()=>null}={}){
           reviews:[{id:'row',card_id:'statement::alpha::X',title:'<b>条目</b>',rationale:'<img src=x onerror=bad()>',verdict:'aligned',status:'current',card_available:true,created_at:'2026-10-09T00:00:00Z'}]});
       }
       if(url.startsWith('./api/admin/summary'))return response({dataset:alpha,source_commit:alpha.source_commit,history_count:0,stale_count:0,judgments:[]});
+      if(url==='./api/admin/reset-password')return response({ok:true,message:'密码已重置'});
       throw Error('Unexpected request: '+url);
     }};
   vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/admin.js','utf8'),context);
@@ -76,4 +78,22 @@ async function scopedAdminAndSummary(){
   assert.doesNotMatch(f.$('summary-note').textContent,/999/);
   assert.equal(new URL(f.url).searchParams.get('dataset'),beta.id);
 }
-(async()=>{await directoryAndDetails();await staleDetailAndExpiry();await scopedAdminAndSummary();console.log('Admin directory, account isolation, escaped opinions, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
+async function passwordReset(){
+  const f=fixture();await settle();f.open('u_first');await settle();
+  assert.equal(f.$('reset-password').hidden,false);f.$('reset-password').onclick();
+  assert.match(f.$('reset-target').textContent,/u_first/);assert.equal(f.$('reset-password-dialog').open,true);
+  f.$('reset-admin-password').value='administrator-password';
+  await f.$('reset-password-form').listeners.submit({preventDefault(){}});
+  const reset=f.calls.at(-1);assert.equal(reset.url,'./api/admin/reset-password');assert.equal(reset.options.method,'POST');
+  assert.deepEqual(JSON.parse(reset.options.body),{reviewer:'u_first',current_password:'administrator-password'});
+  assert.equal(f.$('reset-admin-password').value,'');assert.equal(f.$('reset-password-dialog').open,false);
+  assert.match(f.$('admin-message').textContent,/已重置/);
+  f.open('u_admin');await settle();assert.equal(f.$('reset-password').hidden,true);
+  const lost=fixture({hook(url){if(url==='./api/admin/reset-password')return response({error:'权限已失效'},403);}});
+  await settle();lost.open('u_first');await settle();lost.$('reset-password').onclick();
+  lost.$('reset-admin-password').value='administrator-password';
+  await lost.$('reset-password-form').listeners.submit({preventDefault(){}});
+  assert.equal(lost.$('users').innerHTML,'');assert.equal(lost.$('users-panel').hidden,true);
+  assert.equal(lost.$('reset-admin-password').value,'');
+}
+(async()=>{await directoryAndDetails();await staleDetailAndExpiry();await scopedAdminAndSummary();await passwordReset();console.log('Admin directory, reset confirmation, account isolation, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
