@@ -437,7 +437,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                                              self._session_token(), self._client_ip())
                         self._json(200, {'ok': True})
                 except RateLimited:
-                    self._json(429, {'error': '操作过于频繁，请稍后再试'}, extra_headers={'Retry-After': '600'})
+                    self._json(429, {'error': '操作过于频繁，请稍后再试'}, extra_headers={'Retry-After': '60'})
                 except ValueError as error:
                     self._json(400, {'error': str(error)})
                 return

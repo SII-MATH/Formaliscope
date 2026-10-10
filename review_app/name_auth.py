@@ -70,9 +70,9 @@ class NameAuthStore(SessionStore):
         digest = hmac.new(self.pepper, client_ip.encode(), hashlib.sha256).hexdigest()
         window, maximum, global_maximum = (3600, 120, 30) if action == 'register' else (600, 60, 120)
         if action == 'password':
-            window, maximum, global_maximum = 600, 20, 60
+            window, maximum, global_maximum = 60, 20, 60
         elif action == 'password-account':
-            window, maximum, global_maximum = 600, 5, 120
+            window, maximum, global_maximum = 60, 10, 120
         with self.lock, closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
             db.execute('DELETE FROM identity_requests WHERE created_at < ?', (now - 3600,))
