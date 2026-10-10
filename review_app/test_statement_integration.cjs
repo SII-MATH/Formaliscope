@@ -346,6 +346,21 @@ async function historicalLinksOpenCurrentRepository(){
   assert.equal(f.requests.length,0);
 }
 
+async function predecessorLinksOpenSuccessorCard(){
+  const old={id:'kip126@old',repository_id:'kip126',repository_name:'KIP126'};
+  const current={id:'kervaire126@new',repository_id:'kervaire126',repository_name:'Kervaire126'};
+  const card='statement::kip126::Example';
+  const f=fixture({initialURL:`https://review.example/?dataset=${old.id}#${encodeURIComponent(card)}`,readHook(url){
+    if(url==='./api/datasets')return Promise.resolve({selected:old.id,datasets:[old,current],
+      current_datasets:[current],repository_successors:{kip126:'kervaire126'}});
+  }});
+  await settle();
+  assert.equal(f.assignments.length,1);
+  const destination=new URL(f.assignments[0]);
+  assert.equal(destination.searchParams.get('dataset'),current.id);
+  assert.equal(decodeURIComponent(destination.hash.slice(1)),'statement::kervaire126::Example');
+}
+
 async function inheritedEvidenceShowsItsOriginalVersion(){
   const source='alpha@'+'a'.repeat(40);
   const f=fixture({configure(cards,records){
@@ -373,6 +388,7 @@ async function inheritedEvidenceShowsItsOriginalVersion(){
   await expiryKeepsFailedOpinion();
   await datasetSwitchPreservesUnsavedInput();
   await historicalLinksOpenCurrentRepository();
+  await predecessorLinksOpenSuccessorCard();
   await inheritedEvidenceShowsItsOriginalVersion();
   await blueprintReferenceDisplay();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");

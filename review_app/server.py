@@ -307,7 +307,8 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
             if path == '/api/datasets':
                 self._json(200, {'datasets': [dataset_info(item) for item in datasets(installed)],
                                  'current_datasets': [dataset_info(item) for item in current_datasets(installed)],
-                                 'selected': dataset_id(snapshot)})
+                                 'selected': dataset_id(snapshot),
+                                 'repository_successors': installed.get('repository_successors', {})})
                 return
             if path == "/api/catalog":
                 initial = parse_qs(parsed.query).get("initial", [None])[0]
@@ -522,6 +523,9 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 snapshot, _, _ = self._context()
             except ValueError:
                 self._json(404, {'error': '仓库版本不存在，请重新选择数据集'})
+                return
+            if snapshot.get('repository', {}).get('id') in installed.get('repository_successors', {}):
+                self._json(409, {'error': '该仓库已迁入新仓库，请刷新页面后继续审阅'})
                 return
             code, result = writer(snapshot, db_path, viewer, payload)
             self._json(code, result)

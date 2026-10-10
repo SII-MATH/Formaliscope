@@ -69,13 +69,17 @@ def current_datasets(snapshot: dict) -> list[dict]:
             return datetime.min.replace(tzinfo=timezone.utc)
 
     selected = select_dataset(snapshot)
+    successors = snapshot.get('repository_successors', {})
     current = {}
     for item in datasets(snapshot):
         identity = dataset_info(item)['repository_id']
+        if identity in successors:
+            continue
         previous = current.get(identity)
         if previous is None or generated(item) >= generated(previous):
             current[identity] = item
-    current[dataset_info(selected)['repository_id']] = selected
+    if dataset_info(selected)['repository_id'] not in successors:
+        current[dataset_info(selected)['repository_id']] = selected
     return list(current.values())
 
 
@@ -112,7 +116,8 @@ def qualify_legacy(snapshot: dict) -> dict:
     return result
 
 
-def make_collection(snapshots: list[dict], *, default: str | None = None) -> dict:
+def make_collection(snapshots: list[dict], *, default: str | None = None,
+                    repository_successors: dict[str, str] | None = None) -> dict:
     from .build import CURRENT_FINGERPRINT_SCHEME, calculate_snapshot_digest, validate_snapshot
     children = [qualify_legacy(item) for item in snapshots]
     if not children:
@@ -129,6 +134,8 @@ def make_collection(snapshots: list[dict], *, default: str | None = None) -> dic
               'generated_at': datetime.now(timezone.utc).isoformat(),
               'source_commit': first['source_commit'], 'source_dirty': any(item['source_dirty'] for item in children),
               'cards': [], 'unlinked_nodes': 0, 'datasets': children, 'default_dataset': selected}
+    if repository_successors:
+        result['repository_successors'] = repository_successors
     result['digest'] = calculate_snapshot_digest(result)
     validate_snapshot(result)
     return result

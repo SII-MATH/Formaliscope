@@ -85,6 +85,9 @@ def user_reviews(snapshot: dict, db_path: Path, reviewer: str, *, cursor=0, limi
     cards = {card['id']: card for card in snapshot['cards']}
     scope = dataset_id(snapshot)
     repository = dataset_info(snapshot)['repository_id']
+    predecessors = {old for old, new in (installed or {}).get('repository_successors', {}).items()
+                    if new == repository}
+    family = predecessors | {repository}
     sources = {dataset_id(source): {card['id']: card for card in source['cards']}
                for source in datasets(installed or snapshot)}
     with closing(_read_connection(db_path)) as db:
@@ -103,8 +106,8 @@ def user_reviews(snapshot: dict, db_path: Path, reviewer: str, *, cursor=0, limi
     # copies still participate in current validity but never inflate history.
     representatives = {}
     for row in records:
-        if not (row['dataset_id'].startswith(repository + '@') or
-                (repository == 'kip126' and row['dataset_id'] == '')):
+        if not (any(row['dataset_id'].startswith(member + '@') for member in family) or
+                ('kip126' in family and row['dataset_id'] == '')):
             continue
         root = roots[row['id']]
         previous = representatives.get(root)
@@ -113,7 +116,13 @@ def user_reviews(snapshot: dict, db_path: Path, reviewer: str, *, cursor=0, limi
     history = sorted(representatives.values(), key=lambda row: row['created_at'], reverse=True)
     page = []
     for row in history[cursor:cursor + limit]:
-        card = cards.get(row['card_id'])
+        successor_card_id = row['card_id']
+        for old in predecessors:
+            prefix = 'statement::' + old + '::'
+            if successor_card_id.startswith(prefix):
+                successor_card_id = 'statement::' + repository + '::' + successor_card_id[len(prefix):]
+                break
+        card = cards.get(successor_card_id)
         original_card = sources.get(row['dataset_id'], {}).get(row['card_id'])
         display_card = original_card or card
         valid = bool(row['dataset_id'] == scope and card and _judgment_matches(card, row))
@@ -124,6 +133,7 @@ def user_reviews(snapshot: dict, db_path: Path, reviewer: str, *, cursor=0, limi
             'status': 'historical' if row['dataset_id'] != scope else 'current' if current.get(row['card_id']) == row['id'] else 'superseded' if valid else 'stale',
             'source_dataset': row['dataset_id'],
             'source_version': row['dataset_id'].split('@', 1)[-1] if row['dataset_id'] else row['source_commit'],
+            'current_card_id': successor_card_id if card is not None else None,
             'card_available': card is not None})
     return {'user': user, 'dataset': dataset_info(snapshot), 'reviews': page,
             'history_count': len(history), 'current_count': len(current),

@@ -19,6 +19,8 @@ python3 -m review_app build --statements --require-clean \
 
 `id` 是持久的仓库身份，采用小写字母、数字、下划线和短横线，不能因显示名称变化而修改。`name` 是显示名称。`roots` 支持仓库内的相对目录或单个 `.lean` 文件，`.` 表示整个工程；重叠扫描范围只读取一次，排除 `.git`、`.lake` 和 `lakefile.lean`，拒绝越出仓库的路径和源码符号链接。`topics` 是该仓库允许的主题 ID/名称列表，`main_targets` 是明确的声明全名，`url` 是可选的 HTTPS 来源链接。
 
+Kervaire126 使用独立的 `kervaire126` ID，`repository-configs/kervaire126.json` 对应新的 GitHub 仓库；旧 `kip126` ID 留作历史。迁移时集合可写入受摘要保护的 `repository_successors: {"kip126": "kervaire126"}`，将旧版从仓库选择器移除，并让旧链接转到新对象。安装须核对前身与继任者同一提交、每张卡片相同的审阅依据，在维护锁下复制判断、草稿和数据集管理员授权；原始行仍保留。迁移期间应停止审阅服务，防止已有旧页继续写入。切换后的旧页写入会返回刷新提示。
+
 公共声明 ID 为 `statement::<repository-id>::<Lean全名>`。私有声明追加 `::file=<相对文件>`，保留不同模块中的同名私有定理，引用与符号追溯仅在其所属文件内可见。公开声明名称重复时构建报错，需要确认扫描范围或修正命名空间，不静默覆盖。
 
 旧的不带 `--repository-config` 的 KIP126 构建方式继续支持。只有预览源码包时才使用 `--source-commit` 声明已知版本，并保留 `archive-unverified` 来源标记；不要把来源不明的源码包或本地导入提交当作上游的已验证提交。提取不会执行 Lean；真实编译和回译交付由管线验收负责。
