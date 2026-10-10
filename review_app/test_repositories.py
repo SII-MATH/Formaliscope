@@ -19,6 +19,7 @@ from .database import DB_SCHEMA_VERSION, connect, initialize
 from .judgments import catalog, history, review_state, reviewer_export, save_draft, submit
 from .preview import PreviewAuthStore
 from .repositories import current_datasets, dataset_id, make_collection, qualify_legacy, repository_config, select_dataset
+from .repository_transition import successor_snapshot
 from .server import ReviewHTTPServer, make_handler
 from .statements import compile_statements
 from .storage import create_backup, install_snapshot, verify_backup
@@ -55,6 +56,44 @@ class RepositoryFixture:
 
 
 class RepositoryTests(RepositoryFixture, unittest.TestCase):
+    def test_successor_is_independent_and_transfers_live_records_once(self):
+        successor = successor_snapshot(self.first, identity='gamma', name='Gamma',
+                                       url='https://github.com/example/Gamma')
+        self.assertEqual(len(successor['cards']), len(self.first['cards']))
+        self.assertNotEqual(successor['cards'][0]['id'], self.first['cards'][0]['id'])
+        self.assertEqual(successor['cards'][0]['fingerprint'], self.first['cards'][0]['fingerprint'])
+        candidate = make_collection([self.first, successor, self.other],
+            default=dataset_id(successor), repository_successors={'alpha': 'gamma'})
+        self.assertEqual({item['repository']['id'] for item in current_datasets(candidate)}, {'gamma', 'beta'})
+        self.assertEqual(len(candidate['datasets']), 3)
+        for bad in ({'gamma': 'alpha'}, {'alpha': 'alpha'}, {'alpha': 'missing'},
+                    {'alpha': 'gamma', 'gamma': 'alpha'}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                make_collection([self.first, successor], default=dataset_id(successor),
+                                repository_successors=bad)
+        old = self.root / 'old.json'
+        old.write_text(json.dumps(self.collection))
+        install_snapshot(old, self.data, allow_dirty_source=True, reuse_unchanged=False)
+        self.assertEqual(submit(self.first, self.db, self.reviewer, self.payload(self.first))[0], 201)
+        self.assertEqual(save_draft(self.first, self.db, self.reviewer,
+            self.payload(self.first, verdict='', rationale='unfinished', revision=0))[0], 200)
+        with closing(connect(self.db)) as db:
+            db.execute('INSERT INTO dataset_admins VALUES (?, ?)', (dataset_id(self.first), self.reviewer))
+        artifact = self.root / 'successor.json'
+        artifact.write_text(json.dumps(candidate))
+        _, comparison = install_snapshot(artifact, self.data, allow_dirty_source=True, reuse_unchanged=False)
+        self.assertEqual(comparison['successor_records'], {'judgments': 1, 'drafts': 1, 'admins': 1})
+        state = review_state(successor, self.db, self.payload(successor)['card_id'], self.reviewer)
+        self.assertIsNotNone(state['current'])
+        self.assertEqual(state['draft']['rationale'], 'unfinished')
+        with closing(connect(self.db)) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM judgments WHERE dataset_id=?',
+                                        (dataset_id(self.first),)).fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM dataset_admins WHERE dataset_id=?',
+                                        (dataset_id(successor),)).fetchone()[0], 1)
+        _, comparison = install_snapshot(artifact, self.data, allow_dirty_source=True, reuse_unchanged=False)
+        self.assertEqual(comparison['successor_records'], {'judgments': 0, 'drafts': 0, 'admins': 0})
+
     def test_current_repository_versions_preserve_default_and_archives(self):
         first, second, other = deepcopy(self.first), deepcopy(self.second), deepcopy(self.other)
         first['generated_at'] = '2026-10-01T00:00:00+00:00'

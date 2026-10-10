@@ -67,7 +67,7 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
     }
     for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics',
                 'repository', 'datasets', 'default_dataset', 'source_environment', 'context_modules',
-                'reuse', 'reuse_disabled', 'reuse_input_digest'):
+                'reuse', 'reuse_disabled', 'reuse_input_digest', 'repository_successors'):
         if key in snapshot:
             protected[key] = snapshot[key]
     return _digest(protected)
@@ -99,6 +99,14 @@ def validate_snapshot(snapshot: dict) -> None:
         keys = [dataset_id(item) for item in children]
         if len(keys) != len(set(keys)) or snapshot.get('default_dataset') not in keys:
             raise ValueError('collection dataset IDs must be unique and include its default')
+        successors = snapshot.get('repository_successors', {})
+        repositories = {item['repository']['id'] for item in children}
+        if (not isinstance(successors, dict) or any(
+                not isinstance(old, str) or not isinstance(new, str) or
+                old == new or old not in repositories or new not in repositories or
+                new in successors for old, new in successors.items()) or
+                snapshot['default_dataset'].split('@', 1)[0] in successors):
+            raise ValueError('repository successors must map installed, retired repositories to active repositories')
         default = children[keys.index(snapshot['default_dataset'])]
         if (snapshot.get('cards') != [] or snapshot.get('review_mode') != 'statement' or
                 snapshot.get('source_commit') != default['source_commit'] or

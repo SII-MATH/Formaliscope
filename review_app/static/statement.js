@@ -166,9 +166,16 @@
     if(sessionTurn!==sessionSequence)return null;
     availableDatasets=selection.current_datasets;
     const selectedDataset=selection.datasets.find(item=>item.id===selection.selected);
-    const currentDataset=availableDatasets.find(item=>item.repository_id===selectedDataset?.repository_id);
+    const currentRepository=selection.repository_successors?.[selectedDataset?.repository_id]||selectedDataset?.repository_id;
+    const currentDataset=availableDatasets.find(item=>item.repository_id===currentRepository);
     if(currentDataset && currentDataset.id!==selection.selected){
-      const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('dataset',currentDataset.id);
+      const url=new URL(location.href);url.search='';url.searchParams.set('dataset',currentDataset.id);
+      const predecessor=selectedDataset?.repository_id;
+      if(predecessor && predecessor!==currentRepository){
+        let cardId='';try{cardId=decodeURIComponent(url.hash.slice(1));}catch{}
+        const oldPrefix=`statement::${predecessor}::`;
+        if(cardId.startsWith(oldPrefix))url.hash=encodeURIComponent(`statement::${currentRepository}::${cardId.slice(oldPrefix.length)}`);
+      }
       location.assign(url);return null;
     }
     api.setDataset(selection.selected);

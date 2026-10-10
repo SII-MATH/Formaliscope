@@ -113,6 +113,9 @@ def install_snapshot(source: Path, data_dir: Path, *, allow_dirty_source: bool =
             from .database import initialize
             initialize(database)
             comparison['inherited_judgments'] = inherit_judgments(database, reuse_pairs)
+        if payload.get('repository_successors'):
+            from .repository_transition import transfer_successor_records
+            comparison['successor_records'] = transfer_successor_records(database, previous, payload)
         payload["comparison"] = comparison
         descriptor, filename = tempfile.mkstemp(prefix=".snapshot.", suffix=".tmp", dir=data_dir)
         temporary = Path(filename)
