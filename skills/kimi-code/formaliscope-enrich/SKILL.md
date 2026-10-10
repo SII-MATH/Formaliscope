@@ -31,7 +31,7 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 根据准备脚本的回执读取本批 `manifest.json` 和 `agent-config.json`，按所选声明和合并后的配置执行。
 
-第二阶段使用脚本准备的 `expectation-context.txt`，以 Blueprint 文案和用户补充材料为参考；缺少对应参考时填 `undetermined`。
+第二阶段使用脚本准备的 `expectation-context.txt`，以 Blueprint 文案和用户补充材料为参考；缺少对应参考时填 `undetermined`。按 manifest 的 `expectation_declaration_ids` 与本组 ID 的交集判断是否有参考；交集为空时 `next_result_path=null`，跳过第二阶段。
 
 从本批 `agent-config.json` 读取合并后的设置，确认当前 provider、模型和调度机制可应用配置的推理设置。配置差异和待确认项作为执行限制报告，调整配置时开新任务。
 

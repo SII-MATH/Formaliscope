@@ -201,11 +201,13 @@ def _batch_inputs(snapshot_path, manifest_path, executed_model=_UNVERIFIED):
     fields = ('schema', 'source_commit', 'snapshot_digest', 'threshold', 'declaration_ids', 'run')
     if schema == STAGED_SCHEMA:
         fields += ('result_protocol', 'harness')
+        if manifest.get('result_protocol') == 'formaliscope-stage-results.v2':
+            fields += ('expectation_declaration_ids',)
     elif schema != 'formaliscope-enrichment-batch.v2':
         raise ValueError('unsupported manifest schema')
     _fields(manifest, fields, 'manifest')
     if schema == STAGED_SCHEMA:
-        if manifest['result_protocol'] != 'formaliscope-stage-results.v1':
+        if manifest['result_protocol'] not in ('formaliscope-stage-results.v1', 'formaliscope-stage-results.v2'):
             raise ValueError('unsupported stage result protocol')
         harness = manifest['harness']
         if harness is not None and (not isinstance(harness, str) or not harness.strip()):
@@ -244,6 +246,12 @@ def _batch_inputs(snapshot_path, manifest_path, executed_model=_UNVERIFIED):
     card_by_id = {card['id']: card for card in snapshot['cards']}
     if not set(selected).issubset(card_by_id):
         raise ValueError('manifest contains unknown declarations')
+    if schema == STAGED_SCHEMA and manifest['result_protocol'] == 'formaliscope-stage-results.v2':
+        targets = manifest['expectation_declaration_ids']
+        if (not isinstance(targets, list) or any(not isinstance(item, str) for item in targets) or
+                len(set(targets)) != len(targets) or not set(targets).issubset(selected) or
+                (run['expectation_context_digest'] is None and targets)):
+            raise ValueError('invalid frozen expectation declaration IDs')
     return snapshot, manifest
 
 
@@ -303,6 +311,12 @@ def _collect_v2(snapshot_path, manifest_path, result_paths, review_paths, output
                 for identity in selected:
                     if not material['references'][identity] and originals[identity]['expectation_assessment']['verdict'] != 'undetermined':
                         raise ValueError('a declaration without Blueprint reference must be undetermined')
+        if manifest.get('result_protocol') == 'formaliscope-stage-results.v2':
+            targets = ([identity for identity in selected if material['references'][identity]]
+                       if isinstance(material, dict) and material.get('schema') == CONTEXT_SCHEMA and
+                       material['additional_context'] is None else selected)
+            if manifest['expectation_declaration_ids'] != targets:
+                raise ValueError('expectation declaration IDs do not match the frozen materials')
     if readback_paths and manifest['schema'] == 'formaliscope-enrichment-batch.v2':
         first_stage, _ = batches(readback_paths, 'readback')
         for identity in selected:
@@ -395,7 +409,10 @@ def _group_ids(identities, manifest):
         raise ValueError('Claude Code groups must contain exactly one declaration')
 
 
-def _needs_expectation(manifest):
+def _needs_expectation(manifest, declaration_ids=None):
+    if manifest['result_protocol'] == 'formaliscope-stage-results.v2':
+        return bool(set(declaration_ids or manifest['declaration_ids']) &
+                    set(manifest['expectation_declaration_ids']))
     return manifest['harness'] == 'claude-code' or manifest['run']['expectation_context_digest'] is not None
 
 
@@ -421,7 +438,7 @@ def deliver_readback(snapshot_path, manifest_path, input_path, result_path, decl
     if manifest['schema'] != STAGED_SCHEMA:
         raise ValueError('stage delivery requires an explicit v3 manifest')
     _group_ids(declaration_ids, manifest)
-    if (expectation_path is not None) != _needs_expectation(manifest):
+    if (expectation_path is not None) != _needs_expectation(manifest, declaration_ids):
         raise ValueError('expectation output path must follow the frozen harness/context rule')
     raw = Path(input_path).read_bytes()
     rows = _stage_rows(raw, 'readback', snapshot, manifest, declaration_ids)
@@ -461,7 +478,7 @@ def _baseline(snapshot, manifest, manifest_path, readback_path):
     next_path = baseline['expectation_path']
     if next_path is not None and (not isinstance(next_path, str) or not Path(next_path).is_absolute()):
         raise ValueError('invalid saved expectation output path')
-    if (next_path is not None) != _needs_expectation(manifest):
+    if (next_path is not None) != _needs_expectation(manifest, baseline['declaration_ids']):
         raise ValueError('saved expectation output path violates the frozen harness/context rule')
     raw = readback_path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != baseline['readback_sha256']:
@@ -517,7 +534,7 @@ def _stage_originals(snapshot, manifest, manifest_path, result_paths, readback_p
                                        baseline['declaration_ids'])}
         else:
             assessments = {row['declaration_id']: {
-                'verdict': 'undetermined', 'reason_zh': '未提供独立预期材料；本 harness 跳过第二阶段。',
+                'verdict': 'undetermined', 'reason_zh': '未提供该声明的 Blueprint 参考或补充预期材料；跳过第二阶段。',
                 'confidence': 1.0} for row in first}
         for row in first:
             identity = row['declaration_id']

@@ -41,20 +41,20 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 
 ## 按组执行 Workflow
 
-主会话按声明分组，每组恰好一条精确声明 ID，组间互不重叠且恰好覆盖 `manifest.declaration_ids`。每条声明对应一组、组内两个独立 Agent 先后执行。worker 按本组 ID 提取 `cards` 的 ID 与 Lean 字段，按实际依赖读取 `modules` 的必要定义；上下文定义不增加本组目标。
+主会话按声明分组，每组恰好一条精确声明 ID，组间互不重叠且恰好覆盖 `manifest.declaration_ids`。每条声明对应一组；有对应预期材料时，组内两个独立 Agent 先后执行，否则仅执行回译 Agent。worker 按本组 ID 提取 `cards` 的 ID 与 Lean 字段，按实际依赖读取 `modules` 的必要定义；上下文定义不增加本组目标。
 
-读取当前安装的 `${CLAUDE_SKILL_DIR}/workflows/enrich.js`，按脚本的参数约定，通过 `Workflow(scriptPath=..., args=...)` 传入任务配置和分组计划。`repoRoot` 为上述仓库根目录，`skillDir` 为安装资源目录，`batchDir` 为 prepare 回执中的批次目录，`resultDir` 为分配的新结果目录。拆批或调整并行度时通过外层调度传入不同分组，不复制重写阶段提示词或交付命令，也不沿用更新前生成的 Workflow 副本。
+读取当前安装的 `${CLAUDE_SKILL_DIR}/workflows/enrich.js`，按脚本的参数约定，通过 `Workflow(scriptPath=..., args=...)` 传入任务配置和分组计划；`expectationDeclarationIds` 取本批 manifest 的 `expectation_declaration_ids` 与本次分配 ID 的交集，`expectationContext` 取 prepare 生成的参考文件绝对路径，没有参考文件时为 null。更新后开始新批次，旧批次仍按其冻结协议完成。`repoRoot` 为上述仓库根目录，`skillDir` 为安装资源目录，`batchDir` 为 prepare 回执中的批次目录，`resultDir` 为分配的新结果目录。拆批或调整并行度时通过外层调度传入不同分组，不复制重写阶段提示词或交付命令，也不沿用更新前生成的 Workflow 副本。
 
 Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二阶段另有 `check_readback_command`；原样执行，不从任务字段推测命令行参数。基线记录由检查程序自动定位。阶段任务缺少完整命令时由调度层重新生成，不能让 Worker 自行补命令。`output_schema_path` 是本阶段文件契约，`schema_path` 是共享字段标准，不能用最终收集格式替代阶段格式。
 
-更新 Skill 或变更调度脚本后，先从本批目标中选一组验证两阶段交付及实际回执，成功文件直接计入本批收集，然后执行其余目标。遇到非法参数、路径或字段错误时先修正并重新验证这一组，再扩大调度；保持完整目标集合和失败原件。已启动的 Workflow 不会因安装更新自动更换任务或补回结果。
+更新 Skill 或变更调度脚本后，先从本批目标中选一组验证所需阶段的交付及实际回执，成功文件直接计入本批收集，然后执行其余目标。遇到非法参数、路径或字段错误时先修正并重新验证这一组，再扩大调度；保持完整目标集合和失败原件。已启动的 Workflow 不会因安装更新自动更换任务或补回结果。
 
 `pipeline()` 按组推进两阶段：
 
 1. `formaliscope-readback` 读取 [回译 prompt](references/worker-prompt.md)，接收字段标准、第一阶段 schema、固定快照、主题、本组 ID、manifest、固定交付脚本及唯一 draft/result/next_result 路径。仅生成 `declaration_id`、`title_zh`、`readback`、`classification`、`priority`，不接收预期材料、不填占位判断。调用固定 `collect.py --deliver-readback`，程序校验、排他写出正式第一阶段文件并保存 `.baseline.json` 摘要后返回回执。
-2. 该组交付成功并返回完整回执后，启动新的独立 `formaliscope-expectation`。它先调用 `--check-readback`，再读取 [预期判断 prompt](references/expectation-prompt.md)、只读基线及本批参考。仅生成 `declaration_id`、`expectation_assessment`，不得输出第一阶段字段。通过 `--deliver-expectation` 排他交付新文件；无材料也启动此 Agent，材料路径为 null，判断 `undetermined` 并说明原因。
+2. 该组 ID 位于 `expectationDeclarationIds` 且交付成功并返回完整回执后，启动新的独立 `formaliscope-expectation`。它先调用 `--check-readback`，再读取 [预期判断 prompt](references/expectation-prompt.md)、只读基线及本批参考。仅生成 `declaration_id`、`expectation_assessment`，不得输出第一阶段字段。通过 `--deliver-expectation` 排他交付新文件。没有该声明的 Blueprint 参考且未提供补充预期材料时，跳过此 Agent，第一阶段 `next_result_path=null`，交付命令省略 `--next-result`；收集器生成 `undetermined`。
 
-不同组独立推进，不等待其他组完成第一阶段。每组两次调用、两个独立结果文件；超过单次 Workflow 上限时显式拆批并完整收集，不截断目标。
+不同组独立推进，不等待其他组完成第一阶段。有参考的组两次调用、两个独立结果文件，无参考的组一次调用、一个回译结果文件；超过单次 Workflow 上限时显式拆批并完整收集，不截断目标。
 
 两个阶段分别输出 `formaliscope-readback-batch.v1`、`formaliscope-expectation-batch.v1`，`annotations` 都恰好一项，拒绝未知字段。可靠回译尚待完成时正文为 null。调度层分配唯一新路径，正式文件由固定程序排他创建；已有文件不覆盖。来源、运行及模型记录由脚本和调度层维护。
 
@@ -64,7 +64,7 @@ Workflow 为阶段 Agent 提供完整且已转义的 `delivery_command`，第二
 
 ## 校验与复核
 
-执行完成后，根据文件回执和已核实的执行路由记录，将各组最终结果、第一阶段文件及已确认的调度名写入任务配置的 `collection`。无论有无预期材料，始终填写两阶段路径；未经核实不填写 `executed_model`。用同一任务配置收集：
+执行完成后，根据文件回执和已核实的执行路由记录，将各组最终结果、第一阶段文件及已确认的调度名写入任务配置的 `collection`。始终填写全部组的 `readback_results`，`results` 只填写实际执行第二阶段的非 null 路径；全无参考时为 `[]`。跳过时由收集器生成 `undetermined`、缺少材料的理由及固定判断分值 1.0，仅表示确定缺少材料，不是模型数学判断；未经核实不填写 `executed_model`。用同一任务配置收集：
 
 ```sh
 python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json

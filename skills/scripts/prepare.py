@@ -127,7 +127,9 @@ def prepare(snapshot_path, output, *, config_path, directories=(), files=(),
     helper._validate({'schema': 'statement-enrichment.v2', 'run': run, 'annotations': [],
                       'sources': {}, 'originals': {}, 'reviews': {}}, snapshot)
     manifest = {'schema': 'formaliscope-enrichment-batch.v3',
-                'result_protocol': 'formaliscope-stage-results.v1', 'harness': settings['harness'],
+                'result_protocol': 'formaliscope-stage-results.v2', 'harness': settings['harness'],
+                'expectation_declaration_ids': [identity for identity in selected
+                                              if expectation_context is not None or context['references'][identity]],
                 'source_commit': snapshot['source_commit'], 'snapshot_digest': snapshot['digest'],
                 'threshold': threshold, 'declaration_ids': selected, 'run': run}
     settings.update(snapshot=str(Path(snapshot_path).absolute()), output=str(Path(output).absolute()),
