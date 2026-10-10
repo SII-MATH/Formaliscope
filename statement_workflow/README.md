@@ -30,7 +30,7 @@ Claude Code 每条声明对应一组，组内两个独立 Agent 先后执行：�
 | --- | --- |
 | `declaration_id` | 调度分配的精确 ID，原样返回。 |
 | `title_zh` | 简短、忠实的中文阅读标题，无法可靠命名时为 null。 |
-| `readback.text_zh` | 完整中文及 LaTeX 回译；未生成时为 null。 |
+| `readback.text_zh` / `readback.text_en` | 同一声明的完整中文、英文及 LaTeX 回译；新批次同时生成，未生成时均为 null。历史单语结果仍可读取。 |
 | `readback.confidence` | 回译忠实于固定 Lean 的自报分值，0–1。 |
 | `classification` | 七类数学角色单选或 null；当前配置主题多选、去重，未知为 []。 |
 | `priority` | p0/p1/p2/null，按实际审核目标和作用分级。 |

@@ -72,6 +72,10 @@
               ],
               "minLength": 1
             },
+            "text_en": {
+              "type": ["string", "null"],
+              "minLength": 1
+            },
             "confidence": {
               "type": "number",
               "minimum": 0,
@@ -336,6 +340,10 @@
                 "string",
                 "null"
               ],
+              "minLength": 1
+            },
+            "text_en": {
+              "type": ["string", "null"],
               "minLength": 1
             }
           },

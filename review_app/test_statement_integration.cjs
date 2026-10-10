@@ -10,7 +10,7 @@ const vm=require("node:vm");
 const clone=value=>JSON.parse(JSON.stringify(value));
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve));};
 function fixture({configure=()=>{},topics=[],initialURL='https://review.example/#A',initialEvidence=true,readHook=()=>{},evidenceHook=()=>{}}={}) {
-  const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[],assignments=[];
+  const elements=new Map(),listeners=new Map(),requests=[],records=new Map(),drafts=new Map(),reads=[],assignments=[],scrollCalls=[];
   let apiOptions;
   const classes=()=>({toggle(){},add(){},remove(){}});
   function element(id) {
@@ -86,7 +86,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
     addEventListener(){},createElement:()=>element("generated")};
   const context={document,location,history:browserHistory,URL,setTimeout,clearTimeout,console,
     requestAnimationFrame:callback=>setImmediate(callback),crypto:{randomUUID:()=>`token-${++nextToken}`},
-    innerWidth:1200,scrollX:0,scrollY:0,scrollTo(){},
+    innerWidth:1200,scrollX:0,scrollY:0,scrollTo(x,y){scrollCalls.push([x,y]);},
     addEventListener:(type,callback)=>listeners.set(type,callback),
     StatementAPI:{create:options=>{apiOptions=options;return api;}},StatementIdentity:{create:({restart,onLogout})=>Object.assign(identity,{restart,onLogout})},
     StatementGraph:{create:()=>({show(){},capture:()=>({}),restore(){}})},StatementSymbols:{create:()=>({clear(){}})},
@@ -95,7 +95,7 @@ function fixture({configure=()=>{},topics=[],initialURL='https://review.example/
   for(const filename of ["directory-tree.js","review-labels.js","statement-save.js","statement-navigation.js","statement.js"])
     vm.runInContext(fs.readFileSync(path.join(__dirname,"static",filename),"utf8"),context,{filename});
   return {
-    requests,stack,element,reads,records,drafts,assignments,
+    requests,stack,element,reads,records,drafts,assignments,scrollCalls,
     logout(){identity.onLogout();},
     expire(){apiOptions.onUnauthorized();},
     async switchReviewer(){records.clear();drafts.clear();identity.onLogout();identity.current={display_name:'Other'};await identity.restart();},
@@ -131,6 +131,26 @@ async function blueprintReferenceDisplay(){
   assert.equal(f.element('blueprint-references').innerHTML,'','Unbound cards clear the previous reference');
   f.click('C');await settle();assert.equal(f.element('blueprint-panel').hidden,false);
   assert.match(f.element('blueprint-references').innerHTML,/Legacy Blueprint text/);
+}
+
+async function bilingualReadbackAndListJump(){
+  const f=fixture({configure(cards){
+    cards[0].statement_origin='backtranslation';
+    cards[0].statement='中文回译';
+    cards[0].enrichment={readback:{status:'draft',text_zh:'中文回译',text_en:'English readback'}};
+  }});
+  await settle();
+  assert.equal(f.element('readback-language').hidden,false);
+  assert.equal(f.element('statement').innerHTML,'中文回译');
+  f.element('readback-language').onclick({target:{closest:()=>({dataset:{language:'en'}})}});
+  assert.equal(f.element('statement').innerHTML,'English readback');
+  f.element('main-panel').scrollTop=500;
+  f.click('A');await settle();
+  assert.equal(f.element('main-panel').scrollTop,0,'Clicking the selected row returns to the detail top');
+  f.click('B');await settle();
+  assert.equal(f.element('readback-language').hidden,true,'Historical single-language cards hide the switch');
+  assert.equal(f.element('statement').innerHTML,'B');
+  assert.deepEqual(f.scrollCalls.at(-1),[0,0]);
 }
 
 async function prepare() {
@@ -391,5 +411,6 @@ async function inheritedEvidenceShowsItsOriginalVersion(){
   await predecessorLinksOpenSuccessorCard();
   await inheritedEvidenceShowsItsOriginalVersion();
   await blueprintReferenceDisplay();
+  await bilingualReadbackAndListJump();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

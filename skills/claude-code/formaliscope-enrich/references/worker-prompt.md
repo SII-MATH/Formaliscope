@@ -11,7 +11,8 @@
 - `declaration_id`：分配的精确 ID，原样返回。
 - `title_zh`：忠实于声明的简短中文标题，待可靠命名时填 null。
 - `readback.text_zh`：完整中文及 LaTeX，交代对象、取值域、假设、量词和结论。保留存在/唯一存在、蕴含/等价、当前页非零/永久存活等区别；结构定义说明全部实质数学约束。待可靠回译时填 null。
-- `readback.confidence`：0–1 有限数字，如实表示回译忠实于 Lean 的把握。
+- `readback.text_en`：同一 Lean 声明的完整英文回译，与中文分别表述并核对对象、假设、量词和结论；不要从中文机械翻译。新批次同时填写中英文；任一语言无法可靠回译时两项都填 null。
+- `readback.confidence`：0–1 有限数字，如实表示中英文回译忠实于 Lean 的综合把握。
 - `classification.role`：按主要数学作用选 `definition`、`input`、`comparison`、`computation`、`derivation`、`target`、`infrastructure` 或 null。
 - `classification.topics`：从本批配置选直接相关主题 ID，去重；未知为 []。
 - `priority`：按实际审核目标和用途选 p0/p1/p2/null。P0 为当前目标及关键输入/比较，P1 为实质支撑定义和推导，P2 为常规包装、别名或投影；依据不足时为 null。
@@ -25,7 +26,7 @@
     {
       "declaration_id": "statement::Example.value",
       "title_zh": "示例标题",
-      "readback": {"text_zh": "完整中文数学陈述", "confidence": 0.9},
+      "readback": {"text_zh": "完整中文数学陈述", "text_en": "Complete English mathematical statement", "confidence": 0.9},
       "classification": {"role": "definition", "topics": []},
       "priority": null
     }

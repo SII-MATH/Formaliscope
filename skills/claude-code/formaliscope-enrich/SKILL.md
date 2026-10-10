@@ -1,11 +1,11 @@
 ---
 name: formaliscope-enrich
-description: 在 Claude Code 中用动态 Workflow 按组生成 Formaliscope 中文 Lean 回译、标题、标签、优先度及独立内部预期判断；仅按原始回译置信度复核，输出候选快照和可独立入库的内部评估。
+description: 在 Claude Code 中用动态 Workflow 按组生成 Formaliscope 中英双语 Lean 回译、标题、标签、优先度及独立内部预期判断；仅按原始回译置信度复核，输出候选快照和可独立入库的内部评估。
 argument-hint: <snapshot.json> <目录、文件或声明范围> [独立预期材料]
 disable-model-invocation: true
 ---
 
-# Formaliscope 中文回译与字段补全
+# Formaliscope 中英双语回译与字段补全
 
 此 Skill 是用户手动调用的主会话入口。主会话使用 Claude Code 的 **Workflow** 执行分组流水线，负责准备、核实执行状态、收集和低分复核。
 

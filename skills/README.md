@@ -1,6 +1,6 @@
 # Formaliscope Skills
 
-Skill 源文件统一在 `skills/` 下维护，按 harness 分目录。目前只提供 Codex、Claude Code 和 Kimi Code 的中文回译与字段补全 Skill。三份入口、模型配置和阶段提示词分别维护，使用同一套 Statement 字段契约和机械校验脚本。
+Skill 源文件统一在 `skills/` 下维护，按 harness 分目录。目前提供 Codex、Claude Code 和 Kimi Code 的中英双语回译与字段补全 Skill。三份入口、模型配置和阶段提示词分别维护，使用同一套 Statement 字段契约和机械校验脚本。
 
 ```text
 skills/

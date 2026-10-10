@@ -90,4 +90,5 @@ mjx-container[jax="SVG"]{direction:ltr;position:relative;display:inline-block;ma
 .dataset-picker a{font-size:12px}
 
 .blueprint-reference + .blueprint-reference{border-top:1px solid #e2ebd8}.blueprint-reference h4{margin:18px 22px 0;font-size:13px;font-weight:600}.blueprint-reference .pane-note{margin:0;padding:0 22px 12px}.blueprint-reference .statement{padding-top:12px}
+.readback-language{display:flex;gap:2px;margin-left:auto;padding:2px;border:1px solid #d7e1d3;border-radius:7px;background:#f0f4ed}.readback-language button{padding:4px 8px;border:0;background:transparent;border-radius:5px;color:#6f8570}.pane-head .readback-language button:first-of-type{margin-left:0}.readback-language button[aria-pressed="true"]{background:#fff;color:#315c40;box-shadow:0 1px 3px #233d2517}.pane-head .readback-language + .pill{margin-left:0}
 .blueprint > summary{cursor:pointer;list-style:none}.blueprint > summary::-webkit-details-marker{display:none}.blueprint > summary::before{content:'▸';color:#799166}.blueprint[open] > summary::before{content:'▾'}

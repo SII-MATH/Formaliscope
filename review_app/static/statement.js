@@ -9,6 +9,7 @@
   let reviewCurrent=null,historyTotal=0,historyCursor=null,historyLoaded=false,historyLoading=false,historyTurn=0;
   const PAGE_SIZE=60;
   let mathLoading=false, mathTimer=null;
+  let readbackLanguage='zh';
   const directories=window.StatementDirectories;
   let directory=new URL(location.href).searchParams.get('directory')||'', directoryNodes=new Map(), catalogInfo=null;
   const expandedDirectories=new Set(['']);
@@ -220,6 +221,16 @@
     mathTimer=setTimeout(()=>{mathLoading=true;const script=document.createElement("script");script.src=new URL("./mathjax-tex-svg.js",document.baseURI);script.onload=()=>Promise.resolve(window.MathJax?.startup?.promise).then(()=>window.Stage3Latex?.typeset([$("statement"),$("blueprint-references")]));script.onerror=()=>{mathLoading=false;};document.head.appendChild(script);},350);
   }
   function codeHtml(text,options){return window.Stage3Lean?.toHtml(text,options)||escape(text);}
+  function renderReadback(c){
+    const english=c.statement_origin==='backtranslation'?c.enrichment?.readback?.text_en:null;
+    $('readback-language').hidden=!english;
+    const language=english?readbackLanguage:'zh';
+    $('readback-language').querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.language===language)));
+    const reading=language==='en'?english:c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
+    $('statement').lang=language==='en'?'en':'zh-CN';
+    $('statement').innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
+    math();
+  }
   function renderEvidence(c){
     symbols.clear();
     card=c;$("empty").hidden=true;$("review-card").hidden=false;
@@ -229,9 +240,8 @@
     renderProvenance(c);
     $("meta").innerHTML=`<span>${escape(c.declaration)}</span>`;
     renderCardLabels();
-    const reading=c.statement_origin==='blueprint'?c.reading_summary||'尚无 Lean 回译，请对照下方源码。':c.statement;
     $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
-    $("statement").innerHTML=window.Stage3Latex?.toHtml(reading)||escape(reading);
+    renderReadback(c);
     const reuseNote=c.reuse_source_commit?` 沿用版本 ${c.reuse_source_commit.slice(0,12)} 的机器结果。`:"";
     $("nl-location").textContent=(c.statement_origin==="backtranslation"?"Agent 回译草稿；请对照 Lean 源码核验。":"阅读摘要帮助定位；请以 Lean 陈述为依据，尚未核验为语义回译。")+reuseNote;
     const references=c.blueprint_references||(c.statement_origin==='blueprint'?[{title:c.title,statement:c.statement,label:c.label,blueprint_file:c.blueprint_file,blueprint_line:c.blueprint_line,declarations:[c.declaration]}]:[]);
@@ -331,7 +341,7 @@
   async function openCard(id,force=false,{restore=false,initial=false}={}){
     if(!restore&&!initial&&navigation.restoring)return false;
     if(!id||!byId.has(id))return false;
-    if(id===selected&&card&&!force)return true;
+    if(id===selected&&card&&!force){scrollDetailTop();return true;}
     const intent=++navigationTurn;
     if(!force&&!await mayNavigate())return false;
     if(intent!==navigationTurn)return false;
@@ -339,7 +349,7 @@
     const turn=++sequence;selected=id;card=null;saves.load(null);++historyTurn;historyLoading=false;reviewHistory=[];
     $('module-panel').hidden=true;$('module-panel').open=false;
     if(!restore){
-      document.querySelector('.main-panel').scrollTop=0;
+      scrollDetailTop();
       if(initial)navigation.replace(locationFor(id));else navigation.push(locationFor(id));
     }
     renderList();if(view==="graph")renderGraph();
@@ -353,10 +363,14 @@
       const state=await statePromise;if(turn!==sequence)return;
       if(state.error)throw state.error;
       renderReview(c,state.data);
-      if(!restore){document.querySelector('.main-panel').scrollTop=0;if(window.innerWidth<=700)window.scrollTo(0,document.querySelector('.main-panel').offsetTop);}
+      if(!restore)scrollDetailTop();
       if(!restore)navigation.remember(locationFor(id));
       return true;
     }catch(error){if(turn!==sequence)return;$("save-message").textContent=error.message;$("empty").querySelector("h2").textContent="条目加载失败";$("empty").querySelector("p").textContent=error.message;}
+  }
+  function scrollDetailTop(){
+    document.querySelector('.main-panel').scrollTop=0;
+    window.scrollTo(0,window.innerWidth<=700?document.querySelector('.main-panel').offsetTop:0);
   }
   async function save(){if(card)return saves.state.error?saves.retry():saves.complete();}
   function next(offset=1){
@@ -453,6 +467,7 @@
   $("prev-page").onclick=()=>{page--;renderList();$("card-list").scrollTop=0;};$("next-page").onclick=()=>{page++;renderList();$("card-list").scrollTop=0;};
   $("locate-list").onclick=()=>locateList(true);
   $("views").onclick=event=>{const button=event.target.closest('[data-view]');if(button)setView(button.dataset.view);};
+  $('readback-language').onclick=event=>{const button=event.target.closest('[data-language]');if(button&&card){readbackLanguage=button.dataset.language;renderReadback(card);}};
   $('back-card').onclick=()=>navigation.back();
   $('repository-select').onchange=()=>switchDataset(availableDatasets.find(item=>item.repository_id===$('repository-select').value)?.id);
   window.addEventListener('popstate',event=>{++navigationTurn;navigation.pop(event.state).catch(error=>{$('save-global').textContent=error.message;});});

@@ -1,11 +1,11 @@
 ---
 name: formaliscope-enrich
-description: "在 Kimi Code 中用原生 AgentSwarm 按配置指定的模型并行生成中文 Lean 回译、标题、标签、优先度及内部预期判断；仅按回译自报置信度复核，输出候选快照和可独立入库的内部评估。"
+description: "在 Kimi Code 中用原生 AgentSwarm 按配置指定的模型并行生成中英双语 Lean 回译、标题、标签、优先度及内部预期判断；仅按回译自报置信度复核，输出候选快照和可独立入库的内部评估。"
 type: prompt
-whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中文回译、审阅字段或内部预期评估时。"
+whenToUse: "用户要求为 Formaliscope 的明确 Statement 范围补全中英双语回译、审阅字段或内部预期评估时。"
 ---
 
-# Formaliscope 中文回译与字段补全
+# Formaliscope 中英双语回译与字段补全
 
 在当前 Kimi Code 会话中，主 Agent 用原生 `AgentSwarm` 调度专用 worker，按仓库 `statement_workflow/SCHEMA_V2.md` 填字段，脚本负责校验和合并。
 

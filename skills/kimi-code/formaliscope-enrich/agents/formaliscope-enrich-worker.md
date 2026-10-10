@@ -1,6 +1,6 @@
 ---
 name: formaliscope-enrich-worker
-description: "为 Formaliscope 的一组精确声明生成纯 Lean 中文回译，或在 resume 后仅补充独立预期判断；写入调用者分配的私密 JSON。"
+description: "为 Formaliscope 的一组精确声明生成纯 Lean 中英双语回译，或在 resume 后仅补充独立预期判断；写入调用者分配的私密 JSON。"
 whenToUse: "formaliscope-enrich Skill 的 AgentSwarm 分组回译和同组第二阶段续做。"
 tools:
   - Read

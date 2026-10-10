@@ -1,9 +1,9 @@
 ---
 name: formaliscope-enrich
-description: "在 Codex 中为 Formaliscope 按配置指定的子 Agent 分组生成中文 Lean 回译、标题、标签、优先度及内部预期判断；仅按回译自报置信度复核，输出候选快照和可独立入库的内部评估。用于补全审阅数据。"
+description: "在 Codex 中为 Formaliscope 按配置指定的子 Agent 分组生成中英双语 Lean 回译、标题、标签、优先度及内部预期判断；仅按回译自报置信度复核，输出候选快照和可独立入库的内部评估。用于补全审阅数据。"
 ---
 
-# Formaliscope 中文回译与字段补全
+# Formaliscope 中英双语回译与字段补全
 
 在当前 Codex 会话中，主 Agent 分组调度，子 Agent 按 [字段标准 v2](../../../statement_workflow/SCHEMA_V2.md) 填字段，脚本负责校验和合并。
 
