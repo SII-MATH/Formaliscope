@@ -6,9 +6,23 @@
 
 ## 未发布
 
+## [v0.0.10] — 2026-10-10
+
+### 新增
+
+- 新回译批次可同时生成中文和英文完整陈述；有英文的条目支持审阅者切换语言，旧中文单语结果继续显示。
+
+### 改进
+
+- 在电脑端从左侧列表打开条目、再次点击当前条目时，详情自动回到顶部，方便直接阅读。
+
 ### 修复
 
 - 应用 Release 拉取器在没有令牌文件时可匿名读取公开仓库；若配置了令牌，则继续使用令牌，文件不可读或为空时明确报错。服务器上的定时部署是否启用仍由操作员单独决定。
+
+### 兼容性说明
+
+- 数据库保持 schema 13；英文回译保存在候选快照中，现有中文回译不自动补写。新增或修改英文回译会更新审阅依据，原判断保留在历史中；仅发布应用不会切换运行证据。
 
 ## [v0.0.9] — 2026-10-10
 
@@ -152,6 +166,8 @@
 - 合并到 `main` 后自动测试、打包并发布 GitHub Release；日常开发使用 `dev`。
 - 草稿可续传，重跑同一提交复用版本，已发布附件保持不变。
 
+[v0.0.10]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.10
+[v0.0.9]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.9
 [v0.0.8]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.8
 [v0.0.7]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.7
 [v0.0.6]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.6
