@@ -86,6 +86,9 @@ def validate_stage_batch(document, stage, snapshot, topics=None):
     if snapshot.get('review_mode') != 'statement':
         raise ValueError('enrichment requires a Statement snapshot')
     rows = document['annotations']
+    if stage == 'readback':
+        for row in rows:
+            _readback_languages(row['readback'])
     _targets(rows, snapshot, DEFAULT_TOPICS if topics is None else topics,
              check_topics=stage == 'readback')
     return rows
@@ -96,8 +99,15 @@ def _annotations(annotations, snapshot, topics):
         raise ValueError('annotations must be a list')
     for annotation in annotations:
         _contract(annotation, 'annotation')
+        _readback_languages(annotation['readback'])
     _targets(annotations, snapshot, topics, check_topics=True)
     return annotations
+
+
+def _readback_languages(readback):
+    """Historical Chinese-only results remain valid; a bilingual result is complete."""
+    if 'text_en' in readback and ((readback['text_zh'] is None) != (readback['text_en'] is None)):
+        raise ValueError('Chinese and English readbacks must both be present or both be null')
 
 
 def _targets(annotations, snapshot, topics, *, check_topics):
@@ -164,7 +174,9 @@ def public_annotation(annotation):
         'declaration_id': annotation['declaration_id'],
         'title_zh': annotation['title_zh'],
         'readback': {'status': 'draft' if annotation['readback']['text_zh'] is not None else 'none',
-                     'text_zh': annotation['readback']['text_zh']},
+                     'text_zh': annotation['readback']['text_zh'],
+                     **({'text_en': annotation['readback']['text_en']}
+                        if 'text_en' in annotation['readback'] else {})},
         'classification': deepcopy(annotation['classification']),
         'priority': annotation['priority'],
     }
@@ -172,5 +184,6 @@ def public_annotation(annotation):
 
 def validate_public_annotation(annotation, topics):
     _contract(annotation, 'public_annotation')
+    _readback_languages(annotation['readback'])
     if set(annotation['classification']['topics']) - {item['id'] for item in topics}:
         raise ValueError('public annotation uses an unregistered project topic')

@@ -11,7 +11,8 @@
 | `declaration_id` | 调度层分配的精确声明 ID，Agent 原样返回。 |
 | `title_zh` | 中文阅读标题或 null。简短、忠实，不增加实际陈述没有表达的性质。 |
 | `readback.text_zh` | 完整中文回译；确实无法生成时为 null。交代对象、取值域、假设、量词及结论，保留存在与唯一存在、蕴含与等价等区别。定义和结构需说明实质数学约束。 |
-| `readback.confidence` | 0–1 的有限数值，表示回译忠实于固定 Lean 的把握。 |
+| `readback.text_en` | 同一 Lean 声明的完整英文回译，直接依据 Lean 编写，不从中文机械翻译；新批次与中文同时填写。历史中文单语数据可缺省。两种语言只要有一种无法可靠生成，新批次两项都填 null。 |
+| `readback.confidence` | 0–1 的有限数值，表示中英文回译忠实于固定 Lean 的综合把握。 |
 | `classification.role` | 单选下文的数学角色；无法确定时为 null。 |
 | `classification.topics` | 多选当前项目配置允许的数学主题，去重；无法确定时为 []。 |
 | `priority` | `p0` / `p1` / `p2` / null，按下文的审阅优先度标准填写。 |
@@ -132,6 +133,7 @@ Codex/Kimi 无材料时不生成第二阶段文件，收集器确定性填 undet
     "title_zh": "向量加零不变",
     "readback": {
       "text_zh": "对任意域 F、F-向量空间 V 及向量 x∈V，都有 x+0=x。",
+      "text_en": "For every field F, F-vector space V, and x ∈ V, one has x + 0 = x.",
       "confidence": 0.95
     },
     "classification": {"role": "derivation", "topics": []},

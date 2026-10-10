@@ -111,7 +111,7 @@ const results = await pipeline(
       output_template: {
         schema: 'formaliscope-readback-batch.v1',
         annotations: [{ declaration_id: group.declarationIds[0], title_zh: null,
-          readback: { text_zh: null, confidence: null },
+          readback: { text_zh: null, text_en: null, confidence: null },
           classification: { role: null, topics: [] }, priority: null }],
       },
     }

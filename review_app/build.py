@@ -184,6 +184,9 @@ def _content_fingerprint(card: dict, dependency_lock_digest: str | None) -> tupl
         "title": card.get("title"),
         "statement": card.get("statement"),
     }
+    english = (card.get('enrichment') or {}).get('readback', {}).get('text_en')
+    if english is not None:
+        natural_language['statement_en'] = english
     if card.get('blueprint_references'):
         # Relocating a node does not change its mathematical review basis.
         natural_language['blueprint_references'] = [

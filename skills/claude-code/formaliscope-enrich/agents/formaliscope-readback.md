@@ -1,6 +1,6 @@
 ---
 name: formaliscope-readback
-description: 仅从固定 Lean 声明生成 Formaliscope 中文回译、标题、分类和优先度。
+description: 仅从固定 Lean 声明生成 Formaliscope 中英双语回译、标题、分类和优先度。
 tools: Read, Write, Bash
 model: inherit
 omitClaudeMd: true
