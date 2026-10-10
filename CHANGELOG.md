@@ -6,6 +6,16 @@
 
 ## 未发布
 
+## [v0.0.11] — 2026-10-10
+
+### 改进
+
+- 缩短密码登录的限流窗口：同一 IP 每 60 秒最多 20 次，同一账号跨姓名、旧 ID、新 ID 和 IP 每 60 秒最多 10 次；成功与失败仍计数。超限响应提示 60 秒后重试，减少输错密码后的等待时间。
+
+### 兼容性说明
+
+- 数据库保持 schema 13，现有账号、登录会话、审阅数据和运行快照不需要迁移；注册限流规则不变。
+
 ## [v0.0.10] — 2026-10-10
 
 ### 新增
@@ -166,6 +176,7 @@
 - 合并到 `main` 后自动测试、打包并发布 GitHub Release；日常开发使用 `dev`。
 - 草稿可续传，重跑同一提交复用版本，已发布附件保持不变。
 
+[v0.0.11]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.11
 [v0.0.10]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.10
 [v0.0.9]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.9
 [v0.0.8]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.8
