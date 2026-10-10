@@ -57,4 +57,4 @@ sudo -u formaliscope-review python3 -m review_app merge-accounts \
 - `POST /api/profile`：修改不冲突的姓名；`POST /api/auth/logout`：退出当前浏览器。
 - `GET /api/admin/users` 与 `/api/admin/user?reviewer=<ID>&dataset=<ID>&cursor=0&limit=25`：只读目录与已提交历史，单页最多 100 条。
 
-所有写入检查 Origin 与 JSON；注册和密码操作有限流。密码操作每 IP 每 10 分钟最多 20 次，同一账号跨姓名、旧 ID、新 ID 和 IP 每 10 分钟最多 5 次密码登录，成功与失败都计数。只支持单服务进程。备份保留身份、角色、密码哈希、判断、草稿和合并档案，清除会话与验证码；auth-pepper 重新生成不影响密码。迁移后的数据库不能用旧版应用运行，回退须使用升级前完整备份。
+所有写入检查 Origin 与 JSON；注册和密码操作有限流。密码操作每 IP 每 60 秒最多 20 次，同一账号跨姓名、旧 ID、新 ID 和 IP 每 60 秒最多 10 次密码登录，成功与失败都计数。只支持单服务进程。备份保留身份、角色、密码哈希、判断、草稿和合并档案，清除会话与验证码；auth-pepper 重新生成不影响密码。迁移后的数据库不能用旧版应用运行，回退须使用升级前完整备份。

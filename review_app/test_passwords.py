@@ -73,11 +73,11 @@ class PasswordIdentityTests(unittest.TestCase):
         with closing(connect(self.db)) as db:
             db.execute('UPDATE reviewer_profiles SET display_name=? WHERE reviewer=?', ('唯一姓名', owner))
             db.execute('UPDATE name_identities SET normalized_name=? WHERE reviewer=?', ('唯一姓名', owner))
-        for attempt in range(2):
+        for attempt in range(7):
             self.assertIsNone(self.auth.login_password('唯一姓名' if attempt % 2 else owner, 'wrong-password', f'10.0.0.{attempt+1}'))
         with self.assertRaises(RateLimited):
             self.auth.login_password('唯一姓名', 'first-password', '10.0.0.9')
-        self.now += 601
+        self.now += 60
         self.assertEqual(self.auth.session_reviewer(self.auth.login_password('唯一姓名', 'first-password')), owner)
         with closing(connect(self.db)) as db:
             db.execute('UPDATE name_identities SET disabled=1 WHERE reviewer=?', (owner,))
@@ -214,6 +214,18 @@ class PasswordHTTPTests(unittest.TestCase):
         serialized = str(directory)
         self.assertNotIn('password_hash', serialized)
         self.assertNotIn('recovery_digest', serialized)
+
+    def test_login_cooldown_returns_one_minute_retry(self):
+        _, owner = self.auth.create_identity('限流用户', password='correct-password')
+        payload = {'account': owner, 'password': 'wrong-password'}
+        for _ in range(10):
+            self.assertEqual(self.request('/api/auth/password-login', payload)[0], 401)
+        status, headers, _ = self.request('/api/auth/password-login', payload)
+        self.assertEqual(status, 429)
+        self.assertEqual(headers['Retry-After'], '60')
+        self.fixture.now += 60
+        self.assertEqual(self.request('/api/auth/password-login',
+                                      {'account': owner, 'password': 'correct-password'})[0], 200)
 
 
 if __name__ == '__main__':

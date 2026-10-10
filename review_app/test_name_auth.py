@@ -81,7 +81,7 @@ class NameIdentityTests(unittest.TestCase):
             self.assertIsNone(self.auth.login_password('unknown', 'short'))
         with self.assertRaises(RateLimited):
             self.auth.login_password('unknown', 'short')
-        self.now += 601
+        self.now += 60
         self.assertIsNone(self.auth.login_password('unknown', 'short'))
         for origin in ('', 'http://public.example.org', 'https://u:p@example.org', 'https://example.org/path', 'https://example.org:99999'):
             with self.subTest(origin=origin), self.assertRaises(ValueError):
@@ -344,9 +344,9 @@ class NameHTTPTests(unittest.TestCase):
         with sqlite3.connect(self.db) as db:
             # Existing requests fill one address's quotas, outside the separate
             # global minute limit; another student must still be able to enter.
-            for action, count in (('register', 120), ('password', 20)):
+            for action, count, age in (('register', 120, 120), ('password', 20, 30)):
                 db.executemany('INSERT INTO identity_requests VALUES (?, ?, ?)',
-                               [(action, self.ip_digest(first), self.now-120)]*count)
+                               [(action, self.ip_digest(first), self.now-age)]*count)
         self.assertEqual(self.request('/api/auth/register', {'display_name': 'A'},
                                       extra_headers={'X-Real-IP': first})[0], 429)
         status, _, data = self.request('/api/auth/register', {'display_name': 'B'},
