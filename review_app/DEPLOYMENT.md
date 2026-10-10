@@ -82,6 +82,8 @@ sudo systemctl enable --now formaliscope-review.service
 curl --fail http://127.0.0.1:8765/healthz
 ```
 
+`formaliscope-app-pull` 读取公开的应用 Release 时可不配置 GitHub 令牌。若 `/etc/formaliscope/github-read-token`（或 `FORMALISCOPE_GITHUB_TOKEN_FILE` 指定的文件）存在，拉取器会使用其中的非空令牌；文件不可读或为空时直接报错，不会悄悄改用匿名请求。私有仓库需要能读取 Release 的令牌。安装拉取器不会自动启用 `formaliscope-app-pull.timer`；是否定时部署由操作员另行决定。旧 KIP126 证据拉取器仍按其独立配置运行，多仓库集合不使用它自动覆盖运行证据。
+
 `/healthz` 无需登录，只报告 `ready`、快照 schema 与数据库 schema，不包含用户或内容。拉取器重启服务后也用该端点检查就绪。再通过公开 HTTPS 路径检查登录页、静态资源、密码登录、更新通知及重名注册拒绝。反向代理必须剥去应用前缀后转发至 `127.0.0.1:8765`，限制外界直接访问监听端口。
 
 Nginx/Caddy 变更先验证配置，再备份和 reload。如果目标站点已有全局认证或旧应用路由，明确新路径所用身份模式，并同时验证旧入口继续可用。此文档不假定既有站点路径或认证规则可直接覆盖。

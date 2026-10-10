@@ -77,7 +77,9 @@ elif name == 'curl':
         assert service_state() == 'active'
         print(json.dumps({'ready': True}))
     else:
-        log('download', url=url)
+        log('download', url=url, authorized=any(
+            args[index] == '-H' and args[index + 1].startswith('Authorization: Bearer ')
+            for index in range(len(args) - 1)))
         assets = json.loads((root / 'asset-paths.json').read_text())
         source = root / 'releases.json' if '/releases?' in url else Path(assets[url])
         shutil.copyfile(source, args[args.index('-o') + 1])
@@ -199,6 +201,25 @@ class AppPullLifecycleTests(unittest.TestCase):
         self.assertEqual((self.data / 'judgments.sqlite3').read_bytes(), b'schema7')
         self.assertEqual((self.application / 'current').resolve(), self.candidate)
         self.assertTrue(self.state.exists())
+        self.assertTrue(all(event['authorized'] for event in events if event['event'] == 'download'))
+
+    def test_public_release_upgrades_without_a_token_file(self):
+        Path(self.env['FORMALISCOPE_GITHUB_TOKEN_FILE']).unlink()
+        result = self.run_puller()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.application / 'current').resolve(), self.candidate)
+        self.assertTrue(self.state.exists())
+        downloads = [event for event in self.events() if event['event'] == 'download']
+        self.assertEqual(len(downloads), 4)
+        self.assertTrue(all(not event['authorized'] for event in downloads))
+
+    def test_empty_token_file_refuses_anonymous_fallback(self):
+        Path(self.env['FORMALISCOPE_GITHUB_TOKEN_FILE']).write_text('')
+        result = self.run_puller()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('GitHub token file is empty', result.stderr)
+        self.assertEqual((self.application / 'current').resolve(), self.old)
+        self.assertFalse(self.events())
 
     def test_migration_failure_keeps_backup_and_does_not_restart_previous_code(self):
         result = self.run_puller(PULL_FAIL_MIGRATION='1')
