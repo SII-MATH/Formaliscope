@@ -138,6 +138,12 @@ def validate_snapshot(snapshot: dict) -> None:
     from .enrichment_v2 import DEFAULT_TOPICS, validate_public_annotation, validate_topics
     topics = validate_topics(snapshot.get('enrichment_topics', DEFAULT_TOPICS))
     for card in cards:
+        if 'visibility' in card and card['visibility'] not in ('private', 'public'):
+            raise ValueError('declaration visibility must be private or public')
+        if 'private' in card and not isinstance(card['private'], bool):
+            raise ValueError('declaration private flag must be boolean')
+        if 'visibility' in card and card.get('private', False) != (card['visibility'] == 'private'):
+            raise ValueError('declaration visibility conflicts with its private flag')
         if 'blueprint_references' in card:
             references = card['blueprint_references']
             keys = {'title', 'statement', 'label', 'chapter', 'blueprint_file',

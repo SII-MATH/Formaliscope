@@ -6,6 +6,11 @@ assert.equal(labels.groups.find(group=>group.id==='topic').items.length,0,'Proje
 labels.configureTopics([{id:'spectral_sequence',name:'谱序列'},{id:'adams',name:'Adams 理论'},{id:'sphere',name:'球谱'}]);
 const model={declaration:'KIP126.Classical.Adams.sphereAdamsData',module_file:'KIP126/Interface/Axiom/StandardSphere/Sequence/Data.lean',kind:'abbrev',priority:95,risk:'high',verdict:'aligned'};
 const tags=labels.forCard(model);
+assert(tags.includes('visibility/public'));
+assert(labels.forCard({...model,visibility:'private'}).includes('visibility/private'));
+assert(labels.forCard({...model,private:true}).includes('visibility/private'),'Legacy private flags are retained');
+assert(labels.matches(labels.forCard({...model,visibility:'private'}),new Set(['visibility/private','visibility/public'])));
+assert(!labels.matches(tags,new Set(['visibility/private'])));
 assert(tags.includes('role/definition'));
 assert(tags.includes('topic/adams'));
 assert(!tags.some(id=>id.startsWith('risk/')),'Risk is not a separate frontend label dimension');

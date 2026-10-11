@@ -4,6 +4,7 @@
   const groupSpecs=[
     {id:'role',name:'数学角色',source:'Agent 候选分类',items:[['definition','对象与定义','blue'],['input','前提与输入','violet'],['comparison','比较与转换','fuchsia'],['computation','计算与核验','cyan'],['derivation','中间推导','slate'],['target','目标结论','indigo'],['infrastructure','工具与封装','gray']]},
     {id:'topic',name:'数学主题',source:'项目配置 · Agent 候选主题',items:[]},
+    {id:'visibility',name:'声明可见性',source:'Lean 源码 · 默认仅列出 public；private 原则上无需审核',items:[['public','public','blue'],['private','private','gray']]},
     {id:'priority',name:'审阅优先度',source:'审阅顺序 · 未分级不视为低优先度',items:[['p0','P0 · 优先审核','orange'],['p1','P1 · 重点审核','amber'],['p2','P2 · 常规审核','slate']]},
     {id:'status',name:'我的审阅状态',source:'本人记录 · 当前版本无有效判断均归为未审阅',items:[['pending','未审阅','gray'],['aligned','通过','green'],['uncertain','没看懂','amber'],['misaligned','不通过','red']]},
     {id:'readback',name:'回译状态',source:'当前快照的实际回译记录',items:[['none','未回译','gray'],['draft','回译草稿','blue'],['verified','回译已核验','cyan']]}
@@ -59,7 +60,7 @@
       else if(card.kind==='axiom')role='input';
       else if(['def','abbrev','structure','class','instance','opaque'].includes(card.kind))role='definition';
     }
-    const tags=[];
+    const tags=['visibility/'+(card.visibility==='private'||card.private===true?'private':'public')];
     if(roles.has(role))tags.push('role/'+role);
     let priority=null;
     if(analysis&&(Object.hasOwn(analysis,'priority')||isV2))priority=typeof analysis.priority==='string'?analysis.priority:analysis.priority?.level;

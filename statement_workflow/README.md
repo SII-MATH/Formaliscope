@@ -60,7 +60,7 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
-新协议始终配置全部组的 `readback_results` 和对应程序基线记录。Claude Code 无论有无材料，都配置第二阶段 `results`，每组文件恰好一项；Codex/Kimi 有材料时提供第二阶段 `results`，无材料时 `results=[]`，收集器生成 undetermined、跳过原因及固定判断分值 1.0（只是缺少材料的确定性，不是模型数学判断）。`executed_model` 填核实实际路由后的调度名，必须与冻结 manifest 一致，响应模型原始名称和核实依据另行私密保留。复核后填入 `collection.reviews` 并设置新目录重新收集。收集依据准备时保存的快照、manifest 和模型配置，原始输入或默认配置的后续变化不改变本批依据。
+新协议始终配置全部组的 `readback_results` 和对应程序基线记录。按 manifest 的 `expectation_declaration_ids` 判断每组有无参考；`results` 只配置实际执行第二阶段的结果路径（Claude 每组文件恰好一项），全无参考时 `results=[]`，收集器生成 undetermined、跳过原因及固定判断分值 1.0（只是缺少材料的确定性，不是模型数学判断）。`executed_model` 填核实实际路由后的调度名，必须与冻结 manifest 一致，响应模型原始名称和核实依据另行私密保留。复核后填入 `collection.reviews` 并设置新目录重新收集。收集依据准备时保存的快照、manifest 和模型配置，原始输入或默认配置的后续变化不改变本批依据。
 
 脚本对所有输入检查精确目标集合、固定来源、选项、类型、有限分值和条件必填理由，全部通过后才写新的输出目录。它生成 `enrichment.json`、`review-queue.json`、`report.json`，区分直接汇总、已复核、待复核、生成失败。不能以提高原分值代替复核。
 
@@ -87,7 +87,7 @@ python3 -m review_app import-agent-assessments \
 
 ## 旧批次与实验接口
 
-收集器保留 `formaliscope-enrichment-batch.v1` 的来源／证据校验和 manifest v2 的完整 `formaliscope-agent-batch.v2` 路径；旧 v2 不要求补封基线、无材料仍可仅提供其完整结果。历史协议由 manifest 明确选择，不按文件内容猜测、不静默转换；新 Worker 使用分离阶段协议。v1 的 [旧契约](schema/statement-enrichment.v1.schema.json) 仍要求来源、摘要及证据，没有新字段的旧产物不能冒充新的内部评估。
+收集器保留 `formaliscope-enrichment-batch.v1` 的来源／证据校验和 manifest v2 的完整 `formaliscope-agent-batch.v2` 路径；旧 v2 不要求补封基线、无材料仍可仅提供其完整结果。旧阶段协议 `formaliscope-stage-results.v1` 也按原规则保留；新阶段协议 v2 按冻结的 `expectation_declaration_ids` 跳过无参考的组。历史协议由 manifest 明确选择，不按文件内容猜测、不静默转换；新 Worker 使用分离阶段协议。v1 的 [旧契约](schema/statement-enrichment.v1.schema.json) 仍要求来源、摘要及证据，没有新字段的旧产物不能冒充新的内部评估。
 
 `engine.py`、`__main__.py`、`workflow.json`、`prompts/` 是早期 `python3 -m statement_workflow` 实验接口，协议见 [旧执行器契约](AGENT.md)。当前 Skill 不调用它；逐条 readback/audit 及旧分级不作为 v2 要求。
 
@@ -98,4 +98,4 @@ python3 -m unittest discover -s statement_workflow -t . -p 'test_*.py'
 python3 -m unittest review_app.test_enrichment
 ```
 
-协议回归采用合成夹具和模拟 Agent，覆盖阶段字段严格分离、第二阶段夹带正文拒绝、交付不覆盖、基线字节修改检测、精确组 ID 与路径、固定来源与材料、实际模型确认、无材料的 harness 规则、阈值边界、独立双分值、失败回译、复核保留原分值、公开候选隔离及历史 v1/v2 兼容。Workflow 回归验证独立双 Agent 和组间无屏障推进，不启动真实模型；真实数学质量仍需单独按获授权的试跑验收。
+协议回归采用合成夹具和模拟 Agent，覆盖阶段字段严格分离、第二阶段夹带正文拒绝、交付不覆盖、基线字节修改检测、精确组 ID 与路径、固定来源与材料、实际模型确认、逐组缺少 Blueprint／补充材料时跳过第二阶段及旧 harness 协议兼容、阈值边界、独立双分值、失败回译、复核保留原分值、公开候选隔离及历史 v1/v2 兼容。Workflow 回归验证有参考时的独立双 Agent、无参考时仅回译，以及组间无屏障推进，不启动真实模型；真实数学质量仍需单独按获授权的试跑验收。

@@ -94,7 +94,7 @@ python3 skills/scripts/collect.py --config .formaliscope/tasks/configs/20261008-
 
 随后按安装的 Skill 调用子 Agent，先保存纯 Lean 回译，再提供独立预期材料。新批次冻结 manifest v3 和阶段协议：第一阶段仅输出 declaration_id、title_zh、readback、classification、priority，第二阶段仅输出 declaration_id、expectation_assessment。两个阶段分别写新草稿，由固定 `collect.py --deliver-readback`／`--deliver-expectation` 严格校验并排他交付正式结果；第一阶段交付同时记录实际文件字节摘要到 `.baseline.json`，第二阶段先运行 `--check-readback`，收集时再次独立检查并按 ID 确定性合并，模型不复制第一阶段字段。
 
-Claude 版每条声明一组，Workflow `pipeline()` 在每组回译交付且回执有效后，启动新的独立预期 Agent；无预期材料也执行第二阶段，传 null 并明确判断为 `undetermined`。每条声明固定两次调用及两个正式结果文件，不同组独立推进。Workflow 无直接文件系统接口，阶段 Agent 调用固定交付程序；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。Codex/Kimi 保留各自分组和续做方式，无材料时跳过第二阶段，提供全部 `readback_results` 和空 `results`，由收集程序生成明确的 undetermined 记录。
+Claude 版每条声明一组，Workflow `pipeline()` 在每组回译交付且回执有效后，启动新的独立预期 Agent；只有该声明有 Blueprint 参考或用户补充材料才执行第二阶段；没有参考时只调用回译 Agent，第二阶段路径为 null，由程序生成 `undetermined`。有参考的声明两次调用及两个正式结果文件，无参考的声明一次调用及一个正式结果文件，不同组独立推进。Workflow 无直接文件系统接口，阶段 Agent 调用固定交付程序；结构化回执只传文件路径与条目数，必须全组完成且实际模型路由核实后才收集。Codex/Kimi 保留各自分组和续做方式，按 manifest 的 `expectation_declaration_ids` 判断本组有无参考，无参考时跳过第二阶段，提供全部 `readback_results` 和空 `results`，由收集程序生成明确的 undetermined 记录。
 
 摘要仅提供篡改检测，不是权限隔离，不能抵御同时改写结果与记录的进程。原始阶段文件保留，失败不能靠主 Agent 改正文、重新封存或临时拼接绕过。最终 `statement-enrichment.v2`、低分复核及公开／私密隔离语义不变；历史 manifest v1/v2 明确走原契约，不猜测或转换。完整交付命令、数据契约和导入流程见 [任务配置说明](CONFIG.md)、[Statement 工作流](../statement_workflow/README.md) 与 [字段标准 v2](../statement_workflow/SCHEMA_V2.md)。
 

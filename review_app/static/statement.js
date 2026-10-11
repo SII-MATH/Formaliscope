@@ -38,6 +38,8 @@
   function displayName(c){return c.declaration?.split('.').pop()||c.title||c.id;}
   function titleZh(c){return c.title_zh||(/[\u3400-\u9fff]/.test(c.title||'')?c.title:'');}
   function priorityScore(c){return c._labels?.includes('priority/p0')?3:c._labels?.includes('priority/p1')?2:c._labels?.includes('priority/p2')?1:0;}
+  function isPrivate(c){return c?._labels?.includes('visibility/private');}
+  function primaryLabels(tags){return tags.filter(id=>/^(role|priority|visibility)\//.test(id));}
   function renderProvenance(c){
     const analysis=c.enrichment,summary=$('label-provenance-summary');
     const priority=typeof analysis?.priority==='string'?analysis.priority:analysis?.priority?.level;
@@ -50,7 +52,7 @@
   }
   function renderCardLabels(){
     const tags=byId.get(selected)?._labels||[];
-    $('card-labels').innerHTML=tags.filter(id=>id.startsWith('role/')||id.startsWith('priority/')).map(id=>labelChip(id)).join('');
+    $('card-labels').innerHTML=primaryLabels(tags).map(id=>labelChip(id)).join('');
     $('more-card-labels').innerHTML=tags.map(id=>labelChip(id)).join('');
   }
   function renderLabelUI(){
@@ -61,11 +63,11 @@
     $('reset-labels').hidden=!selectedLabels.size;
     $('label-outside-notice').hidden=!selected||!selectedLabels.size||labels.matches(byId.get(selected)?._labels||[],selectedLabels);
     if($('labels-dialog').open){
-      const base=baseRows(), counts=new Map();
+      const base=baseRows({includePrivate:true}), counts=new Map();
       for(const group of labels.groups){
-        for(const row of base){if(!labels.matches(row._labels,selectedLabels,group.id))continue;for(const id of row._labels){if(labels.definitions.get(id)?.group===group.id)counts.set(id,(counts.get(id)||0)+1);}}
+        for(const row of base){if(group.id!=='visibility'&&!matchesVisibility(row))continue;if(!labels.matches(row._labels,selectedLabels,group.id))continue;for(const id of row._labels){if(labels.definitions.get(id)?.group===group.id)counts.set(id,(counts.get(id)||0)+1);}}
       }
-      const visibleGroups=labels.groups.filter(group=>['role','topic'].includes(group.id)===(labelTab==='content'));
+      const visibleGroups=labels.groups.filter(group=>['role','topic','visibility'].includes(group.id)===(labelTab==='content'));
       $('label-groups').innerHTML=visibleGroups.map(group=>`<fieldset><legend>${escape(group.name)}</legend><p>${escape(group.source)}</p><div>${group.items.map(item=>labelChip(item.id,{button:true,count:counts.get(item.id)||0})).join('')}</div></fieldset>`).join('');
       $('label-tabs').querySelectorAll('button').forEach(button=>{const active=button.dataset.labelTab===labelTab;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
       $('label-matched-count').textContent=`匹配 ${rows().length.toLocaleString()} 条`;
@@ -98,7 +100,7 @@
     $('directory-path').title=directory||'全库源码索引';
     $('scope-notice').hidden=!selected||directories.matchesPath(byId.get(selected)?.module_file,directory);
     $('progress-heading').textContent=directory?(fileScope?'当前文件审阅进度':'当前目录审阅进度'):'索引标注情况';
-    $('progress-note').textContent=directory?(fileScope?'仅统计当前文件，不受检索和状态筛选影响。':'包含子目录；进度不受检索和状态筛选影响。'):'全库索引不代表全部必审，请选择目录范围。';
+    $('progress-note').textContent=(directory?(fileScope?'仅统计当前文件的 public 声明。':'统计当前目录及子目录的 public 声明。'):'统计全库 public 声明；请选择审核目录。')+' private 原则上无需审核，不计入进度。';
   }
   function renderDirectoryTree(){
     const search=$('directory-search').value.trim().toLowerCase();
@@ -123,9 +125,11 @@
     locateList();
   }
 
-  function baseRows(){
+  function matchesVisibility(c){return [...selectedLabels].some(id=>id.startsWith('visibility/'))||!isPrivate(c);}
+  function baseRows({includePrivate=false}={}){
     const scope=$("scope").value;
     return directoryRows().filter(c=>
+      (includePrivate||matchesVisibility(c)) &&
       (scope!=="main" || c.role==="主定理" || c.role==="直接依赖") &&
       (scope!=="interface" || ['structure','class'].includes(c.kind) || c.module_file?.includes('Challenge')) &&
       (!query || c._search.includes(query))
@@ -143,19 +147,19 @@
     const list=rows(), pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
     page=Math.min(page,pages-1);
     $("card-list").innerHTML=list.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE).map(c=>
-      `<button class="list-row ${c.id===selected?"active":""} ${labels.reviewState(c)==="pending"?"":labels.reviewState(c)==="misaligned"?"rejected":labels.reviewState(c)==="uncertain"?"uncertain":"reviewed"}" data-id="${escape(c.id)}" aria-pressed="${c.id===selected}"><span class="dot"></span><span class="row-text"><b>${escape(displayName(c))}</b>${titleZh(c)?`<span class="row-subtitle">${escape(titleZh(c))}</span>`:''}<small>${escape(c.declaration)}</small><span class="row-labels">${c._labels.filter(id=>id.startsWith('role/')||id.startsWith('priority/')).map(id=>labelChip(id)).join('')}</span>${labels.reviewState(c)!=='pending'?`<span class="row-meta">${escape(verdictNames[labels.reviewState(c)])}</span>`:''}</span></button>`
+      `<button class="list-row ${c.id===selected?"active":""} ${labels.reviewState(c)==="pending"?"":labels.reviewState(c)==="misaligned"?"rejected":labels.reviewState(c)==="uncertain"?"uncertain":"reviewed"}" data-id="${escape(c.id)}" aria-pressed="${c.id===selected}"><span class="dot"></span><span class="row-text"><b>${escape(displayName(c))}</b>${titleZh(c)?`<span class="row-subtitle">${escape(titleZh(c))}</span>`:''}<small>${escape(c.declaration)}</small><span class="row-labels">${primaryLabels(c._labels).map(id=>labelChip(id)).join('')}</span>${labels.reviewState(c)!=='pending'?`<span class="row-meta">${escape(verdictNames[labels.reviewState(c)])}</span>`:''}</span></button>`
     ).join("")||'<div class="list-empty">没有符合条件的条目。试试切换范围或清空搜索。</div>';
     $("result-count").textContent=`${list.length.toLocaleString()} 个条目`;
     $("page-label").textContent=`${page+1} / ${pages}`;
     $("prev-page").disabled=page===0;$("next-page").disabled=page===pages-1;
-    const range=directoryRows(),done=range.filter(c=>labels.reviewState(c)!=='pending').length;
+    const range=directoryRows().filter(c=>!isPrivate(c)),done=range.filter(c=>labels.reviewState(c)!=='pending').length;
     $("progress-label").textContent=`${done} / ${range.length.toLocaleString()}`;
     $("progress-fill").style.width=`${range.length?100*done/range.length:0}%`;
     renderDirectoryScope();renderLabelUI();
   }
   function locateList(reset=false){
     let index=rows().findIndex(c=>c.id===selected);
-    if(index<0 && reset){selectedLabels.clear();query="";$("search").value="";$("scope").value="all";if(!directories.matchesPath(byId.get(selected)?.module_file,directory)){directory=(byId.get(selected)?.module_file||'').split('/').slice(0,-1).join('/');}updateLocation();index=rows().findIndex(c=>c.id===selected);}
+    if(index<0 && reset){selectedLabels.clear();if(isPrivate(byId.get(selected)))selectedLabels.add('visibility/private');query="";$("search").value="";$("scope").value="all";if(!directories.matchesPath(byId.get(selected)?.module_file,directory)){directory=(byId.get(selected)?.module_file||'').split('/').slice(0,-1).join('/');}updateLocation();index=rows().findIndex(c=>c.id===selected);}
     if(index>=0){page=Math.floor(index/PAGE_SIZE);renderList();$("card-list").querySelector('.active')?.scrollIntoView({block:"nearest"});}
   }
   function indexRow(row){
@@ -238,6 +242,7 @@
     $("card-title").textContent=displayName(c);
     $('card-subtitle').textContent=titleZh(c);$('card-subtitle').hidden=!titleZh(c);
     renderProvenance(c);
+    $('private-review-note').hidden=!isPrivate(byId.get(c.id));
     $("meta").innerHTML=`<span>${escape(c.declaration)}</span>`;
     renderCardLabels();
     $("statement-origin").textContent=c.statement_origin==="backtranslation"?"回译草稿 · 待核验":"生成的阅读摘要";
@@ -260,8 +265,9 @@
     $("dependency-count").textContent=`(${c.dependencies.length})`;
     $("dependencies").innerHTML=c.dependencies.map(id=>{
       const target=byId.get(id),name=target?.declaration||id,state=labels.reviewState(target||{});
-      const status=verdictNames[state]||'未审阅',description=`${name} · 我的审阅：${status}`;
-      return `<button class="dependency-ref" data-id="${escape(id)}" data-review-state="${state}" title="${escape(description)}" aria-label="${escape(description)}">${escape(name)}${state==='pending'?'':`<span class="dependency-status"> · ${escape(status)}</span>`}</button>`;
+      const visibility=target?(isPrivate(target)?'private':'public'):null;
+      const status=verdictNames[state]||'未审阅',description=`${name}${visibility?' · '+visibility:''} · 我的审阅：${status}`;
+      return `<button class="dependency-ref" data-id="${escape(id)}" data-review-state="${state}" title="${escape(description)}" aria-label="${escape(description)}">${escape(name)}${visibility?` <span class="dependency-visibility">· ${visibility}</span>`:''}${state==='pending'?'':`<span class="dependency-status"> · ${escape(status)}</span>`}</button>`;
     }).join("")||"没有定位到本仓库中的引用对象。";
   }
   function renderReviewStatus(c){
@@ -424,7 +430,7 @@
     const data=await loadCatalog(fromHash||'auto',sessionTurn);if(!data)return;
     const id=byId.has(fromHash)?fromHash:rows()[0]?.id;
     if(data.initial_evidence?.id===id)api.primeEvidence(data.initial_evidence);
-    if(id){await openCard(id,true,{initial:true});locateList();}else $("empty").querySelector('h2').textContent="此快照暂无条目";
+    if(id){await openCard(id,true,{initial:true});locateList();}else{$("empty").querySelector('h2').textContent="当前筛选范围暂无条目";$("empty").querySelector('p').textContent="默认只列出 public 声明；可在标签筛选中选择 private 查看内部声明。";}
   }
   function resetSession(){
     saves.reset();navigation.reset();symbols.clear();++navigationTurn;++historyTurn;
@@ -456,7 +462,7 @@
   $('export-scope').onclick=()=>{
     if(!catalogInfo)return;
     const manifest={schema:'statement-review-scope.v1',dataset:catalogInfo.dataset,source_commit:catalogInfo.source_commit,snapshot_digest:catalogInfo.digest,directory,
-      selection:directoryNodes.get(directory)?.file?'exact-file':'directory-with-descendants',declarations:directoryRows().map(c=>({id:c.id,declaration:c.declaration,file:c.module_file}))};
+      selection:directoryNodes.get(directory)?.file?'exact-file':'directory-with-descendants',declarations:directoryRows().map(c=>({id:c.id,declaration:c.declaration,file:c.module_file,visibility:isPrivate(c)?'private':'public'}))};
     const url=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download='formaliscope-review-scope.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     $('save-global').textContent=`已导出当前目录的 ${manifest.declarations.length} 条声明及版本`;

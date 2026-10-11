@@ -46,11 +46,11 @@ Agent 开始任务前，起草一份独立 JSON 配置，保存到 `.formaliscop
 python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-150000-tower.json
 ```
 
-准备脚本保存完整合并结果为批次的 `task-config.json`，保留原始逻辑模型、harness 及别名表；供调度使用的 `agent-config.json.worker.model` 与 `manifest.run.model` 冻结为已解析调度名。新 manifest 为 `formaliscope-enrichment-batch.v3`，显式记录 `result_protocol=formaliscope-stage-results.v1` 与 harness；最终收集产物仍为 `statement-enrichment.v2`。输出回执返回批次路径、运行 ID、选中数量和调度名。第一阶段交付封存摘要后才提供该批参考文件进入第二阶段。后续默认值或别名修改不改变已准备批次；换路由须准备新批次。
+准备脚本保存完整合并结果为批次的 `task-config.json`，保留原始逻辑模型、harness 及别名表；供调度使用的 `agent-config.json.worker.model` 与 `manifest.run.model` 冻结为已解析调度名。新 manifest 为 `formaliscope-enrichment-batch.v3`，显式记录 `result_protocol=formaliscope-stage-results.v2`、harness 与 `expectation_declaration_ids`（有对应 Blueprint 或补充材料的声明）；旧阶段协议 v1 仍按原 harness 规则收集，新批次使用 v2；最终收集产物仍为 `statement-enrichment.v2`。输出回执返回批次路径、运行 ID、选中数量和调度名。第一阶段交付封存摘要后才提供该批参考文件进入第二阶段。后续默认值或别名修改不改变已准备批次；换路由须准备新批次。
 
 ## 阶段交付与不可变基线
 
-调度层给每组分配精确 ID 和唯一新 draft/result 路径，先确定第二阶段路径（Codex/Kimi 无材料时为 null）。第一阶段只输出 [回译契约](../statement_workflow/schema/statement-readback-batch.v1.schema.json) 的五个字段；第二阶段只输出 [判断契约](../statement_workflow/schema/statement-expectation-batch.v1.schema.json) 的 ID 和判断。未知字段直接拒绝，不让模型复制第一阶段内容。
+调度层给每组分配精确 ID 和唯一新 draft/result 路径，按 manifest 的 `expectation_declaration_ids` 确定本组是否有参考；本组无参考时第二阶段路径为 null。第一阶段只输出 [回译契约](../statement_workflow/schema/statement-readback-batch.v1.schema.json) 的五个字段；第二阶段只输出 [判断契约](../statement_workflow/schema/statement-expectation-batch.v1.schema.json) 的 ID 和判断。未知字段直接拒绝，不让模型复制第一阶段内容。
 
 以单声明组为例，先保存第一阶段草稿，再调用固定程序；多声明组重复 `--declaration-id`：
 
@@ -58,7 +58,7 @@ python3 skills/scripts/prepare.py --config .formaliscope/tasks/configs/20261008-
 python3 skills/scripts/collect.py --deliver-readback --snapshot <batch>/snapshot.json --manifest <batch>/manifest.json --input <new-draft.json> --result <group-1-readback.json> --declaration-id <精确ID> --next-result <group-1.json>
 ```
 
-程序校验后排他创建第一阶段文件及同路径追加 `.baseline.json` 的记录，包含文件字节 SHA-256、manifest SHA-256、run、来源、组 ID 和第二阶段分配路径。无材料且按 harness 跳过时省略 `--next-result`。这一步不读取预期材料内容。摘要必须由程序计算，不采用模型自报；已有正式文件或记录不覆盖、不重新封存。
+程序校验后排他创建第一阶段文件及同路径追加 `.baseline.json` 的记录，包含文件字节 SHA-256、manifest SHA-256、run、来源、组 ID 和第二阶段分配路径。本组无参考而跳过时省略 `--next-result`。这一步不读取预期材料内容。摘要必须由程序计算，不采用模型自报；已有正式文件或记录不覆盖、不重新封存。
 
 第二阶段先运行 `collect.py --check-readback --snapshot ... --manifest ... --readback-result ...`，成功后只读基线和固定预期材料，再调用 `--deliver-expectation --snapshot ... --manifest ... --readback-result ... --input <new-draft.json> --result <allocated-path>`。程序再次检查摘要、字段和组集合并排他写出。Claude Workflow 无直接文件系统接口，阶段 Agent 负责调用固定交付命令；文件回执不是执行模型或内容可信的证明，收集时仍独立重查。
 
@@ -74,7 +74,7 @@ python3 skills/scripts/collect.py --deliver-readback --snapshot <batch>/snapshot
 }
 ```
 
-上面的对象写入任务配置的 `collection` 字段。新协议始终填写全部组的 `readback_results`，收集器按固定命名读取对应 `.baseline.json`。Claude Code 每条声明固定两个独立 Agent，无论有无材料都填写第二阶段 `results`，各文件恰好一项。Codex/Kimi 有材料时也填写第二阶段 `results`；无材料时为 `results=[]`，由程序生成内部 `undetermined`、跳过理由及固定判断分值 1.0（仅表示缺少材料的确定性，不是模型数学判断）。
+上面的对象写入任务配置的 `collection` 字段。新协议始终填写全部组的 `readback_results`，收集器按固定命名读取对应 `.baseline.json`。Claude Code 每条声明一组，仅有对应参考时启动第二个独立 Agent，各文件恰好一项。各 harness 的 `results` 只填写实际执行第二阶段的结果路径；全无参考时为 `results=[]`，由程序生成内部 `undetermined`、跳过理由及固定判断分值 1.0（仅表示缺少材料的确定性，不是模型数学判断）。
 
 收集器要求两阶段精确 ID、每组条数、分配路径和总目标完全匹配，核对原始第一阶段摘要，按 ID 使用第一阶段全部字段与第二阶段判断构造完整 annotation；非法字段、缺失、重复、冲突或摘要变化均报错，所有输入通过才写新的收集目录。
 

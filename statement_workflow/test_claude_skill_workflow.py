@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from skills.scripts.config import load_config, resolve_worker_model
 from skills.scripts.prepare import prepare
+from skills.scripts.collect import collect
 from review_app.statements import compile_statements
 
 
@@ -49,6 +50,7 @@ class ClaudeWorkflowTests(unittest.TestCase):
                 {'key': 'group-3', 'declarationIds': ['statement::Example.c']},
             ],
             'expectationContext': '/fixture/repo/.formaliscope/tasks/batches/test/expectation-context.txt',
+            'expectationDeclarationIds': ['statement::Example.a', 'statement::Example.b', 'statement::Example.c'],
         }
 
     def run_workflow(self, args=..., mode='normal'):
@@ -154,6 +156,12 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
         self.assertEqual(len(paths), len(set(paths)))
 
     def test_generated_stage_commands_run_actual_cli_with_quoted_paths(self):
+        self.verify_generated_commands(with_context=True)
+
+    def test_no_material_generated_commands_collect_bilingual_readbacks_without_second_agent(self):
+        self.verify_generated_commands(with_context=False)
+
+    def verify_generated_commands(self, *, with_context):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "stage's files; $literal"
             source = root / 'source'
@@ -164,11 +172,16 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
             snapshot_path = root / 'source-snapshot.json'
             snapshot_path.write_text(json.dumps(snapshot))
             batch = root / 'batch'
+            context = root / 'expectation.txt' if with_context else None
+            if context is not None:
+                context.write_text('测试补充预期材料。')
             manifest = prepare(snapshot_path, batch, config_path=SKILL / 'config.json',
-                               directories=['KIP126'])
+                               directories=['KIP126'], expectation_context=context)
             args = deepcopy(self.args)
             args.update(repoRoot=str(ROOT), skillDir=str(SKILL), batchDir=str(batch),
-                        declarationIds=manifest['declaration_ids'], expectationContext=None,
+                        declarationIds=manifest['declaration_ids'],
+                        expectationDeclarationIds=manifest['expectation_declaration_ids'],
+                        expectationContext=str(batch / 'expectation-context.txt') if with_context else None,
                         config=json.loads((batch / 'agent-config.json').read_text()))
             args['groups'] = [{'key': f'group-{index}', 'declarationIds': [identity]}
                               for index, identity in enumerate(manifest['declaration_ids'], 1)]
@@ -195,6 +208,7 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                     annotation = document['annotations'][0]
                     annotation.update(title_zh='测试标题',
                                       readback={'text_zh': r'[TEST] 合成协议回译。 $\alpha$',
+                                                'text_en': r'[TEST] Synthetic readback. $\alpha$',
                                                 'confidence': 0.9},
                                       classification={'role': 'definition', 'topics': []})
                     stage = 'readback'
@@ -220,6 +234,17 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                     self.assertEqual(receipt['result_path'], expected)
                 self.assertEqual(json.loads(Path(data['result_path']).read_text())['annotations'],
                                  [annotation])
+            result_groups = output['result']['groups']
+            report = collect(batch / 'snapshot.json', batch / 'manifest.json',
+                             [group['result_path'] for group in result_groups if group['result_path']],
+                             [], root / 'collected', executed_model=manifest['run']['model'],
+                             readback_paths=[group['readback_path'] for group in result_groups])
+            self.assertEqual(report['counts']['direct'], 3)
+            annotations = json.loads((root / 'collected/enrichment.json').read_text())['annotations']
+            for row in annotations:
+                self.assertIn('Synthetic readback', row['readback']['text_en'])
+                self.assertEqual(row['expectation_assessment']['verdict'], 'undetermined')
+                self.assertEqual(row['expectation_assessment']['confidence'], 0.95 if with_context else 1.0)
 
     def test_shared_harness_prompts_use_stage_schemas_and_fixed_delivery(self):
         for harness in ('claude-code', 'codex', 'kimi-code'):
@@ -266,20 +291,26 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                             if call['opts']['label'].startswith(group['key'] + ':'))
             self.assertEqual(call['input']['declaration_ids'], assigned)
 
-    def test_absent_expectation_still_runs_independent_second_agent_per_declaration(self):
+    def test_absent_material_skips_second_agent_per_declaration(self):
         self.args['expectationContext'] = None
+        self.args['expectationDeclarationIds'] = []
         output = self.run_workflow()
         self.assertTrue(output['result']['complete'])
-        self.assertEqual(len(output['calls']), 6)
-        expectations = [call for call in output['calls']
-                        if call['opts']['agentType'] == 'formaliscope-expectation']
-        self.assertEqual(len(expectations), 3)
-        for call in expectations:
-            self.assertIsNone(call['input']['expectation_context_path'])
-            self.assertIn('undetermined', call['prompt'])
-            self.assertIn('缺少独立预期材料', call['prompt'])
+        self.assertEqual(len(output['calls']), 3)
+        for call in output['calls']:
+            self.assertEqual(call['opts']['agentType'], 'formaliscope-readback')
+            self.assertIsNone(call['input']['next_result_path'])
+            self.assertNotIn('--next-result', shlex.split(call['input']['delivery_command']))
         for group in output['result']['groups']:
-            self.assertNotEqual(group['result_path'], group['readback_path'])
+            self.assertIsNone(group['result_path'])
+
+    def test_only_declarations_with_blueprint_references_start_second_agents(self):
+        self.args['expectationDeclarationIds'] = ['statement::Example.b']
+        output = self.run_workflow()
+        self.assertTrue(output['result']['complete'])
+        self.assertEqual(len(output['calls']), 4)
+        self.assertEqual([call['opts']['label'] for call in output['calls']
+                          if call['opts']['agentType'] == 'formaliscope-expectation'], ['group-2:expectation'])
 
     def test_route_and_supported_effort_come_from_frozen_config(self):
         self.args['config']['worker'] = {'model': 'fixture-custom-route', 'reasoning_effort': 'high'}
@@ -292,7 +323,16 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
     def test_invalid_args_reject_before_any_agent(self):
         missing_ids = deepcopy(self.args)
         del missing_ids['declarationIds']
-        invalid = [json.dumps(self.args), None, missing_ids]
+        missing_expectation_ids = deepcopy(self.args)
+        del missing_expectation_ids['expectationDeclarationIds']
+        invalid = [json.dumps(self.args), None, missing_ids, missing_expectation_ids]
+        for value in (None, ['statement::Unknown'], ['statement::Example.a'] * 2):
+            args = deepcopy(self.args)
+            args['expectationDeclarationIds'] = value
+            invalid.append(args)
+        args = deepcopy(self.args)
+        args['expectationContext'] = None
+        invalid.append(args)
         for field, value in (('groups', []), ('declarationIds', []), ('repoRoot', 'relative'),
                              ('skillDir', None), ('expectationContext', 'relative')):
             args = deepcopy(self.args)
@@ -369,15 +409,21 @@ run(INPUT, mockAgent, mockPipeline, message => logs.push(message)).then(
                 self.assertEqual(call['input']['expectation_context_path'], self.args['expectationContext'])
 
     def test_runtime_cap_is_explicit_and_never_truncates_groups(self):
-        self.args['declarationIds'] = ['statement::Example.' + str(index) for index in range(501)]
-        self.args['groups'] = [{'key': 'group-' + str(index + 1), 'declarationIds': [identity]}
-                               for index, identity in enumerate(self.args['declarationIds'])]
-        for context in (self.args['expectationContext'], None):
-            with self.subTest(context=context):
+        for count, context, success in ((501, self.args['expectationContext'], False),
+                                         (501, None, True), (1001, None, False)):
+            with self.subTest(count=count, context=context):
+                self.args['declarationIds'] = ['statement::Example.' + str(index) for index in range(count)]
+                self.args['groups'] = [{'key': 'group-' + str(index + 1), 'declarationIds': [identity]}
+                                       for index, identity in enumerate(self.args['declarationIds'])]
                 self.args['expectationContext'] = context
+                self.args['expectationDeclarationIds'] = self.args['declarationIds'] if context else []
                 output = self.run_workflow()
-                self.assertIn('超过 Workflow', output['error'])
-                self.assertEqual(output['calls'], [])
+                if success:
+                    self.assertTrue(output['result']['complete'])
+                    self.assertEqual(len(output['calls']), count)
+                else:
+                    self.assertIn('超过 Workflow', output['error'])
+                    self.assertEqual(output['calls'], [])
 
 
 if __name__ == '__main__':

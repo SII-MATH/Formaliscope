@@ -71,7 +71,7 @@ class SkillBatchV2Tests(unittest.TestCase):
     def historical_batch(self, batch):
         manifest = collector._read(batch / 'manifest.json')
         manifest['schema'] = 'formaliscope-enrichment-batch.v2'
-        del manifest['result_protocol'], manifest['harness']
+        del manifest['result_protocol'], manifest['harness'], manifest['expectation_declaration_ids']
         (batch / 'manifest.json').write_text(json.dumps(manifest))
         return manifest
 
@@ -660,6 +660,10 @@ class StageBatchTests(unittest.TestCase):
     def prepare(self, *, output=None, **kwargs):
         settings = load_config(self.config_path)
         settings['harness'] = getattr(self, 'harness', 'claude-code')
+        if 'expectation_context' not in kwargs:
+            context = self.root / 'default-expectation.txt'
+            context.write_text('合成独立预期材料。')
+            kwargs['expectation_context'] = context
         self.manifest = preparer.prepare(self.snapshot_path, output or self.batch,
                                          config_path=self.config_path, directories=['KIP126/Sub'],
                                          _settings=settings, **kwargs)
@@ -676,7 +680,7 @@ class StageBatchTests(unittest.TestCase):
         groups = groups or [[row] for row in self.annotations]
         for index, rows in enumerate(groups, 1):
             first = self.root / f'group-{index}-readback.json'
-            final = self.root / f'group-{index}.json' if collector._needs_expectation(self.manifest) else None
+            final = self.root / f'group-{index}.json' if collector._needs_expectation(self.manifest, [row['declaration_id'] for row in rows]) else None
             draft = self.write(f'draft-{index}.json', self.stage_document('readback', rows))
             receipt = collector.deliver_readback(self.batch / 'snapshot.json', self.batch / 'manifest.json',
                                                  draft, first, [row['declaration_id'] for row in rows], final)
@@ -700,7 +704,7 @@ class StageBatchTests(unittest.TestCase):
 
     def test_new_manifest_and_stage_schemas_merge_by_id_preserving_every_first_stage_field(self):
         self.assertEqual(self.manifest['schema'], 'formaliscope-enrichment-batch.v3')
-        self.assertEqual(self.manifest['result_protocol'], 'formaliscope-stage-results.v1')
+        self.assertEqual(self.manifest['result_protocol'], 'formaliscope-stage-results.v2')
         self.deliver()
         raw = {path: path.read_bytes() for path in self.firsts + self.finals}
         report = self.collect(results=list(reversed(self.finals)), first=list(reversed(self.firsts)))
@@ -840,17 +844,17 @@ class StageBatchTests(unittest.TestCase):
         review['annotation']['readback']['confidence'] = 0.99
         self.rejected(reviews=[self.review_file([review])])
 
-    def test_codex_and_kimi_no_context_skip_second_stage_but_require_sealed_readback(self):
-        for harness in ('codex', 'kimi-code'):
+    def test_all_harnesses_no_context_skip_second_stage_but_require_sealed_readback(self):
+        for harness in ('codex', 'kimi-code', 'claude-code'):
             self.harness = harness
             self.batch = self.root / harness
-            self.prepare()
+            self.prepare(expectation_context=None)
             folder = self.root / (harness + '-results')
             folder.mkdir()
             old_root = self.root
             self.root = folder
             self.output = folder / 'collected'
-            self.deliver(groups=[self.annotations])
+            self.deliver(groups=[[row] for row in self.annotations] if harness == 'claude-code' else [self.annotations])
             self.assertEqual(self.finals, [])
             report = self.collect()
             self.assertEqual(report['counts']['direct'], 2)
@@ -877,7 +881,7 @@ class StageBatchTests(unittest.TestCase):
         self.assertEqual(report['entries'][1]['route'], 'direct')
         self.assertEqual(collector._read(self.output / 'enrichment.json')['annotations'], self.annotations[1:])
 
-    def test_claude_cannot_skip_second_stage_or_use_multi_declaration_group(self):
+    def test_claude_with_context_cannot_skip_second_stage_or_use_multi_declaration_group(self):
         draft = self.write('first-draft.json', self.stage_document('readback', self.annotations))
         for ids, next_path in ((self.ids, self.root / 'next.json'), (self.ids[:1], None)):
             with self.subTest(ids=ids, next_path=next_path), self.assertRaises(ValueError):
@@ -989,19 +993,38 @@ class StageBatchTests(unittest.TestCase):
         SkillBatchV2Tests.blueprint_batch(self)
         self.annotations[1]['expectation_assessment'].update(verdict='aligned', reason_zh=None)
         self.deliver()
-        unbound = self.finals[2]
-        original = unbound.read_bytes()
-        document = json.loads(original)
-        document['annotations'][0]['expectation_assessment'].update(verdict='aligned', reason_zh=None)
-        unbound.write_text(json.dumps(document))
-        self.rejected()
-        unbound.write_bytes(original)
+        self.assertEqual(len(self.finals), 2)
+        self.assertEqual(collector._read(collector._baseline_path(self.firsts[2]))['expectation_path'], None)
         self.collect()
+        document = collector._read(self.output / 'enrichment.json')
+        self.assertEqual(document['originals'][self.ids[2]]['expectation_assessment']['verdict'], 'undetermined')
+
+    def test_legacy_stage_protocol_retains_two_agents_for_claude_without_materials(self):
+        self.batch = self.root / 'legacy-stage-batch'
+        self.prepare(expectation_context=None)
+        self.manifest['result_protocol'] = 'formaliscope-stage-results.v1'
+        del self.manifest['expectation_declaration_ids']
+        (self.batch / 'manifest.json').write_text(json.dumps(self.manifest))
+        self.deliver()
+        self.assertEqual(len(self.finals), 3)
+        self.collect()
+        originals = collector._read(self.output / 'enrichment.json')['originals']
+        self.assertEqual(originals[self.ids[2]], self.annotations[2])
+
+    def test_blueprint_target_allocation_cannot_silently_skip_referenced_declarations(self):
+        SkillBatchV2Tests.blueprint_batch(self)
+        self.assertEqual(self.manifest['expectation_declaration_ids'], self.ids[:2])
+        self.manifest['expectation_declaration_ids'] = []
+        (self.batch / 'manifest.json').write_text(json.dumps(self.manifest))
+        self.deliver()
+        with self.assertRaisesRegex(ValueError, 'do not match the frozen materials'):
+            self.collect()
+        self.assertFalse(self.output.exists())
 
     def test_no_context_direct_collection_cli_accepts_only_readback_results(self):
         self.harness = 'codex'
         self.batch = self.root / 'cli-skipped-batch'
-        self.prepare()
+        self.prepare(expectation_context=None)
         self.deliver(groups=[self.annotations])
         completed = subprocess.run(
             [sys.executable, str(SCRIPTS / 'collect.py'), '--snapshot', str(self.batch / 'snapshot.json'),

@@ -10,7 +10,8 @@ export const meta = {
 if (!args || typeof args !== 'object' || Array.isArray(args)) {
   throw new Error('args 请使用结构化对象')
 }
-const { repoRoot, skillDir, batchDir, resultDir = batchDir, config, declarationIds, groups, expectationContext } = args
+const { repoRoot, skillDir, batchDir, resultDir = batchDir, config, declarationIds, groups,
+  expectationContext, expectationDeclarationIds } = args
 for (const [name, path] of Object.entries({ repoRoot, skillDir, batchDir, resultDir })) {
   if (typeof path !== 'string' || !/^(\/|[A-Za-z]:[\\/])/.test(path)) {
     throw new Error(`${name} 必须是绝对路径`)
@@ -58,7 +59,15 @@ for (const group of groups) {
 if (assigned.size !== selected.size) {
   throw new Error('请补齐分组，使其恰好覆盖本次运行分配的声明集合')
 }
-const agentCount = groups.length * 2
+if (!Array.isArray(expectationDeclarationIds) ||
+    expectationDeclarationIds.some(id => !selected.has(id)) ||
+    new Set(expectationDeclarationIds).size !== expectationDeclarationIds.length ||
+    (expectationContext === null && expectationDeclarationIds.length)) {
+  throw new Error('expectationDeclarationIds 必须来自 manifest 中本次分组对应的预期声明集合；无材料时为空')
+}
+const expectationTargets = new Set(expectationDeclarationIds)
+const needsExpectation = group => group.declarationIds.some(id => expectationTargets.has(id))
+const agentCount = groups.length + expectationTargets.size
 if (groups.length > 4096 || agentCount > 1000) {
   throw new Error('超过 Workflow 运行时上限；显式拆成多次运行后完整收集，不截断目标')
 }
@@ -106,7 +115,7 @@ const results = await pipeline(
       topics: config.topics,
       declaration_ids: group.declarationIds,
       draft_path: `${path}.input.json`,
-      next_result_path: join(resultDir, `${group.key}.json`),
+      next_result_path: needsExpectation(group) ? join(resultDir, `${group.key}.json`) : null,
       result_path: path,
       output_template: {
         schema: 'formaliscope-readback-batch.v1',
@@ -117,7 +126,8 @@ const results = await pipeline(
     }
     input.delivery_command = deliveryCommand('--deliver-readback', '--snapshot', snapshotPath,
       '--manifest', manifestPath, '--input', input.draft_path, '--result', path,
-      '--declaration-id', group.declarationIds[0], '--next-result', input.next_result_path)
+      '--declaration-id', group.declarationIds[0],
+      ...(input.next_result_path === null ? [] : ['--next-result', input.next_result_path]))
     const receipt = await agent(
       `执行纯 Lean 回译。先读取 prompt_path、output_schema_path 和 schema_path 的绝对路径，再按以下 JSON 数据完成本组。
 所有路径以任务数据为准，不拼接当前工作目录、repo_root 或额外的 .formaliscope 前缀。
@@ -134,6 +144,9 @@ const results = await pipeline(
   },
   async (readback, group) => {
     if (!readback) return null
+    if (!needsExpectation(group)) {
+      return { key: group.key, readback_path: readback.result_path, result_path: null, count: readback.count }
+    }
     const path = join(resultDir, `${group.key}.json`)
     const input = {
       repo_root: repoRoot,
