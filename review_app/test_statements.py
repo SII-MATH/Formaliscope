@@ -12,13 +12,78 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .build import validate_snapshot, _content_fingerprint
-from .statements import compile_statements, source_declarations
+from .build import validate_snapshot, _content_fingerprint, calculate_snapshot_digest
+from .statements import compile_statements, source_declarations, review_evidence
+from .judgments import catalog
 from .server import ReviewHTTPServer, initialize, make_handler, accepts_gzip
 from .preview import PreviewAuthStore
 
 
 class StatementBuildTests(unittest.TestCase):
+    def test_visibility_from_modifiers_and_module_scopes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'KIP126').mkdir()
+            (root / 'KIP126/Plain.lean').write_text(
+                'namespace Plain\n'
+                '/-- public is only documentation. -/\n'
+                '@[simp]\nprivate\ntheorem helper : True := by trivial\n'
+                'protected def exported : Nat := 1\n'
+                'public def explicit : Nat := exported\n'
+                'def text := "private def fake := 1"\nend Plain\n')
+            (root / 'KIP126/Module.lean').write_text(
+                '/- module header -/\nmodule\nnamespace Mod\n'
+                'def internal : Nat := 1\n'
+                'public noncomputable section Exports\n'
+                'def exported : Nat := internal\n'
+                'namespace Nested\nsection\n'
+                'def nested : Nat := 1\nend\nend Nested\n'
+                'private def helper : Nat := 1\nend Exports\n'
+                'def restored : Nat := 1\npublic def explicit : Nat := 1\nend Mod\n')
+            snapshot = compile_statements(root, source_commit='a' * 40)
+            validate_snapshot(snapshot)
+            cards = {card['declaration']: card for card in snapshot['cards']}
+            expected = {'Plain.helper': 'private', 'Plain.exported': 'public',
+                        'Plain.explicit': 'public', 'Plain.text': 'public',
+                        'Mod.internal': 'private', 'Mod.exported': 'public',
+                        'Mod.Nested.nested': 'public', 'Mod.helper': 'private',
+                        'Mod.restored': 'private', 'Mod.explicit': 'public'}
+            self.assertEqual({name: card['visibility'] for name, card in cards.items()}, expected)
+            helper = cards['Plain.helper']
+            self.assertTrue(helper['lean']['source'].startswith('@[simp]\nprivate\ntheorem'))
+            self.assertEqual(helper['lean']['line'], 3)
+            self.assertNotIn('public noncomputable section', cards['Mod.internal']['lean']['source'])
+            # Installed older snapshots are projected on recall, keeping IDs,
+            # source fingerprints, digest, and stored evidence untouched.
+            old = deepcopy(snapshot)
+            for card in old['cards']:
+                card.pop('visibility')
+                card.pop('private', None)
+            old['digest'] = calculate_snapshot_digest(old)
+            before = deepcopy(old)
+            self.assertEqual({card['declaration']: review_evidence(card, old)['visibility']
+                              for card in old['cards']}, expected)
+            db = root / 'reviews.sqlite3'
+            initialize(db)
+            recalled = catalog(old, db, 'reviewer', initial_id='auto')
+            self.assertEqual({card['declaration']: card['visibility'] for card in recalled['cards']}, expected)
+            self.assertEqual(recalled['initial_evidence']['visibility'], 'public')
+            self.assertEqual(old, before)
+            validate_snapshot(old)
+
+    def test_legacy_recall_uses_header_not_comments_or_body(self):
+        for source, expected in [
+                ('/- private -/\ndef value := "private"', 'public'),
+                ('@[simp]\nprivate\ntheorem value : True := by trivial', 'private'),
+                ('protected def value : Nat := 1', 'public'),
+                ('public def value : Nat := 1', 'public')]:
+            with self.subTest(source=source):
+                card = {'lean': {'source': source}, 'fingerprint': 'unchanged'}
+                projection = review_evidence(card, {'review_mode': 'statement'})
+                self.assertEqual(projection['visibility'], expected)
+                self.assertEqual(projection['fingerprint'], 'unchanged')
+                self.assertNotIn('visibility', card)
+
     def test_blueprint_binds_every_name_in_grouped_lean_tags(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -272,13 +337,28 @@ class StatementHTTPTests(unittest.TestCase):
             self.assertEqual(int(response.headers['Content-Length']),len(raw))
         compressed=json.loads(gzip.decompress(raw))
         self.assertEqual(compressed,plain[2]);self.assertLess(len(raw),len(gzip.decompress(raw)))
-        self.assertEqual(compressed['initial_evidence'],self.card,'Embedding preserves complete evidence and fingerprints')
+        self.assertEqual(compressed['initial_evidence'],{**self.card,'visibility':'public'},'Embedding preserves complete evidence and fingerprints')
         other=self.request(path,cookie=second,extra_headers={'Accept-Encoding':'gzip'})[2]
         self.assertIsNone(other['cards'][0]['verdict'],'Compressed responses are never shared between identities')
         denied=self.request(path,cookie=first,extra_headers={'Accept-Encoding':'gzip;q=0, *;q=1'})
         self.assertNotIn('Content-Encoding',denied[1]);self.assertEqual(denied[2],plain[2])
         self.assertIsNone(self.request('/api/catalog?initial=unknown',cookie=first)[2]['initial_evidence'])
         self.assertEqual(self.request(path,extra_headers={'Accept-Encoding':'gzip'})[0],401)
+
+    def test_legacy_private_visibility_is_consistent_across_recall_routes(self):
+        self.card['lean'] = {'source': '/- public -/\nprivate def X : Nat := 1'}
+        original = deepcopy(self.snapshot)
+        cookie = self.login('Reviewer')
+        recalled = self.request('/api/catalog?initial=auto', cookie=cookie)[2]
+        self.assertEqual(recalled['cards'][0]['visibility'], 'private')
+        self.assertIsNone(recalled['initial_evidence'])
+        path = '?id=statement%3A%3AX'
+        for response in (self.request('/api/evidence' + path, cookie=cookie)[2],
+                         self.request('/api/card' + path, cookie=cookie)[2]['card'],
+                         self.request('/api/catalog?initial=statement%3A%3AX', cookie=cookie)[2]['initial_evidence']):
+            self.assertEqual(response['visibility'], 'private')
+            self.assertEqual(response['fingerprint'], self.card['fingerprint'])
+        self.assertEqual(self.snapshot, original)
 
     def test_gzip_quality_negotiation(self):
         for value,expected in [('',False),('br',False),('gzip',True),('GZIP; q=0.5',True),

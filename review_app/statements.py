@@ -13,15 +13,17 @@ from bisect import bisect_right
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from functools import lru_cache
 
 from .build import (SNAPSHOT_SCHEMA, CURRENT_FINGERPRINT_SCHEME, _digest,
                     _content_fingerprint, _dependency_lock_digest, _clean_statement,
                     INPUT_RE, NODE_RE, LABEL_RE, lean_references, CHAPTER_RE,
                     calculate_snapshot_digest, _git_head, _git_dirty)
 
-DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|protected|noncomputable|partial|unsafe)\s+)*"
+DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|public|protected|noncomputable|partial|unsafe|nonrec|meta)\s+)*"
                   r"(def|theorem|lemma|structure|class|abbrev|inductive|opaque|axiom|constant|instance)"
-                  r"\s+([\w'.«»₀-₉]+)(?=\s|\{|\(|:|$)")
+                  r"\s+([\w'.«»₀-₉]+)(?=\s|\{|\(|:|$)", re.M)
+SCOPE = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:public|noncomputable|meta)\s+)*(section|namespace)(?:\s|$)")
 TOKEN = re.compile(r"[\w'₀-₉]+(?:\.[\w'₀-₉]+)*")
 
 
@@ -96,6 +98,67 @@ def _ordinary_comment_gap(text: str, start: int, end: int,
     return not text[position:end].strip()
 
 
+def _declaration_headers(masked_text: str) -> dict:
+    """Locate supported headers and track name visibility in section scopes."""
+    offsets = [0]
+    for match in re.finditer('\n', masked_text):
+        offsets.append(match.end())
+    headers = {}
+    for match in DECL.finditer(masked_text):
+        start = match.start() + len(match[0]) - len(match[0].lstrip())
+        headers[bisect_right(offsets, start) - 1] = match
+    # Ordinary Lean files export declarations by default; `module` opts into
+    # private defaults. An explicit public section overrides that default.
+    private = bool(re.match(r'^\s*module\b', masked_text))
+    scopes, result = [], {}
+    for number, line in enumerate(masked_text.splitlines()):
+        scope = SCOPE.match(line)
+        if scope:
+            scopes.append(private)
+            modifiers = re.sub(r'@\[[^]]*\]', '', line[:scope.start(1)])
+            if re.search(r'\bpublic\b', modifiers):
+                private = False
+        elif re.match(r'^\s*end(?:\s|$)', line):
+            if scopes:
+                private = scopes.pop()
+        if number in headers:
+            match = headers[number]
+            modifiers = re.sub(r'@\[[^]]*\]', '', masked_text[match.start():match.start(1)])
+            explicit = re.search(r'\b(private|public)\b', modifiers)
+            result[number] = (match, explicit[1] == 'private' if explicit else private)
+    return result
+
+
+@lru_cache(maxsize=4096)
+def _module_visibility(source: str) -> dict[int, str]:
+    masked = mask_comments(source)
+    result = {}
+    position, last = 0, 0
+    for first, (match, private) in _declaration_headers(masked).items():
+        last += masked.count('\n', position, match.start(1))
+        position = match.start(1)
+        for line in range(first + 1, last + 2):
+            result[line] = 'private' if private else 'public'
+    return result
+
+
+def review_evidence(card: dict, snapshot: dict) -> dict:
+    """Add display metadata on recall without rewriting installed evidence."""
+    if snapshot.get('review_mode') != 'statement':
+        return card
+    visibility = card.get('visibility')
+    if visibility not in ('private', 'public'):
+        if card.get('private') is True:
+            return {**card, 'visibility': 'private'}
+        lean = card.get('lean') or {}
+        module = snapshot.get('modules', {}).get(card.get('module_file') or lean.get('file'))
+        visibility = _module_visibility(module).get(lean.get('line')) if module else None
+        if visibility is None:
+            flags = _module_visibility(lean.get('source') or '')
+            visibility = next(iter(flags.values()), 'public')
+    return {**card, 'visibility': visibility}
+
+
 def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[dict]:
     repo = repo.resolve()
     records = []
@@ -104,6 +167,7 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
     for path in source_files(repo, selected_roots):
         text = path.read_text(encoding='utf-8')
         masked_text, comments = _mask_source(text)
+        headers = _declaration_headers(masked_text)
         original, masked = text.splitlines(), masked_text.splitlines()
         comment_ends = [end for _, end in comments]
         documentation = [(start, end) for start, end in comments
@@ -122,7 +186,7 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
                 namespace.extend(ns[1].split('.'))
                 scopes.append(ns[1].split('.'))
                 continue
-            if re.match(r'^\s*section(?:\s|$)', line):
+            if SCOPE.match(line):
                 scopes.append([])
                 continue
             if re.match(r'^\s*end(?:\s|$)', line):
@@ -131,9 +195,9 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
                     if count:
                         del namespace[-count:]
                 continue
-            match = DECL.match(line)
-            if not match:
+            if number not in headers:
                 continue
+            match, private = headers[number]
             kind, name = match.groups()
             # Lean's _root_ prefix explicitly escapes the current namespace.
             fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
@@ -151,12 +215,12 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
                 if text.startswith('/--', start) and _ordinary_comment_gap(
                         text, end, declaration_start, comments, comment_ends):
                     doc = text[start+3:end-2].strip()
-            found.append((fqn, kind, number, tuple(namespace), doc))
-        for offset, (name, kind, first, ns, doc) in enumerate(found):
+            found.append((fqn, kind, number, tuple(namespace), doc, private))
+        for offset, (name, kind, first, ns, doc, private) in enumerate(found):
             last = found[offset+1][2] if offset+1 < len(found) else len(original)
             # Do not include following namespace/section ends or the next docstring.
             for stop in range(first+1, last):
-                if re.match(r'^\s*(?:end|namespace|section)(?:\s|$)', masked[stop]) or re.match(
+                if SCOPE.match(masked[stop]) or re.match(r'^\s*end(?:\s|$)', masked[stop]) or re.match(
                     r'^(?:attribute|open|variable|universe|set_option|export|#check|#eval|#print|syntax|macro|elab|initialize)(?:\s|$)', masked[stop]):
                     last = stop
                     break
@@ -171,7 +235,7 @@ def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[d
                     end = found_fields[field_index+1].start() if field_index+1 < len(found_fields) else len(source)
                     fields.append((field[2], source[field.end():end].strip()))
             records.append({'name': name, 'kind': kind, 'namespace': ns,
-                            'private': bool(re.search(r'\bprivate\b', masked[first][:DECL.match(masked[first]).start(1)])),
+                            'private': private,
                             'file': str(path.relative_to(repo)), 'line': first+1,
                             'source': source, 'fields': fields, 'doc': doc[:5000],
                             'context': '\n'.join(original[:first]),
@@ -313,10 +377,11 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             'review_contract': 'statement-front-end.v1',
             'module_file': row['file'],
             'annotation_source_sha256': annotation['source_sha256'] if annotation else None,
+            'visibility': 'private' if row['private'] else 'public',
         }
         if blueprint:
             card['blueprint_references'] = blueprint
-        if repository and row['private']:
+        if row['private']:
             card['private'] = True
         nl, lean, fingerprint = _content_fingerprint(card, None)
         card.update(nl_digest=nl, lean_digest=lean, fingerprint=fingerprint,

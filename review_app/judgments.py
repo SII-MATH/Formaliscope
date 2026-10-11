@@ -80,6 +80,7 @@ def _catalog_enrichment(card: dict) -> dict:
 
 
 def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | None = None) -> dict:
+    from .statements import review_evidence
     with closing(connect(db_path)) as db:
         rows = db.execute("""SELECT card_id, fingerprint, fingerprint_scheme,
             review_basis_scheme, review_basis_fingerprint, verdict, created_at FROM judgments
@@ -89,6 +90,7 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
         by_card.setdefault(row["card_id"], []).append(row)
     cards = []
     for card in snapshot["cards"]:
+        card = review_evidence(card, snapshot)
         judgments = by_card.get(card["id"], [])
         current = next((row for row in reversed(judgments) if _judgment_matches(card, row)), None)
         cards.append({
@@ -98,7 +100,7 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
             "verdict": current["verdict"] if current else None,
             "stale": bool(judgments and not current),
             **{key: card[key] for key in ('dependencies', 'role', 'priority', 'risk',
-                'main_target', 'statement_origin', 'module_file') if key in card},
+                'main_target', 'statement_origin', 'module_file', 'visibility') if key in card},
             **_catalog_enrichment(card),
         })
     payload = {
@@ -117,10 +119,10 @@ def catalog(snapshot: dict, db_path: Path, reviewer: str, *, initial_id: str | N
     if initial_id is not None:
         if initial_id == "auto":
             initial_id = next((row["id"] for row in cards
-                               if row["source_status"] == "local" and not row["verdict"]),
-                              cards[0]["id"] if cards else None)
+                               if row["source_status"] == "local" and not row["verdict"] and row.get('visibility') != 'private'),
+                              next((row['id'] for row in cards if row.get('visibility') != 'private'), None))
         payload["initial_evidence"] = next(
-            (card for card in snapshot["cards"] if card["id"] == initial_id), None
+            (review_evidence(card, snapshot) for card in snapshot["cards"] if card["id"] == initial_id), None
         )
     return payload
 

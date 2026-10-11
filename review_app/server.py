@@ -52,6 +52,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
     name_mode = isinstance(auth, NameAuthStore)
     auth_mode = "preview" if preview else "name" if name_mode else "email"
     installed = snapshot
+    from .statements import review_evidence
     contexts = {dataset_id(item): (item, {card['id']: card for card in item['cards']}, SymbolIndex(item))
                 for item in datasets(installed)}
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
@@ -340,7 +341,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                     return
                 records = (history_page(db_path, card_id, viewer, dataset=dataset_id(snapshot)) if snapshot.get('review_mode') == 'statement'
                            else {"history": history(db_path, card_id, viewer, dataset=dataset_id(snapshot))})
-                self._json(200, {"card": card, **records},
+                self._json(200, {"card": review_evidence(card, snapshot), **records},
                            etag=None)  # History changes after a judgment.
                 return
             if path == "/api/review-state":
@@ -371,7 +372,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 if card is None:
                     self._json(404, {"error": "审核对象不存在"})
                     return
-                self._json(200, card, etag='"' + card["fingerprint"] + '"')
+                self._json(200, review_evidence(card, snapshot), etag='"' + card["fingerprint"] + '"')
                 return
             if path == "/api/export":
                 mode = parse_qs(parsed.query).get("mode", ["history"])[0]

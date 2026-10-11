@@ -283,7 +283,8 @@ async function configuredTopicsAndV2Labels(){
   assert.match(f.element('label-provenance-summary').textContent,/尚未分级/);
   f.element('labels-dialog').close();f.element('reset-labels').onclick();
   f.click('A');await settle();
-  assert.equal(f.element('card-labels').innerHTML,'','A v2 null role is not replaced by a heuristic definition label');
+  assert.doesNotMatch(f.element('card-labels').innerHTML,/定义与模型|常规审核/,'V2 null role and priority are not replaced by heuristic labels');
+  assert.match(f.element('card-labels').innerHTML,/public/,'Visibility remains available when machine classification is unknown');
   assert.match(f.element('more-card-labels').innerHTML,/回译草稿/);
   assert.doesNotMatch(f.element('statement').innerHTML,/DELETED_SUMMARY_FIELD/);
 }
@@ -398,6 +399,45 @@ async function inheritedEvidenceShowsItsOriginalVersion(){
   assert.equal(f.element('status-badge').title,'');
 }
 
+async function visibilityQueueAndPrivateContext(){
+  const configure=(cards,records)=>{
+    cards[0].visibility='private';cards[0].dependencies=['B'];
+    cards[1].visibility='public';cards[1].dependencies=['A'];
+    cards[2].visibility='private';
+    records.set('C',[{id:'private-review',card_id:'C',fingerprint:'fp-C',verdict:'aligned'}]);
+  };
+  const f=fixture({initialURL:'https://review.example/',configure});await settle();
+  assert.equal(f.title,'B','Default selection skips the first private card');
+  assert.match(f.element('card-list').innerHTML,/data-id="B"/);
+  assert.doesNotMatch(f.element('card-list').innerHTML,/data-id="[AC]"/);
+  assert.match(f.element('card-labels').innerHTML,/public/);
+  assert.equal(f.element('progress-label').textContent,'0 / 1','Private judgments do not count toward public progress');
+  assert.match(f.element('progress-note').textContent,/private 原则上无需审核/);
+  assert.match(f.element('dependencies').innerHTML,/private/,'Private references stay accessible');
+  f.click('A');await settle();
+  assert.equal(f.title,'A');assert.equal(f.element('private-review-note').hidden,false);
+  assert.match(f.element('card-labels').innerHTML,/private/);
+  assert.equal(f.element('status-badge').textContent,'未审阅','Private is never automatically passed');
+  f.element('next').onclick();await settle();assert.equal(f.title,'B','Next returns to the public queue');
+  assert.equal(f.element('private-review-note').hidden,true);
+  f.element('choose-labels').onclick();
+  assert.match(f.element('label-groups').innerHTML,/data-label="visibility\/private"[^>]*>[\s\S]*?<small>2<\/small>/,'Private facet counts remain available with the public default');
+  const linked=fixture({initialURL:'https://review.example/?labels=visibility%2Fprivate',configure});await settle();
+  assert.equal(linked.title,'A');
+  assert.doesNotMatch(linked.element('card-list').innerHTML,/data-id="B"/);
+  assert.match(linked.element('card-list').innerHTML,/data-id="[AC]"/);
+  linked.element('reset-labels').onclick();await settle();
+  assert.match(linked.element('card-list').innerHTML,/data-id="B"/);
+  assert.doesNotMatch(linked.element('card-list').innerHTML,/data-id="[AC]"/);
+  const hash=fixture({initialURL:'https://review.example/#A',configure});await settle();
+  assert.equal(hash.title,'A','Explicit private links keep priority over the default queue');
+  hash.element('locate-list').onclick();await settle();
+  assert.equal(new URL(hash.url).searchParams.get('labels'),'visibility/private','Locate exposes the selected private declaration');
+  const all=fixture({initialURL:'https://review.example/?labels=visibility%2Fpublic,visibility%2Fprivate',configure});await settle();
+  for(const id of ['A','B','C'])assert.match(all.element('card-list').innerHTML,new RegExp(`data-id="${id}"`));
+  assert.equal(all.element('progress-label').textContent,'0 / 1');
+}
+
 (async()=>{await ordinaryJumpThenNativeBack();await nativeBackThenOrdinaryJump();
   await failedMixedNavigation();await latestOrdinaryJump();
   for(const acknowledgeBeforeClick of [true,false])await nextUnderPendingFilter({acknowledgeBeforeClick});
@@ -410,6 +450,7 @@ async function inheritedEvidenceShowsItsOriginalVersion(){
   await historicalLinksOpenCurrentRepository();
   await predecessorLinksOpenSuccessorCard();
   await inheritedEvidenceShowsItsOriginalVersion();
+  await visibilityQueueAndPrivateContext();
   await blueprintReferenceDisplay();
   await bilingualReadbackAndListJump();
   console.log("Statement page integration: navigation, draft recovery, personal dependencies and configured v2 labels passed.");
