@@ -57,6 +57,7 @@ def make_handler(snapshot: dict, db_path: Path, static_dir: Path, auth: SessionS
                 for item in datasets(installed)}
     files = {"/": ("statement.html" if snapshot.get('review_mode') == 'statement' else "index.html", "text/html; charset=utf-8"),
              "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+             "/logo.svg": ("logo.svg", "image/svg+xml"),
              "/admin": ("admin.html", "text/html; charset=utf-8"),
              "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
              "/admin.css": ("admin.css", "text/css; charset=utf-8"),
