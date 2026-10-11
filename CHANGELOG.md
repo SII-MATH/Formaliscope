@@ -6,6 +6,23 @@
 
 ## 未发布
 
+## [v0.0.12] — 2026-10-11
+
+### 新增
+
+- 审阅卡片列表、详情和引用对象显示 Lean 声明的 private/public 可见性；标签筛选支持单独查看 private 或同时查看两类声明，目录范围导出也记录可见性。
+
+### 改进
+
+- 默认审阅队列跳过 private，目录及全库进度只统计 public；private 原则上无需审核，仍可通过直接链接、依赖引用或筛选查看并按需提交判断。
+- 旧快照在卡片召回时从冻结源码补算可见性，并缓存解析结果；新索引识别显式 private/public、多行修饰符、public section 和 module 文件的默认可见性。
+- 回译新批次按声明冻结参考材料范围，没有 Blueprint 参考或补充材料的组跳过内部预期判断 Agent，由收集程序记录“不知道”及跳过原因，减少无材料时的无效调用。
+
+### 兼容性说明
+
+- 数据库保持 schema 13；现有运行快照无需重新生成或安装，已有账号、人工判断及历史记录保留，private 不会自动标为通过。更新应用并重启服务后即可显示可见性。
+- 新回译批次使用阶段协议 v2，旧阶段协议 v1 及历史 manifest 继续按冻结契约收集；最终补充数据仍为 statement-enrichment.v2，内部判断不进入公开快照或人工进度。
+
 ## [v0.0.11] — 2026-10-10
 
 ### 改进
@@ -176,6 +193,7 @@
 - 合并到 `main` 后自动测试、打包并发布 GitHub Release；日常开发使用 `dev`。
 - 草稿可续传，重跑同一提交复用版本，已发布附件保持不变。
 
+[v0.0.12]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.12
 [v0.0.11]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.11
 [v0.0.10]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.10
 [v0.0.9]: https://github.com/SII-MATH/Formaliscope/releases/tag/v0.0.9
