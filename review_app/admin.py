@@ -46,7 +46,7 @@ def user_directory(installed: dict, db_path: Path, *, auth_mode='name', admin_em
     with closing(_read_connection(db_path)) as db:
         users = _accounts(db, auth_mode, admin_emails)
         for user in users.values():
-            user.update(current_count=0, history_count=0, last_review_at=None,
+            user.update(reviewed_count=0, current_count=0, history_count=0, last_review_at=None,
                         verdicts={'aligned': 0, 'uncertain': 0, 'misaligned': 0, 'partial': 0},
                         dataset_admin_count=0)
         for row in db.execute('SELECT reviewer, COUNT(*) AS count FROM dataset_admins GROUP BY reviewer'):
@@ -68,13 +68,17 @@ def user_directory(installed: dict, db_path: Path, *, auth_mode='name', admin_em
             key = (row['dataset_id'], row['reviewer'], row['card_id'])
             if card and _judgment_matches(card, row) and key not in latest:
                 latest.add(key)
+                user['reviewed_count'] += 1
                 user['current_count'] += 1
                 user['verdicts'][row['verdict']] += 1
     ordered = sorted(users.values(), key=lambda user: (not user['is_admin'], user['display_name'], user['reviewer']))
     return {'users': ordered, 'datasets': [dataset_info(source) for source in sources],
             'stats': {'registered': len(ordered), 'enabled': sum(not user['disabled'] for user in ordered),
                       'admins': sum(user['is_admin'] and not user['disabled'] for user in ordered),
-                      'reviewers': sum(user['history_count'] > 0 for user in ordered)},
+                      'reviewers': sum(user['history_count'] > 0 for user in ordered),
+                      'reviewed_count': len({(scope, card) for scope, reviewer, card in latest}),
+                      'current_count': len(latest),
+                      'history_count': len(saved)},
             'auth_mode': auth_mode}
 
 
@@ -136,5 +140,6 @@ def user_reviews(snapshot: dict, db_path: Path, reviewer: str, *, cursor=0, limi
             'current_card_id': successor_card_id if card is not None else None,
             'card_available': card is not None})
     return {'user': user, 'dataset': dataset_info(snapshot), 'reviews': page,
+            'reviewed_count': len(current),
             'history_count': len(history), 'current_count': len(current),
             'next_cursor': cursor + limit if cursor + limit < len(history) else None}

@@ -432,9 +432,13 @@ def admin_summary(snapshot: dict, db_path: Path) -> dict:
         card = cards.get(row['card_id'])
         if card and _judgment_matches(card, row):
             latest.setdefault((row['reviewer'], row['card_id']), row)
+    from .review_history import judgment_roots
+    roots = judgment_roots(records)
     return {'source_commit': snapshot['source_commit'], 'snapshot_digest': snapshot['digest'],
             'dataset': dataset_info(snapshot),
             'total_cards': len(cards), 'judgments': list(latest.values()),
-            'history_count': len(records), 'stale_count': sum(
-                not cards.get(row['card_id']) or not _judgment_matches(cards[row['card_id']], row)
-                for row in records)}
+            'reviewed_count': len({row['card_id'] for row in latest.values()}),
+            'current_count': len(latest),
+            'history_count': len(set(roots.values())), 'stale_count': len({roots[row['id']]
+                for row in records if not cards.get(row['card_id']) or
+                not _judgment_matches(cards[row['card_id']], row)})}
