@@ -1,4 +1,4 @@
-"""Build a source-backed Statement browsing snapshot (no Lean execution).
+"""Build Statement snapshots from Lean semantic declaration indexes.
 
 The graph is a source-reference candidate graph, not an elaborator dependency
 graph. Blueprint prose stays attributed to Blueprint. Generated summaries are
@@ -20,10 +20,10 @@ from .build import (SNAPSHOT_SCHEMA, CURRENT_FINGERPRINT_SCHEME, _digest,
                     INPUT_RE, NODE_RE, LABEL_RE, lean_references, CHAPTER_RE,
                     calculate_snapshot_digest, _git_head, _git_dirty)
 
-DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|public|protected|noncomputable|partial|unsafe|nonrec|meta)\s+)*"
+_LEGACY_DECL = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:private|public|protected|noncomputable|partial|unsafe|nonrec|meta)\s+)*"
                   r"(def|theorem|lemma|structure|class|abbrev|inductive|opaque|axiom|constant|instance)"
                   r"\s+([\w'.«»₀-₉]+)(?=\s|\{|\(|:|$)", re.M)
-SCOPE = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:public|noncomputable|meta)\s+)*(section|namespace)(?:\s|$)")
+_LEGACY_SCOPE = re.compile(r"^\s*(?:@\[[^]]*\]\s*)*(?:(?:public|noncomputable|meta)\s+)*(section|namespace)(?:\s|$)")
 TOKEN = re.compile(r"[\w'₀-₉]+(?:\.[\w'₀-₉]+)*")
 
 
@@ -84,27 +84,16 @@ def _mask_source(text: str) -> tuple[str, list[tuple[int, int]]]:
     return ''.join(result), comments
 
 
-def _ordinary_comment_gap(text: str, start: int, end: int,
-                          comments: list[tuple[int, int]], comment_ends: list[int]) -> bool:
-    """Check original source so strings and documentation stay syntax boundaries."""
-    position = start
-    for index in range(bisect_right(comment_ends, start), len(comments)):
-        left, right = comments[index]
-        if left >= end:
-            break
-        if right > end or text[position:left].strip() or text.startswith(('/--', '/-!'), left):
-            return False
-        position = right
-    return not text[position:end].strip()
+def _legacy_declaration_headers(masked_text: str) -> dict:
+    """Decode visibility only for frozen historical snapshots without metadata.
 
-
-def _declaration_headers(masked_text: str) -> dict:
-    """Locate supported headers and track name visibility in section scopes."""
+    This compatibility path never participates in new declaration extraction.
+    """
     offsets = [0]
     for match in re.finditer('\n', masked_text):
         offsets.append(match.end())
     headers = {}
-    for match in DECL.finditer(masked_text):
+    for match in _LEGACY_DECL.finditer(masked_text):
         start = match.start() + len(match[0]) - len(match[0].lstrip())
         headers[bisect_right(offsets, start) - 1] = match
     # Ordinary Lean files export declarations by default; `module` opts into
@@ -112,7 +101,7 @@ def _declaration_headers(masked_text: str) -> dict:
     private = bool(re.match(r'^\s*module\b', masked_text))
     scopes, result = [], {}
     for number, line in enumerate(masked_text.splitlines()):
-        scope = SCOPE.match(line)
+        scope = _LEGACY_SCOPE.match(line)
         if scope:
             scopes.append(private)
             modifiers = re.sub(r'@\[[^]]*\]', '', line[:scope.start(1)])
@@ -134,7 +123,7 @@ def _module_visibility(source: str) -> dict[int, str]:
     masked = mask_comments(source)
     result = {}
     position, last = 0, 0
-    for first, (match, private) in _declaration_headers(masked).items():
+    for first, (match, private) in _legacy_declaration_headers(masked).items():
         last += masked.count('\n', position, match.start(1))
         position = match.start(1)
         for line in range(first + 1, last + 2):
@@ -146,6 +135,8 @@ def review_evidence(card: dict, snapshot: dict) -> dict:
     """Add display metadata on recall without rewriting installed evidence."""
     if snapshot.get('review_mode') != 'statement':
         return card
+    from .judgments import _card_fingerprints
+    card = {**card, 'fingerprints': _card_fingerprints(card)}
     visibility = card.get('visibility')
     if visibility not in ('private', 'public'):
         if card.get('private') is True:
@@ -159,88 +150,11 @@ def review_evidence(card: dict, snapshot: dict) -> dict:
     return {**card, 'visibility': visibility}
 
 
-def source_declarations(repo: Path, *, roots: list[str] | None = None) -> list[dict]:
-    repo = repo.resolve()
-    records = []
-    from .repositories import source_files
-    selected_roots = roots if roots is not None else [name for name in ('KIP126', 'KIPBase') if (repo / name).is_dir()]
-    for path in source_files(repo, selected_roots):
-        text = path.read_text(encoding='utf-8')
-        masked_text, comments = _mask_source(text)
-        headers = _declaration_headers(masked_text)
-        original, masked = text.splitlines(), masked_text.splitlines()
-        comment_ends = [end for _, end in comments]
-        documentation = [(start, end) for start, end in comments
-                         if text.startswith(('/--', '/-!'), start)]
-        documentation_ends = [end for _, end in documentation]
-        previous_documentation = -1
-        line_offsets = []
-        position = 0
-        for line in text.splitlines(keepends=True):
-            line_offsets.append(position)
-            position += len(line)
-        namespace, scopes, found = [], [], []
-        for number, line in enumerate(masked):
-            ns = re.match(r'^\s*namespace\s+([\w.]+)', line)
-            if ns:
-                namespace.extend(ns[1].split('.'))
-                scopes.append(ns[1].split('.'))
-                continue
-            if SCOPE.match(line):
-                scopes.append([])
-                continue
-            if re.match(r'^\s*end(?:\s|$)', line):
-                if scopes:
-                    count = len(scopes.pop())
-                    if count:
-                        del namespace[-count:]
-                continue
-            if number not in headers:
-                continue
-            match, private = headers[number]
-            kind, name = match.groups()
-            # Lean's _root_ prefix explicitly escapes the current namespace.
-            fqn = name.removeprefix('_root_.') if name.startswith('_root_.') else '.'.join([*namespace, name])
-            # A section heading (/-!) is a separate command, not declaration
-            # documentation. Ordinary comments are whitespace; real code,
-            # strings and other documentation remain attachment boundaries.
-            declaration_start = line_offsets[number] + len(line) - len(line.lstrip())
-            comment_index = bisect_right(documentation_ends, declaration_start) - 1
-            doc = ''
-            if comment_index >= 0 and comment_index != previous_documentation:
-                # Only the first following declaration can consume a doc;
-                # avoid repeatedly scanning growing gaps for later declarations.
-                previous_documentation = comment_index
-                start, end = documentation[comment_index]
-                if text.startswith('/--', start) and _ordinary_comment_gap(
-                        text, end, declaration_start, comments, comment_ends):
-                    doc = text[start+3:end-2].strip()
-            found.append((fqn, kind, number, tuple(namespace), doc, private))
-        for offset, (name, kind, first, ns, doc, private) in enumerate(found):
-            last = found[offset+1][2] if offset+1 < len(found) else len(original)
-            # Do not include following namespace/section ends or the next docstring.
-            for stop in range(first+1, last):
-                if SCOPE.match(masked[stop]) or re.match(r'^\s*end(?:\s|$)', masked[stop]) or re.match(
-                    r'^(?:attribute|open|variable|universe|set_option|export|#check|#eval|#print|syntax|macro|elab|initialize)(?:\s|$)', masked[stop]):
-                    last = stop
-                    break
-            while last > first+1 and not masked[last-1].strip():
-                last -= 1
-            source = '\n'.join(original[first:last]).rstrip()
-            fields = []
-            if kind in ('structure', 'class'):
-                field_re = re.compile(r'^([ \t]{2,})([\w\'₀-₉]+)\s*(?:\([^\n]*?\)\s*)?:', re.M)
-                found_fields = list(field_re.finditer(source))
-                for field_index, field in enumerate(found_fields):
-                    end = found_fields[field_index+1].start() if field_index+1 < len(found_fields) else len(source)
-                    fields.append((field[2], source[field.end():end].strip()))
-            records.append({'name': name, 'kind': kind, 'namespace': ns,
-                            'private': private,
-                            'file': str(path.relative_to(repo)), 'line': first+1,
-                            'source': source, 'fields': fields, 'doc': doc[:5000],
-                            'context': '\n'.join(original[:first]),
-                            'full_source': text})
-    return records
+def source_declarations(repo: Path, *, roots: list[str] | None = None,
+                        semantic_index: Path | dict | None = None) -> list[dict]:
+    """Read compiler declarations; never fall back to source pattern matching."""
+    from .lean_semantics import source_declarations as semantic_declarations
+    return semantic_declarations(repo, roots=roots, semantic_index=semantic_index)
 
 
 def blueprint_references(repo: Path) -> dict[str, list[dict]]:
@@ -278,14 +192,41 @@ def blueprint_prose(repo: Path) -> dict[str, dict]:
 
 
 def compile_statements(repo: Path, *, source_commit: str | None = None, annotations: Path | None = None,
-                       repository: dict | None = None) -> dict:
+                       repository: dict | None = None, semantic_index: Path | dict | None = None) -> dict:
     repo = repo.resolve()
     from .repositories import repository_config
     repository = repository_config(repository) if repository is not None else None
-    records = source_declarations(repo, roots=repository['roots'] if repository else None)
-    index = {(row['name'] + '::file=' + row['file'] if repository and row['private'] else row['name']): row
+    from .lean_semantics import read_semantic_index
+    scan_roots = repository['roots'] if repository else None
+    semantic = read_semantic_index(repo, roots=scan_roots, semantic_index=semantic_index)
+    if semantic['provenance']['source_commit'] == 'unknown' and source_commit is None:
+        raise ValueError('source archives require --source-commit for an unverified Statement preview')
+    records = source_declarations(repo, roots=scan_roots, semantic_index=semantic)
+    snapshot = _compile_records(repo, records, source_commit=source_commit, annotations=annotations,
+                                repository=repository, semantic=semantic)
+    # Source and dependency inputs must stay fixed throughout card assembly.
+    read_semantic_index(repo, roots=scan_roots, semantic_index=semantic)
+    from .build import validate_snapshot
+    validate_snapshot(snapshot)
+    return snapshot
+
+
+def _compile_records(repo: Path, records: list[dict], *, source_commit: str | None = None,
+                     annotations: Path | None = None, repository: dict | None = None,
+                     semantic: dict | None = None) -> dict:
+    """Assemble frozen records; historical test fixtures share this payload builder.
+
+    New builds enter through compile_statements, which requires compiler evidence.
+    """
+    name_counts = defaultdict(int)
+    for row in records:
+        name_counts[row['name']] += 1
+    index = {(row['name'] + '::file=' + row['file'] if row['private'] and
+              (repository or semantic is not None and name_counts[row['name']] > 1) or
+              semantic is not None and row.get('name_generated')
+              else row['name']): row
              for row in records}
-    if repository and len(index) != len(records):
+    if (repository or semantic is not None) and len(index) != len(records):
         raise ValueError('ambiguous declaration names in configured roots; narrow roots or disambiguate source namespaces')
     if repository and not records:
         raise ValueError('configured roots contain no supported Lean declarations')
@@ -379,6 +320,13 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
             'annotation_source_sha256': annotation['source_sha256'] if annotation else None,
             'visibility': 'private' if row['private'] else 'public',
         }
+        if semantic is not None:
+            card['compiler_name'] = row['compiler_name']
+            card['visibility_origin'] = 'lean-compiler'
+            if row.get('name_generated'):
+                card['name_generated'] = True
+                if not row['private']:
+                    card['identity_file'] = row['file']
         if blueprint:
             card['blueprint_references'] = blueprint
         if row['private']:
@@ -391,8 +339,9 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
     cards.sort(key=lambda card: (-card['priority'], card['declaration']))
     snapshot = {'schema': SNAPSHOT_SCHEMA, 'fingerprint_scheme': CURRENT_FINGERPRINT_SCHEME,
                 'generated_at': datetime.now(timezone.utc).isoformat(),
-                'source_commit': source_commit or _git_head(repo),
-                'source_dirty': False if source_commit else _git_dirty(repo),
+                'source_commit': source_commit or (semantic['provenance']['source_commit']
+                                                   if semantic is not None else _git_head(repo)),
+                'source_dirty': semantic['provenance']['source_dirty'] if semantic is not None else (False if source_commit else _git_dirty(repo)),
                 'source_origin': 'archive-unverified' if source_commit else 'git-checkout',
                 'dependency_lock_digest': _dependency_lock_digest(repo),
                 'unlinked_nodes': 0, 'cards': cards, 'review_mode': 'statement',
@@ -400,7 +349,7 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
                 'modules': {row['file']: row['full_source'] for row in records}}
     from .repositories import source_files
     scan_roots = repository['roots'] if repository else [name for name in ('KIP126', 'KIPBase') if (repo / name).is_dir()]
-    snapshot['modules'] = {str(path.relative_to(repo)): path.read_text(encoding='utf-8')
+    snapshot['modules'] = {str(path.relative_to(repo)): path.read_bytes().decode('utf-8')
                            for path in source_files(repo, scan_roots)}
     snapshot['source_environment'] = {
         name: hashlib.sha256((repo / name).read_bytes()).hexdigest() if (repo / name).is_file() else None
@@ -410,7 +359,13 @@ def compile_statements(repo: Path, *, source_commit: str | None = None, annotati
     snapshot['source_environment']['path_dependencies'] = any(
         item.get('type') == 'path' for item in manifest.get('packages', []))
     from .reuse import freeze_imports
-    snapshot['context_modules'] = freeze_imports(repo, snapshot['modules'])
+    if semantic is not None:
+        from .lean_semantics import semantic_index_metadata, semantic_imports
+        snapshot['semantic_index'] = semantic_index_metadata(semantic)
+        snapshot['module_imports'] = semantic_imports(semantic)
+        snapshot['context_modules'] = freeze_imports(repo, snapshot['modules'], module_imports=snapshot['module_imports'])
+    else:
+        snapshot['context_modules'] = freeze_imports(repo, snapshot['modules'])
     if repository:
         snapshot['repository'] = repository
         snapshot['enrichment_topics'] = repository['topics']

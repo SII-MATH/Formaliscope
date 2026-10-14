@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from .statements import DECL, mask_comments
+from .statements import _LEGACY_DECL as DECL, mask_comments
 
 PART = r"(?:[^\W\d][\w'₀-₉]*|«[^»\n]+»)"
 NAME = re.compile(PART + r"(?:\." + PART + r")*", re.UNICODE)

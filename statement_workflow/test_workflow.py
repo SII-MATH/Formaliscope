@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 
-from review_app.statements import compile_statements
+from review_app.test_source_fixtures import compile_statements
 from .engine import config, digest, import_result, job, prepare, read, run, statement_source, validate_result, write
 
 

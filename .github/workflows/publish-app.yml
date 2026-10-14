@@ -15,7 +15,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      FORMALISCOPE_REQUIRE_LEAN_TESTS: '1'
     steps:
       - name: Check out the exact merged commit
         uses: actions/checkout@v4
@@ -29,6 +31,17 @@ jobs:
 
       - name: Install offsite backup test dependency
         run: python3 -m pip install -r deploy/requirements-offsite-backup.txt
+
+      - name: Set up pinned Lean semantic exporter tests
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: review_app/lean/tests
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
 
       - name: Verify before publishing
         run: |

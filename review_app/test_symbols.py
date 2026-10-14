@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from .database import initialize
 from .preview import PreviewAuthStore
 from .server import ReviewHTTPServer, make_handler
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .symbols import NAME, SymbolIndex
 
 

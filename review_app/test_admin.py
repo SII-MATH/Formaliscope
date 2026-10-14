@@ -11,7 +11,7 @@ from .repositories import dataset_id, make_collection
 from .test_repositories import RepositoryFixture
 from .dataset_storage import preserve_legacy_records
 from .reuse import reuse_snapshot, inherit_judgments
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 
 
 class AdminReadModelTests(RepositoryFixture, unittest.TestCase):

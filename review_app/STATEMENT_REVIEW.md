@@ -4,7 +4,7 @@ KIP-12 的前端功能预览固定于 KIP126 `develop` 提交 `38554617a4465bbce
 
 ## 生成与运行
 
-需要 Python 3.10+，应用只使用标准库：
+需要 Python 3.10+，应用只使用标准库。新构建另需被审仓库锁定的 Lean v4.32.2 工具链，或同一源码的 `--semantic-index`；运行服务无需 Lean。条目检出和可见性来自编译器，默认只审 public，private 作为上下文保留。操作与旧记录兼容性见 [语义索引](LEAN_SEMANTICS.md)：
 
 ```sh
 python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
@@ -14,7 +14,7 @@ python3 -m review_app serve --preview --port 8876 --data-dir .formaliscope/runti
 
 精确源码归档可额外指定 `--source-commit <完整提交 SHA>`；操作者负责确保归档与提交一致。正式构建应从干净 Git 检出使用 `--require-clean`。
 
-构建时可通过 `--annotations /absolute/path/annotations.json` 接入本地回译草稿；草稿文件保存在被 Git 忽略的 `.formaliscope/tasks/drafts/` 中。草稿绑定声明的源码 SHA-256，源码变化后拒绝沿用。Lean 回译与阅读摘要、Blueprint 参考陈述分开显示；有英文回译时可切换中文和英文，历史单语条目保持中文。有绑定文案时保留全部关联节点及其出处，生成回译后参考仍然存在；无绑定文案时不显示参考面板。同一节点关联多个声明时提示核对当前声明对应的部分。参考文案或英文回译变化会更新审阅依据，旧判断留在历史；仅文件或行号移动不会改变数学审阅依据。
+构建时可通过 `--annotations /absolute/path/annotations.json` 接入本地回译草稿；草稿文件保存在被 Git 忽略的 `.formaliscope/tasks/drafts/` 中。草稿绑定声明的源码 SHA-256，源码变化后拒绝沿用。Lean 回译与阅读摘要、Blueprint 参考陈述分开显示；有英文回译时可切换中文和英文，历史单语条目保持中文。有绑定文案时保留全部关联节点及其出处，生成回译后参考仍然存在；无绑定文案时不显示参考面板。同一节点关联多个声明时提示核对当前声明对应的部分。人工判断和草稿的有效性绑定 Lean 声明与原始参考文案，中英文回译变化不要求重新审阅。Lean 或参考文案变化时旧判断留在历史；仅参考文件或行号移动不会改变数学审阅依据。
 
 回译批次默认把所选声明绑定的 Blueprint 文案冻结为第二阶段预期参考。第一阶段只读 Lean；第二阶段不能改写已保存的回译。没有本声明的参考或用户明确补充材料时，内部预期判断为不知道。自动阅读摘要不充当预期。
 

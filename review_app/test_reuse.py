@@ -17,7 +17,7 @@ from .enrichment_v2 import DEFAULT_TOPICS
 from .judgments import review_state, submit, reviewer_export
 from .repositories import dataset_id, make_collection
 from .reuse import automatic_predecessor, automatic_reuse, context_basis, reuse_snapshot, predecessor
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements, write_semantic_fixture
 from .storage import install_snapshot, create_backup, verify_backup
 from .test_enrichment_v2 import fixture_document
 
@@ -29,6 +29,7 @@ class ReuseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'source'
         self.source.mkdir()
+        (self.source / 'lean-toolchain').write_text('leanprover/lean4:v4.32.2\n')
         self.file = self.source / 'Value.lean'
         self.file.write_text('namespace Example\ndef value : Nat := 1\nend Example\n')
         self.config = {'id': 'alpha', 'name': 'Alpha', 'roots': ['.'],
@@ -85,6 +86,22 @@ class ReuseTests(unittest.TestCase):
         self.assertEqual(review_state(candidate, backup / 'judgments.sqlite3', self.card_id, self.reviewer), state)
         self.install(self.old)
         self.assertEqual(len(reviewer_export(self.old, self.db, self.reviewer)['judgments']), 2)
+
+    def test_fresh_readback_keeps_inherited_human_decision_when_context_is_unchanged(self):
+        self.install(self.old)
+        original = self.judge(self.old)
+        document = fixture_document(self.new)
+        for row in (document['annotations'][0], document['originals'][self.card_id]):
+            row['readback'].update(text_zh='新的中文回译', text_en='Fresh English readback')
+        fresh = enrich_snapshot(self.new, document)
+        candidate = reuse_snapshot(fresh, self.old)
+        self.assertNotEqual(candidate['cards'][0]['fingerprint'], self.old['cards'][0]['fingerprint'])
+        self.assertEqual(candidate['cards'][0]['enrichment'], fresh['cards'][0]['enrichment'])
+        _, report = self.install(candidate)
+        self.assertEqual(report['inherited_judgments'], 1)
+        current = review_state(candidate, self.db, self.card_id, self.reviewer)['current']
+        self.assertEqual(current['inherited_from_id'], original['id'])
+        self.assertEqual(current['snapshot_digest'], original['snapshot_digest'])
 
     def test_does_not_override_target_reviews_or_cross_repository_boundaries(self):
         candidate = reuse_snapshot(self.new, self.old)
@@ -190,6 +207,7 @@ class ReuseTests(unittest.TestCase):
         built = self.root / 'built.json'
         command = [sys.executable, '-m', 'review_app', 'build', '--statements', '--source', str(self.source),
                    '--source-commit', 'b' * 40, '--repository-config', str(config),
+                   '--semantic-index', str(write_semantic_fixture(self.source, roots=self.config['roots'])),
                    '--reuse-from', str(old), '--output', str(built)]
         result = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -313,7 +331,8 @@ class ReuseTests(unittest.TestCase):
         config.write_text(json.dumps(self.config))
         original = (self.data / 'snapshot.json').read_bytes()
         command = [sys.executable, '-m', 'review_app', 'build', '--statements', '--source', str(self.source),
-                   '--source-commit', 'b' * 40, '--repository-config', str(config)]
+                   '--source-commit', 'b' * 40, '--repository-config', str(config),
+                   '--semantic-index', str(write_semantic_fixture(self.source, roots=self.config['roots']))]
         for flag in ([], ['--no-reuse']):
             with self.subTest(flag=flag):
                 output = self.root / (uuid.uuid4().hex + '.json')

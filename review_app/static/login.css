@@ -2,7 +2,7 @@
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
 .login-card{width:min(100%,420px);background:white;border:1px solid #dbe7db;border-radius:14px;padding:36px;box-shadow:0 14px 55px #243d2912}
-.mark{width:42px;height:42px;display:grid;place-items:center;background:#174a3c;color:white;border-radius:11px;font:26px Georgia,serif}
+.mark{display:block;flex-shrink:0;width:64px;height:64px;object-fit:contain}
 .eyebrow{font-size:10px;font-weight:700;letter-spacing:.16em;color:#5c9875;margin:25px 0 7px}
 h1{font-size:25px;line-height:1.25;margin:0}
 .hint{font-size:13px;line-height:1.7;color:#708176;margin:12px 0 26px}

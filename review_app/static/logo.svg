@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="14 0 100 138" fill="none">
+  <title>Formaliscope — 双页</title>
+  <defs><mask id="page-gaps"><path fill="#fff" d="M0 0h128v138H0z"/><path fill="#000" d="M68 11C63 26 18 36 18 59V62C18 39 63 29 68 14Z"/><path fill="#000" d="M110 31C106 46 58 57 58 87V90C58 60 106 49 110 34Z"/><path fill="#000" d="M110 41C106 56 58 67 58 97V100C58 70 106 59 110 44Z"/></mask></defs>
+  <g mask="url(#page-gaps)">
+  <path d="M68 4C63 19 18 29 18 52V114L51 94V77C51 60 68 57 68 39Z" fill="#214f40"/>
+  <path d="M110 24C106 39 58 50 58 80V134L98 112Q110 105 110 92Z" fill="#58ad91"/>
+  <path d="M68 4C63 19 18 29 18 52V59C18 36 63 26 68 11Z" fill="#81b4a1"/>
+  <path d="M110 24C106 39 58 50 58 80V87C58 57 106 46 110 31Z" fill="#81b4a1"/>
+  <path d="M110 34C106 49 58 60 58 90V97C58 67 106 56 110 41Z" fill="#b7d3c4"/>
+  </g>
+</svg>

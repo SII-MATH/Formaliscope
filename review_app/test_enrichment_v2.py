@@ -16,7 +16,7 @@ from .enrichment_v2 import DEFAULT_TOPICS, read_document, validate_agent_annotat
 from .judgments import catalog, reviewer_export
 from .preview import PreviewAuthStore
 from .server import ReviewHTTPServer, make_handler
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 
 
 def fixture_document(snapshot):
@@ -176,7 +176,7 @@ class EnrichmentV2Tests(unittest.TestCase):
         self.assertEqual(self.snapshot['cards'][0]['lean'], original['cards'][0]['lean'])
         self.assertEqual(result['enrichment_topics'], DEFAULT_TOPICS)
 
-    def test_bilingual_readback_is_public_and_changes_review_basis(self):
+    def test_bilingual_readback_is_public_and_changes_content_fingerprint(self):
         chinese = enrich_snapshot(self.snapshot, self.document)
         for row in (self.document['annotations'][0], self.document['originals'][self.identity]):
             row['readback']['text_en'] = '[TEST] An English mathematical statement.'

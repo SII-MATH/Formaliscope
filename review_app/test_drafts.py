@@ -12,7 +12,7 @@ from pathlib import Path
 from .database import MIGRATIONS, initialize
 from .judgments import (admin_summary, catalog, history, history_page, review_state,
                         reviewer_export, save_draft, submit)
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .storage import create_backup
 
 
@@ -125,7 +125,7 @@ class ReviewDraftTests(unittest.TestCase):
         full = reviewer_export(self.snapshot, self.db, self.reviewer, mode='history')
         self.assertEqual([row['id'] for row in latest['judgments']], [second['id']])
         self.assertEqual([row['id'] for row in full['judgments']], [first['id'], second['id']])
-        changed_card = {**self.card, 'fingerprint': 'd' * 64,
+        changed_card = {**self.card, 'fingerprint': 'd' * 64, 'lean_digest': 'e' * 64,
                         'fingerprints': {self.card['fingerprint_scheme']: 'd' * 64}}
         changed = {**self.snapshot, 'cards': [changed_card]}
         self.assertIsNone(self.state(snapshot=changed)['draft'])

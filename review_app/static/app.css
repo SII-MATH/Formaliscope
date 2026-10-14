@@ -7,7 +7,7 @@ a{color:inherit;text-decoration:none}
 [hidden]{display:none!important}
 .topbar{height:72px;border-bottom:1px solid #e3e8e1;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 28px;gap:24px}
 .brand{display:flex;align-items:center;gap:12px;min-width:175px}
-.brand-mark{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:#174a3c;color:white;font-family:Georgia,serif;font-size:24px}
+.brand-mark{display:block;flex-shrink:0;width:36px;height:36px;object-fit:contain}
 .brand strong{display:block;font-size:16px;line-height:1.05;letter-spacing:.04em}
 .brand small{font-size:11px;color:#788982}
 .top-actions{display:flex;align-items:center;gap:22px}

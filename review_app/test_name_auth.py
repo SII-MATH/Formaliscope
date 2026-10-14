@@ -23,7 +23,7 @@ from .judgments import history, submit, update_reviewer_profile
 from .name_auth import NAME_SESSION_LIFETIME, NameAuthStore, RateLimited, name_settings
 from .preflight import run_preflight
 from .server import ReviewHTTPServer, make_handler, serve
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .storage import create_backup
 
 

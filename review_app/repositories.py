@@ -102,10 +102,16 @@ def qualify_legacy(snapshot: dict) -> dict:
         return result
     result['schema'] = SNAPSHOT_SCHEMA
     result.setdefault('source_dirty', False)
+    roots = (result['semantic_index']['provenance']['roots'] if result.get('semantic_index')
+             else ['KIP126', 'KIPBase'])
     result['repository'] = repository_config({'id': 'kip126', 'name': 'KIP126',
-                                             'roots': ['KIP126', 'KIPBase'],
+                                             'roots': roots,
                                              'topics': result.get('enrichment_topics', [])})
-    mapping = {card['id']: 'statement::kip126::' + card['declaration'] for card in result['cards']}
+    mapping = {
+        card['id']: ('statement::kip126::' + card['declaration'] +
+                     ('::file=' + (card.get('identity_file') or card['module_file'])
+                      if card.get('identity_file') or card.get('private') else ''))
+        for card in result['cards']}
     for card in result['cards']:
         card['legacy_card_id'] = card['id']
         card['id'] = mapping[card['id']]

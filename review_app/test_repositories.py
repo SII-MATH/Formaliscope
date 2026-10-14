@@ -21,7 +21,7 @@ from .preview import PreviewAuthStore
 from .repositories import current_datasets, dataset_id, make_collection, qualify_legacy, repository_config, select_dataset
 from .repository_transition import successor_snapshot
 from .server import ReviewHTTPServer, make_handler
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .storage import create_backup, install_snapshot, verify_backup
 from .symbols import SymbolIndex
 

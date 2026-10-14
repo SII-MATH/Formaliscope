@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from review_app.enrichment import validate_enrichment
-from review_app.statements import compile_statements
+from review_app.test_source_fixtures import compile_statements
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'skills/scripts/collect.py'
