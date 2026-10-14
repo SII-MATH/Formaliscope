@@ -49,7 +49,7 @@ class AdminReadModelTests(RepositoryFixture, unittest.TestCase):
             before = list(db.iterdump())
         directory = user_directory(self.collection, self.db)
         self.assertEqual(directory['stats'], {'registered': 4, 'enabled': 3, 'admins': 1, 'reviewers': 2,
-                                                   'reviewed_count': 2, 'current_count': 2, 'history_count': 5})
+                                             'reviewed_count': 2, 'current_count': 2, 'history_count': 5})
         users = {item['reviewer']: item for item in directory['users']}
         self.assertEqual(users[self.first_user]['current_count'], 2)
         self.assertEqual(users[self.first_user]['history_count'], 4)

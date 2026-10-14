@@ -29,7 +29,7 @@ function fixture({global=true,hook=()=>null}={}){
       if(url==='./api/admin/users')return response({users,datasets:[alpha,beta],stats:{registered:3,enabled:3,admins:1,reviewers:1,reviewed_count:1,current_count:1,history_count:2}});
       if(url.startsWith('./api/admin/user?')){
         const params=new URL(url,'http://review.example').searchParams,user=users.find(item=>item.reviewer===params.get('reviewer'));
-        return response({user,dataset:params.get('dataset')===beta.id?beta:alpha,reviewed_count:1,reviewed_count:1,current_count:1,history_count:26,next_cursor:params.get('cursor')==='0'?25:null,
+        return response({user,dataset:params.get('dataset')===beta.id?beta:alpha,reviewed_count:1,current_count:1,history_count:26,next_cursor:params.get('cursor')==='0'?25:null,
           reviews:[{id:'row',card_id:'statement::alpha::X',title:'<b>条目</b>',rationale:'<img src=x onerror=bad()>',verdict:'aligned',status:'current',card_available:true,created_at:'2026-10-09T00:00:00Z'}]});
       }
       if(url.startsWith('./api/admin/summary'))return response({dataset:alpha,source_commit:alpha.source_commit,reviewed_count:0,current_count:0,history_count:0,stale_count:0,judgments:[]});
