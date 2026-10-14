@@ -35,6 +35,8 @@ def main():
     build.add_argument('--source-commit', help='known 40-character commit for an exact source archive (Statement preview only)')
     build.add_argument('--annotations', type=Path, help='source-hash-bound back-translation drafts for Statement review')
     build.add_argument('--repository-config', type=Path, help='repository id/name, scan roots, main targets and topics JSON')
+    build.add_argument('--semantic-index', type=Path,
+                       help='Lean-generated semantic index bound to this exact source checkout; otherwise build and export it')
     build.add_argument('--expect-commit', help='refuse a source checkout that does not match this exact commit')
     build_reuse = build.add_mutually_exclusive_group()
     build_reuse.add_argument('--reuse-from', type=Path, help='override the default installed predecessor with this frozen snapshot')
@@ -42,6 +44,11 @@ def main():
     build.add_argument('--review-data-dir', type=Path, default=default_data_dir,
                        help='read installed predecessor here; defaults to REVIEW_DATA_DIR or the project runtime')
     build.add_argument('--reuse-dataset', help='explicit predecessor dataset when --reuse-from is a collection')
+    semantic = sub.add_parser('export-lean-index', help='build Lean modules and export a new compiler semantic index')
+    semantic.add_argument('--source', type=Path, required=True)
+    semantic.add_argument('--repository-config', type=Path)
+    semantic.add_argument('--require-clean', action='store_true')
+    semantic.add_argument('--output', type=Path, required=True)
     reuse = sub.add_parser('reuse-snapshot', help='carry unchanged evidence from an explicit predecessor into a new candidate')
     reuse.add_argument('--snapshot', type=Path, required=True)
     reuse.add_argument('--reuse-from', type=Path, required=True)
@@ -119,6 +126,27 @@ def main():
     merge.add_argument('--source', required=True)
     merge.add_argument('--target', required=True)
     args = parser.parse_args()
+    if args.command == 'export-lean-index':
+        from .lean_semantics import export_semantic_index
+        from .repositories import repository_config
+        from .enrichment_v2 import read_document
+        from .build import _git_dirty
+        try:
+            source = args.source.expanduser().resolve()
+            output = candidate_output_path(args.output, source_tree=source)
+            if args.require_clean and _git_dirty(source):
+                raise ValueError('reviewed source has uncommitted changes')
+            config = repository_config(read_document(args.repository_config)) if args.repository_config else None
+            index = export_semantic_index(source, roots=config['roots'] if config else None)
+            if args.require_clean and index['provenance']['source_dirty']:
+                raise ValueError('reviewed source has uncommitted changes')
+            write_candidate_artifact(index, output, source_tree=source)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        count = sum(len(module['declarations']) for module in index['modules'])
+        print(json.dumps({'declarations': count, 'semantic_index_digest': index['digest'],
+                          'output': str(output)}, ensure_ascii=False))
+        return
     if args.command == 'bundle-snapshots':
         from .repositories import make_collection
         from .enrichment_v2 import read_document
@@ -196,6 +224,8 @@ def main():
             output = candidate_output_path(requested_output, source_tree=source)
             if args.repository_config and not args.statements:
                 parser.error('--repository-config requires --statements')
+            if args.semantic_index and not args.statements:
+                parser.error('--semantic-index requires --statements')
             if ((args.reuse_from or args.no_reuse) and not args.statements or
                     args.reuse_dataset and not args.reuse_from):
                 parser.error('--reuse-from/--no-reuse require --statements; --reuse-dataset requires --reuse-from')
@@ -211,7 +241,12 @@ def main():
                     parser.error('--source-commit requires an exact archive commit and cannot be combined with --require-clean')
                 from .enrichment_v2 import read_document
                 repository = read_document(args.repository_config) if args.repository_config else None
-                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations, repository=repository)
+                if args.require_clean:
+                    from .build import _git_dirty
+                    if _git_dirty(source):
+                        parser.error('reviewed source has uncommitted changes')
+                result = compile_statements(source, source_commit=args.source_commit, annotations=args.annotations,
+                                            repository=repository, semantic_index=args.semantic_index)
                 if args.require_clean and result['source_dirty']:
                     parser.error('reviewed source has uncommitted changes')
                 result['comparison'] = compare_snapshots(None, result)
@@ -227,7 +262,8 @@ def main():
                     installed = read_document(installed_file) if installed_file.is_file() else None
                     result, _ = automatic_reuse(result, installed)
                 write_candidate_artifact(result, output, source_tree=source,
-                                         input_artifacts=(args.reuse_from,) if args.reuse_from else ())
+                                         input_artifacts=tuple(path for path in
+                                             (args.reuse_from, args.semantic_index) if path is not None))
             else:
                 if args.source_commit:
                     parser.error('--source-commit is only supported for --statements')

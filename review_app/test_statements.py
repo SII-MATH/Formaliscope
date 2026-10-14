@@ -13,14 +13,15 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .build import validate_snapshot, _content_fingerprint, calculate_snapshot_digest
-from .statements import compile_statements, source_declarations, review_evidence
+from .test_source_fixtures import compile_statements, source_declarations
+from .statements import review_evidence
 from .judgments import catalog
 from .server import ReviewHTTPServer, initialize, make_handler, accepts_gzip
 from .preview import PreviewAuthStore
 
 
-class StatementBuildTests(unittest.TestCase):
-    def test_visibility_from_modifiers_and_module_scopes(self):
+class StatementFixtureMetadataTests(unittest.TestCase):
+    def test_historical_visibility_metadata_and_module_recall(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'KIP126').mkdir()
@@ -170,7 +171,7 @@ class StatementBuildTests(unittest.TestCase):
                 compile_statements(root,source_commit='a'*40,annotations=annotations)
 
 
-class StatementDocumentationTests(unittest.TestCase):
+class StatementDocumentationMetadataTests(unittest.TestCase):
     def build(self, text):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

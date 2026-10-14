@@ -18,6 +18,7 @@ from .build import (CURRENT_FINGERPRINT_SCHEME, LEGACY_SNAPSHOT_SCHEMA,
 from .judgments import catalog, history
 from .snapshot_artifacts import RUNTIME_MARKERS, write_candidate_artifact
 from .storage import install_snapshot
+from .test_source_fixtures import write_semantic_fixture
 
 
 class SnapshotLifecycleTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class SnapshotLifecycleTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.source = self.root / "source"
         (self.source / "KIP126").mkdir(parents=True)
+        (self.source / "lean-toolchain").write_text('leanprover/lean4:v4.32.2\n')
         (self.source / "blueprint/src").mkdir(parents=True)
         (self.source / "KIP126/Sample.lean").write_text(
             "namespace KIP126.Sample\ntheorem foo : True := by trivial\nend KIP126.Sample\n",
@@ -43,6 +45,9 @@ class SnapshotLifecycleTests(unittest.TestCase):
         self.runtime = self.root / "runtime"
 
     def cli(self, *arguments):
+        if arguments[0] == 'build' and '--statements' in arguments:
+            index = write_semantic_fixture(self.source)
+            arguments = (*arguments, '--semantic-index', index)
         return subprocess.run([sys.executable, "-m", "review_app", *map(str, arguments)],
                               cwd=Path(__file__).resolve().parents[1],
                               env={**os.environ, "REVIEW_DATA_DIR": str(self.runtime)},

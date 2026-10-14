@@ -1,0 +1,9 @@
+name = "formaliscopeSemanticFixture"
+version = "0.1.0"
+defaultTargets = ["SemanticFixture"]
+
+[[lean_lib]]
+name = "SemanticFixture"
+
+[[lean_lib]]
+name = "Support"

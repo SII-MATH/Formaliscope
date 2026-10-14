@@ -300,7 +300,7 @@ fi
                             self.assertIn("does not support backup retention", result.stderr)
 
     def test_unverified_archive_needs_explicit_development_override(self):
-        from .statements import compile_statements
+        from .test_source_fixtures import compile_statements
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/'source/KIP126').mkdir(parents=True)

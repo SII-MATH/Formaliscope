@@ -12,7 +12,7 @@ import unittest
 from skills.scripts.config import load_config, resolve_worker_model
 from skills.scripts.prepare import prepare
 from skills.scripts.collect import collect
-from review_app.statements import compile_statements
+from review_app.test_source_fixtures import compile_statements
 
 
 ROOT = Path(__file__).resolve().parents[1]

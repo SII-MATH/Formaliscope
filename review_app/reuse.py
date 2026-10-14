@@ -130,22 +130,47 @@ def imported_modules(text):
     return result
 
 
-def freeze_imports(repo: Path, modules: dict) -> dict:
-    """Capture local imported modules even when they are outside scan roots."""
+def _import_file(name: str) -> str | None:
+    """Convert a Lean module name to a repository-relative source path."""
+    if (not isinstance(name, str) or not name or any(char in name for char in '/\\\x00') or
+            any(not part or part in ('.', '..') for part in name.split('.'))):
+        return None
+    return name.replace('.', '/') + '.lean'
+
+
+def freeze_imports(repo: Path, modules: dict, *, module_imports: dict | None = None) -> dict:
+    """Capture local imports, using compiler evidence for semantic snapshots.
+
+    The compiler map covers both selected sources and their local transitive
+    imports. A missing entry must not fall back to a source-pattern guess.
+    Historical snapshots without the map retain their original contract.
+    """
+    repo = repo.resolve()
     context = {}
-    pending = list(modules.values())
+    pending = list(modules)
     while pending:
-        for name in imported_modules(pending.pop()):
-            if not re.fullmatch(r'[\w]+(?:\.[\w]+)*', name):
+        source = pending.pop()
+        if module_imports is not None:
+            if source not in module_imports:
+                raise ValueError('semantic import graph does not cover a local source module')
+            names = module_imports[source]
+        else:
+            names = imported_modules(modules.get(source, context.get(source, '')))
+        for name in names:
+            if module_imports is None and not re.fullmatch(r'[\w]+(?:\.[\w]+)*', name):
                 continue
-            file = name.replace('.', '/') + '.lean'
+            file = _import_file(name)
+            if file is None:
+                if module_imports is not None:
+                    raise ValueError('semantic import graph contains an invalid module name')
+                continue
             path = repo / file
             if file in modules or file in context or not path.is_file():
                 continue
             if not path.resolve().is_relative_to(repo):
                 raise ValueError('imported source symlink escapes the repository')
-            context[file] = path.read_text(encoding='utf-8')
-            pending.append(context[file])
+            context[file] = path.read_bytes().decode('utf-8')
+            pending.append(file)
     return context
 
 
@@ -168,11 +193,22 @@ def _module_basis(snapshot: dict, root: str, cache: dict) -> str | None:
             hashes[file] = _digest(_tokens(text))
         if file != root:
             imported[file] = hashes[file]
-        for name in imported_modules(text):
-            if not re.fullmatch(r'[\w]+(?:\.[\w]+)*', name):
+        module_imports = snapshot.get('module_imports')
+        if module_imports is not None:
+            if file not in module_imports:
                 cache[root] = None
                 return None
-            path = name.replace('.', '/') + '.lean'
+            names = module_imports[file]
+        else:
+            names = imported_modules(text)
+        for name in names:
+            if module_imports is None and not re.fullmatch(r'[\w]+(?:\.[\w]+)*', name):
+                cache[root] = None
+                return None
+            path = _import_file(name)
+            if path is None:
+                cache[root] = None
+                return None
             if path in modules:
                 pending.append(path)
             else:

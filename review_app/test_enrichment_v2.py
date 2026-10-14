@@ -16,7 +16,7 @@ from .enrichment_v2 import DEFAULT_TOPICS, read_document, validate_agent_annotat
 from .judgments import catalog, reviewer_export
 from .preview import PreviewAuthStore
 from .server import ReviewHTTPServer, make_handler
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 
 
 def fixture_document(snapshot):

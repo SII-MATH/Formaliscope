@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from review_app.enrichment import validate_enrichment
-from review_app.statements import compile_statements
+from review_app.test_source_fixtures import compile_statements
 from skills.scripts.config import load_config, resolve_worker_model
 
 

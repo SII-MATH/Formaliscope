@@ -4,7 +4,7 @@ KIP-12 的前端功能预览固定于 KIP126 `develop` 提交 `38554617a4465bbce
 
 ## 生成与运行
 
-需要 Python 3.10+，应用只使用标准库：
+需要 Python 3.10+，应用只使用标准库。新构建另需被审仓库锁定的 Lean v4.32.2 工具链，或同一源码的 `--semantic-index`；运行服务无需 Lean。条目检出和可见性来自编译器，默认只审 public，private 作为上下文保留。操作与旧记录兼容性见 [语义索引](LEAN_SEMANTICS.md)：
 
 ```sh
 python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json

@@ -17,7 +17,7 @@ from .database import DB_SCHEMA_VERSION, MIGRATIONS, connect, initialize
 from .data_lock import data_lock
 from .enrichment import enrich_snapshot
 from .judgments import catalog, history, reviewer_export
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .storage import create_backup, verify_backup
 
 

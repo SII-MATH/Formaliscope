@@ -17,7 +17,7 @@ from .enrichment_v2 import DEFAULT_TOPICS
 from .judgments import review_state, submit, reviewer_export
 from .repositories import dataset_id, make_collection
 from .reuse import automatic_predecessor, automatic_reuse, context_basis, reuse_snapshot, predecessor
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements, write_semantic_fixture
 from .storage import install_snapshot, create_backup, verify_backup
 from .test_enrichment_v2 import fixture_document
 
@@ -29,6 +29,7 @@ class ReuseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'source'
         self.source.mkdir()
+        (self.source / 'lean-toolchain').write_text('leanprover/lean4:v4.32.2\n')
         self.file = self.source / 'Value.lean'
         self.file.write_text('namespace Example\ndef value : Nat := 1\nend Example\n')
         self.config = {'id': 'alpha', 'name': 'Alpha', 'roots': ['.'],
@@ -190,6 +191,7 @@ class ReuseTests(unittest.TestCase):
         built = self.root / 'built.json'
         command = [sys.executable, '-m', 'review_app', 'build', '--statements', '--source', str(self.source),
                    '--source-commit', 'b' * 40, '--repository-config', str(config),
+                   '--semantic-index', str(write_semantic_fixture(self.source, roots=self.config['roots'])),
                    '--reuse-from', str(old), '--output', str(built)]
         result = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -313,7 +315,8 @@ class ReuseTests(unittest.TestCase):
         config.write_text(json.dumps(self.config))
         original = (self.data / 'snapshot.json').read_bytes()
         command = [sys.executable, '-m', 'review_app', 'build', '--statements', '--source', str(self.source),
-                   '--source-commit', 'b' * 40, '--repository-config', str(config)]
+                   '--source-commit', 'b' * 40, '--repository-config', str(config),
+                   '--semantic-index', str(write_semantic_fixture(self.source, roots=self.config['roots']))]
         for flag in ([], ['--no-reuse']):
             with self.subTest(flag=flag):
                 output = self.root / (uuid.uuid4().hex + '.json')

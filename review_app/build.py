@@ -67,7 +67,8 @@ def calculate_snapshot_digest(snapshot: dict) -> str:
     }
     for key in ('review_mode', 'review_contract', 'modules', 'source_origin', 'enrichment_topics',
                 'repository', 'datasets', 'default_dataset', 'source_environment', 'context_modules',
-                'reuse', 'reuse_disabled', 'reuse_input_digest', 'repository_successors'):
+                'reuse', 'reuse_disabled', 'reuse_input_digest', 'repository_successors',
+                'semantic_index', 'module_imports'):
         if key in snapshot:
             protected[key] = snapshot[key]
     return _digest(protected)
@@ -129,15 +130,32 @@ def validate_snapshot(snapshot: dict) -> None:
         prefix = 'statement::' + config['id'] + '::'
         known_ids = set(ids)
         if snapshot.get('review_mode') != 'statement' or any(
-                card['id'] != prefix + card.get('declaration', '') + ('::file=' + card['module_file'] if card.get('private') else '') or
+                card['id'] != prefix + card.get('declaration', '') + ('::file=' + card['module_file']
+                    if card.get('private') or card.get('identity_file') else '') or
                 any(item not in known_ids for item in card.get('dependencies', [])) for card in cards):
             raise ValueError('repository declaration IDs and dependencies must be locally qualified')
         if any('legacy_card_id' in card and (config['id'] != 'kip126' or
-                card['legacy_card_id'] != 'statement::' + card['declaration']) for card in cards):
+                card['legacy_card_id'] not in {'statement::' + card['declaration'],
+                    'statement::' + card['declaration'] + '::file=' + card['module_file']}
+                or card['legacy_card_id'] != 'statement::' + card['declaration'] and
+                ('semantic_index' not in snapshot or not (card.get('identity_file') or card.get('private'))))
+                for card in cards):
             raise ValueError('legacy card aliases must identify the original KIP126 declaration')
     from .enrichment_v2 import DEFAULT_TOPICS, validate_public_annotation, validate_topics
+    if ('semantic_index' not in snapshot and
+            any(card.get('visibility_origin') == 'lean-compiler' for card in cards)):
+        raise ValueError('compiler-backed cards require their semantic index evidence')
     topics = validate_topics(snapshot.get('enrichment_topics', DEFAULT_TOPICS))
     for card in cards:
+        if 'identity_file' in card and ('semantic_index' not in snapshot or
+                card['identity_file'] != card.get('module_file') or card.get('kind') != 'instance' or
+                card.get('name_generated') is not True or card.get('private')):
+            raise ValueError('file-disambiguated public identities require an anonymous compiler instance')
+        if 'name_generated' in card and (type(card['name_generated']) is not bool or
+                'semantic_index' not in snapshot or card.get('kind') != 'instance'):
+            raise ValueError('generated declaration names require compiler instance evidence')
+        if card.get('name_generated') and not card.get('private') and card.get('identity_file') != card.get('module_file'):
+            raise ValueError('anonymous public instances require stable file-qualified identities')
         if 'visibility' in card and card['visibility'] not in ('private', 'public'):
             raise ValueError('declaration visibility must be private or public')
         if 'private' in card and not isinstance(card['private'], bool):
@@ -166,6 +184,9 @@ def validate_snapshot(snapshot: dict) -> None:
                 raise ValueError('public annotation declaration does not match its card')
     if snapshot.get("digest") != calculate_snapshot_digest(snapshot):
         raise ValueError("snapshot digest does not match its card content")
+    if 'semantic_index' in snapshot:
+        from .lean_semantics import validate_snapshot_semantics
+        validate_snapshot_semantics(snapshot)
     from .reuse import validate_reuse
     validate_reuse(snapshot)
     if schema == SNAPSHOT_SCHEMA:

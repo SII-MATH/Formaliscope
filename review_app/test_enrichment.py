@@ -9,7 +9,7 @@ import unittest
 
 from .build import calculate_snapshot_digest, validate_snapshot
 from .enrichment import enrich_snapshot, validate_enrichment
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 
 
 class EnrichmentTests(unittest.TestCase):

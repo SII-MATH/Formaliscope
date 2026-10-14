@@ -21,9 +21,9 @@ python3 -m review_app build --statements --require-clean \
 
 Kervaire126 使用独立的 `kervaire126` ID，`repository-configs/kervaire126.json` 对应新的 GitHub 仓库；旧 `kip126` ID 留作历史。迁移时集合可写入受摘要保护的 `repository_successors: {"kip126": "kervaire126"}`，将旧版从仓库选择器移除，并让旧链接转到新对象。安装须核对前身与继任者同一提交、每张卡片相同的审阅依据，在维护锁下复制判断、草稿和数据集管理员授权；原始行仍保留。迁移期间应停止审阅服务，防止已有旧页继续写入。切换后的旧页写入会返回刷新提示。
 
-公共声明 ID 为 `statement::<repository-id>::<Lean全名>`。私有声明追加 `::file=<相对文件>`，保留不同模块中的同名私有定理，引用与符号追溯仅在其所属文件内可见。公开声明名称重复时构建报错，需要确认扫描范围或修正命名空间，不静默覆盖。
+具名公共声明 ID 为 `statement::<repository-id>::<Lean全名>`。私有声明追加 `::file=<相对文件>`，保留不同模块中的同名私有定理，引用与符号追溯仅在其所属文件内可见。Lean 自动命名的匿名实例从首次检出就追加文件固定身份，可见性仍按编译器保留为 public/private。具名公开声明名称重复时构建报错，需要确认扫描范围或修正命名空间，不静默覆盖。
 
-旧的不带 `--repository-config` 的 KIP126 构建方式继续支持。只有预览源码包时才使用 `--source-commit` 声明已知版本，并保留 `archive-unverified` 来源标记；不要把来源不明的源码包或本地导入提交当作上游的已验证提交。提取不会执行 Lean；真实编译和回译交付由管线验收负责。
+旧的不带 `--repository-config` 的 KIP126 构建方式继续支持。只有预览源码包时才使用 `--source-commit` 声明已知版本，并保留 `archive-unverified` 来源标记；不要把来源不明的源码包或本地导入提交当作上游的已验证提交。新条目检出使用 Lean 编译后的语义清单，支持锁定的 v4.32.2；也可通过 `--semantic-index` 导入同一源码的冻结清单。旧快照及其审阅记录继续可读，详见 [语义索引](LEAN_SEMANTICS.md)。
 
 ## 组合与安装
 

@@ -20,7 +20,7 @@ Release 说明自动包含相对上一正式版本的 Changelog 和完整对比�
 
 本地数据统一保存在被 Git 忽略的 `.formaliscope/`，目录职责、清理规则和旧目录迁移见 [本地存储说明](review_app/LOCAL_STORAGE.md)。
 
-需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。在仓库根目录运行本地演示：
+需要 Python 3.10+，应用和 Workflow 只使用 Python 标准库。新 Statement 索引由被审仓库的 Lean v4.32.2 编译结果生成，构建机需要其锁定的 Lake 工具链与依赖；也可用 `--semantic-index` 消费已生成并绑定同一源码的清单。运行服务无需 Lean。详见 [语义索引与兼容性](review_app/LEAN_SEMANTICS.md)。在仓库根目录运行本地演示：
 
 ```bash
 python3 -m review_app build --statements --source /path/to/KIP126 --output .formaliscope/snapshots/candidates/local-preview.json
@@ -38,7 +38,7 @@ python3 -m review_app build --statements --require-clean \
   --source /path/to/KIP126 --output /tmp/statement-artifact/snapshot.json
 ```
 
-当前 KIP126 示例快照包含 6,222 条声明、1,421 个文件。这是源码索引规模，实际审阅对象由目录和标签筛选确定；依赖图基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
+历史 KIP126 示例快照包含 6,222 条声明、1,421 个文件。新快照按编译器声明清单检出条目并判断可见性，默认审阅队列只列 public；private 保留供阅读和引用。条目依赖图仍基于源码引用候选，尚未包含 Lean elaborator 的完整依赖。
 
 Agent 补充数据通过已冻结快照校验、生成候选快照：
 

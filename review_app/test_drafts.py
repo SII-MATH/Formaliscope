@@ -12,7 +12,7 @@ from pathlib import Path
 from .database import MIGRATIONS, initialize
 from .judgments import (admin_summary, catalog, history, history_page, review_state,
                         reviewer_export, save_draft, submit)
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 from .storage import create_backup
 
 

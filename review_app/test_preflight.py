@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from .build import calculate_snapshot_digest
 from .preflight import run_preflight
-from .statements import compile_statements
+from .test_source_fixtures import compile_statements
 
 
 class PreflightTests(unittest.TestCase):
