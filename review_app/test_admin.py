@@ -5,7 +5,7 @@ import unittest
 
 from .admin import user_directory, user_reviews
 from .database import connect
-from .judgments import submit, save_draft
+from .judgments import admin_summary, submit, save_draft
 from .name_auth import NameAuthStore
 from .repositories import dataset_id, make_collection
 from .test_repositories import RepositoryFixture
@@ -48,7 +48,8 @@ class AdminReadModelTests(RepositoryFixture, unittest.TestCase):
                        ('f' * 64, 'f' * 64, stale['id']))
             before = list(db.iterdump())
         directory = user_directory(self.collection, self.db)
-        self.assertEqual(directory['stats'], {'registered': 4, 'enabled': 3, 'admins': 1, 'reviewers': 2})
+        self.assertEqual(directory['stats'], {'registered': 4, 'enabled': 3, 'admins': 1, 'reviewers': 2,
+                                                   'reviewed_count': 2, 'current_count': 2, 'history_count': 5})
         users = {item['reviewer']: item for item in directory['users']}
         self.assertEqual(users[self.first_user]['current_count'], 2)
         self.assertEqual(users[self.first_user]['history_count'], 4)
@@ -63,6 +64,33 @@ class AdminReadModelTests(RepositoryFixture, unittest.TestCase):
             self.assertNotIn(secret, encoded)
         with closing(connect(self.db)) as db:
             self.assertEqual(before, list(db.iterdump()))
+
+    def test_reviewed_items_opinions_and_submissions_have_distinct_scopes(self):
+        self.record(self.second, self.first_user, rationale='first opinion')
+        self.record(self.second, self.first_user, rationale='revised opinion')
+        self.record(self.second, self.second_user, verdict='uncertain')
+        self.record(self.first, self.first_user, rationale='old version')
+        self.record(self.other, self.first_user, verdict='misaligned')
+        save_draft(self.second, self.db, self.idle,
+                   self.payload(self.second, verdict='aligned', rationale='not submitted', revision=0))
+        directory = user_directory(self.collection, self.db)
+        self.assertEqual({key: directory['stats'][key] for key in
+                          ('reviewed_count', 'current_count', 'history_count')},
+                         {'reviewed_count': 2, 'current_count': 3, 'history_count': 5})
+        users = {user['reviewer']: user for user in directory['users']}
+        self.assertEqual(users[self.idle]['reviewed_count'], 0)
+        # Personal completed counts cannot be added to get the global item count.
+        self.assertEqual(sum(user['reviewed_count'] for user in users.values()), 3)
+        summary = admin_summary(self.second, self.db)
+        self.assertEqual((summary['reviewed_count'], summary['current_count'], summary['history_count']), (1, 2, 3))
+        detail = user_reviews(self.second, self.db, self.first_user, installed=self.collection)
+        self.assertEqual((detail['reviewed_count'], detail['current_count'], detail['history_count']), (1, 1, 3))
+        with closing(connect(self.db)) as db:
+            db.execute('UPDATE judgments SET review_basis_fingerprint=?, fingerprint=? WHERE reviewer=?',
+                       ('f' * 64, 'f' * 64, self.second_user))
+        summary = admin_summary(self.second, self.db)
+        self.assertEqual((summary['reviewed_count'], summary['current_count'], summary['history_count']), (1, 1, 3))
+        self.assertEqual(summary['stale_count'], 1)
 
     def test_paginated_details_include_older_versions_but_not_other_users_or_repositories(self):
         self.record(self.first, self.first_user, rationale='old version')
@@ -110,6 +138,10 @@ class AdminReadModelTests(RepositoryFixture, unittest.TestCase):
         self.assertEqual((user['current_count'], user['history_count']), (1, 2))
         detail = user_reviews(candidate, self.db, self.first_user, installed=collection)
         self.assertEqual((detail['current_count'], detail['history_count']), (1, 2))
+        stats = user_directory(collection, self.db)['stats']
+        self.assertEqual((stats['reviewed_count'], stats['current_count'], stats['history_count']), (1, 1, 2))
+        summary = admin_summary(candidate, self.db)
+        self.assertEqual((summary['reviewed_count'], summary['current_count'], summary['history_count']), (1, 1, 1))
         self.assertEqual([r['status'] for r in detail['reviews']], ['current', 'historical'])
         with closing(connect(self.db)) as db:
             self.assertEqual(before, list(db.iterdump()))

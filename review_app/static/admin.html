@@ -23,25 +23,36 @@
       <div class="stat-tile"><small>全局管理员</small><b id="stat-admins">—</b></div>
       <div class="stat-tile"><small>已参与审阅</small><b id="stat-participants">—</b></div>
     </div>
+    <div class="admin-stats review-stats" aria-label="全站审阅统计">
+      <div class="stat-tile"><small>已审条目数（个）</small><b id="users-reviewed">—</b></div>
+      <div class="stat-tile"><small>当前有效意见数（份）</small><b id="users-current">—</b></div>
+      <div class="stat-tile"><small>历史提交次数（次）</small><b id="users-history">—</b></div>
+    </div>
     <div class="admin-controls"><input id="user-search" type="search" placeholder="搜索姓名或账号 ID" aria-label="搜索用户"><select id="user-role" aria-label="按用户角色筛选"><option value="all">所有角色</option><option value="admin">全局管理员</option><option value="dataset-admin">仓库版本管理员</option><option value="reviewer">普通用户</option></select><select id="user-status" aria-label="按账号状态筛选"><option value="all">所有状态</option><option value="enabled">正常启用</option><option value="disabled">已停用</option></select></div>
-    <p class="admin-note">有效判断按各仓库当前版本统计；历史保存按实际提交次数统计，包含旧版本，迁移和沿用副本不重复计数。</p>
-    <div class="table-scroll"><table><thead><tr><th>用户</th><th>角色与状态</th><th>有效判断 / 历史保存</th><th>最近审阅</th><th>详情</th></tr></thead><tbody id="users"></tbody></table><div id="users-empty" class="admin-empty" hidden>没有符合条件的用户。</div></div>
+    <p class="admin-note">全站已审条目按各仓库当前版本去重：多人审同一条目只算一个；当前有效意见按每人每条目的最新有效意见计数。历史提交包含所有版本的正式提交，重复审阅分别计次，迁移和沿用副本不重复计数，自动保存不计入。用户行按个人统计，已审条目数不能相加作为全站完成数。</p>
+    <div class="table-scroll"><table><thead><tr><th>用户</th><th>角色与状态</th><th>已审条目（个）</th><th>当前有效意见（份）</th><th>历史提交（次）</th><th>最近审阅</th><th>详情</th></tr></thead><tbody id="users"></tbody></table><div id="users-empty" class="admin-empty" hidden>没有符合条件的用户。</div></div>
     <div class="admin-foot"><span id="users-note"></span><div><button id="users-prev" aria-label="用户上一页">←</button> <span id="users-page"></span> <button id="users-next" aria-label="用户下一页">→</button></div></div>
     <section id="user-detail" class="user-detail" aria-labelledby="detail-name" hidden>
       <div class="detail-heading"><div><p class="eyebrow">USER REVIEWS</p><h2 id="detail-name"></h2><p id="detail-id" class="admin-note"></p></div><button id="close-detail">关闭详情</button></div>
       <button id="reset-password" hidden>重置此用户的密码</button>
       <div class="admin-controls"><label for="detail-dataset">查看仓库</label><select id="detail-dataset"></select><span id="detail-count" class="admin-note"></span></div>
-      <p class="admin-note">历史列表包含此仓库各版本的实际保存，复制记录只显示一次。旧版本审阅保留供追溯，条目链接打开当前版本。</p>
+      <p class="admin-note">已审条目和当前有效意见仅统计此用户在当前版本的审阅。历史列表包含此仓库各版本的正式提交，复制记录只显示一次；历史次数不代表完成条目数。旧版本审阅保留供追溯，条目链接打开当前版本。</p>
       <p id="detail-message" role="status" aria-live="polite"></p>
-      <div class="table-scroll"><table><thead><tr><th>条目与审阅意见</th><th>判断</th><th>记录状态</th><th>保存时间</th></tr></thead><tbody id="user-reviews"></tbody></table><div id="detail-empty" class="admin-empty" hidden>该用户在这个仓库尚无已提交的审阅记录。</div></div>
+      <div class="table-scroll"><table><thead><tr><th>条目与审阅意见</th><th>判断</th><th>记录状态</th><th>提交时间</th></tr></thead><tbody id="user-reviews"></tbody></table><div id="detail-empty" class="admin-empty" hidden>该用户在这个仓库尚无已提交的审阅记录。</div></div>
       <div class="admin-foot"><span>仅展示已提交结果</span><div><button id="detail-prev" aria-label="审阅上一页">←</button> <span id="detail-page"></span> <button id="detail-next" aria-label="审阅下一页">→</button></div></div>
     </section>
   </section>
   <section id="summary-panel" aria-label="审阅汇总" hidden>
     <div class="admin-controls"><label for="summary-dataset">查看仓库</label><select id="summary-dataset"></select></div>
-    <section class="admin-stats"><div class="stat-tile"><small>参与审阅的人数</small><b id="stat-reviewers">—</b></div><div class="stat-tile"><small>通过</small><b id="stat-aligned">—</b></div><div class="stat-tile"><small>没看懂</small><b id="stat-uncertain">—</b></div><div class="stat-tile"><small>不通过</small><b id="stat-misaligned">—</b></div></section>
+    <div class="admin-stats review-stats" aria-label="当前仓库版本审阅统计">
+      <div class="stat-tile"><small>已审条目数（个）</small><b id="summary-reviewed">—</b></div>
+      <div class="stat-tile"><small>当前有效意见数（份）</small><b id="summary-current">—</b></div>
+      <div class="stat-tile"><small>历史提交次数（次）</small><b id="summary-history">—</b></div>
+    </div>
+    <p class="admin-note">以上三项统计当前仓库版本，不随下方筛选变化。已审条目须有至少一份当前有效意见，多人审同一条目只算一个；每人每条目只计最新有效意见。历史提交按正式提交计次，包含被替代或依据已变化的意见，迁移和沿用副本不重复计数，自动保存不计入完成数量。</p>
+    <section class="admin-stats"><div class="stat-tile"><small>参与审阅的人数</small><b id="stat-reviewers">—</b></div><div class="stat-tile"><small>通过意见（份）</small><b id="stat-aligned">—</b></div><div class="stat-tile"><small>没看懂意见（份）</small><b id="stat-uncertain">—</b></div><div class="stat-tile"><small>不通过意见（份）</small><b id="stat-misaligned">—</b></div></section>
     <div class="admin-controls"><input id="search" type="search" placeholder="搜索声明或审阅意见" aria-label="搜索汇总"><select id="reviewer" aria-label="按审阅者筛选"><option value="all">所有审阅者</option></select><select id="verdict" aria-label="按结论筛选"><option value="all">所有结论</option><option value="aligned">通过</option><option value="uncertain">没看懂</option><option value="misaligned">不通过</option></select></div>
-    <div class="table-scroll"><table><thead><tr><th>条目与意见</th><th>审阅者</th><th>判断</th><th>保存时间</th></tr></thead><tbody id="results"></tbody></table><div id="admin-empty" class="admin-empty" hidden>没有符合条件的审阅结果。</div></div>
+    <div class="table-scroll"><table><thead><tr><th>条目与意见</th><th>审阅者</th><th>判断</th><th>提交时间</th></tr></thead><tbody id="results"></tbody></table><div id="admin-empty" class="admin-empty" hidden>没有符合条件的审阅结果。</div></div>
     <div class="admin-foot"><span id="summary-note"></span><div><button id="prev-page" aria-label="汇总上一页">←</button> <span id="page-label"></span> <button id="next-page" aria-label="汇总下一页">→</button></div></div>
   </section>
 </main>

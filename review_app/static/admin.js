@@ -45,14 +45,15 @@
     const rows=filtered(),pages=Math.max(1,Math.ceil(rows.length/50));page=Math.min(page,pages-1);
     $('results').innerHTML=rows.slice(page*50,(page+1)*50).map(row=>`<tr><td><a href="${reviewLink(data.dataset.id,row.card_id)}"><code>${escape(row.card_id.replace('statement::',''))}</code></a>${row.rationale?`<p>${escape(row.rationale)}</p>`:''}</td><td>${escape(row.display_name||row.reviewer)}<small>账号 ${escape(identity(row.reviewer))}</small></td><td>${badge(row.verdict)}</td><td>${escape(date(row.created_at))}</td></tr>`).join('');
     $('admin-empty').hidden=rows.length>0;$('page-label').textContent=`${page+1} / ${pages}`;$('prev-page').disabled=page===0;$('next-page').disabled=page===pages-1;
-    $('summary-note').textContent=`当前筛选 ${rows.length} 份判断 · 历史共 ${data.history_count} 条 · ${data.stale_count} 条依据已变化的记录 · 源码提交 ${data.source_commit.slice(0,9)}`;
+    $('summary-note').textContent=`当前筛选：已审条目 ${new Set(rows.map(row=>row.card_id)).size} 个 · 当前有效意见 ${rows.length} 份 · 当前版本历史提交 ${data.history_count} 次（含 ${data.stale_count} 次依据已变化的提交） · 源码提交 ${data.source_commit.slice(0,9)}`;
   }
   async function loadSummary(){
     const turn=++summaryTurn;data=null;$('results').innerHTML='';$('admin-empty').hidden=true;$('export').disabled=true;
-    for(const id of ['stat-reviewers','stat-aligned','stat-uncertain','stat-misaligned'])$(id).textContent='—';
+    for(const id of ['summary-reviewed','summary-current','summary-history','stat-reviewers','stat-aligned','stat-uncertain','stat-misaligned'])$(id).textContent='—';
     $('summary-note').textContent='正在读取审阅汇总…';
     try{
       const body=await request('./api/admin/summary'+suffix(selectedDataset));if(turn!==summaryTurn)return;data=body;
+      for(const [id,key] of [['summary-reviewed','reviewed_count'],['summary-current','current_count'],['summary-history','history_count']])$(id).textContent=data[key];
       $('stat-reviewers').textContent=new Set(data.judgments.map(row=>row.reviewer)).size;
       for(const verdict of ['aligned','uncertain','misaligned'])$('stat-'+verdict).textContent=data.judgments.filter(row=>row.verdict===verdict).length;
       const selected=$('reviewer').value,reviewers=new Map(data.judgments.map(row=>[row.reviewer,row.display_name||row.reviewer]));
@@ -69,7 +70,7 @@
   }
   function renderUsers(){
     const users=filteredUsers(),pages=Math.max(1,Math.ceil(users.length/25));userPage=Math.min(userPage,pages-1);
-    $('users').innerHTML=users.slice(userPage*25,(userPage+1)*25).map(user=>`<tr class="${user.reviewer===selectedUser?'selected':''}"><td>${escape(user.display_name)}<small>账号 ${escape(identity(user.reviewer))}</small></td><td>${role(user)}<small>${user.disabled?'已停用':'正常启用'}</small></td><td>${user.current_count} / ${user.history_count}</td><td>${escape(date(user.last_review_at))}</td><td><button data-user="${escape(user.reviewer)}" aria-label="查看 ${escape(user.display_name)} 的审阅">查看审阅</button></td></tr>`).join('');
+    $('users').innerHTML=users.slice(userPage*25,(userPage+1)*25).map(user=>`<tr class="${user.reviewer===selectedUser?'selected':''}"><td>${escape(user.display_name)}<small>账号 ${escape(identity(user.reviewer))}</small></td><td>${role(user)}<small>${user.disabled?'已停用':'正常启用'}</small></td><td>${user.reviewed_count}</td><td>${user.current_count}</td><td>${user.history_count}</td><td>${escape(date(user.last_review_at))}</td><td><button data-user="${escape(user.reviewer)}" aria-label="查看 ${escape(user.display_name)} 的审阅">查看审阅</button></td></tr>`).join('');
     $('users-empty').hidden=users.length>0;$('users-note').textContent=`共 ${directory.users.length} 个账号 · 当前筛选 ${users.length} 个`;
     $('users-page').textContent=`${userPage+1} / ${pages}`;$('users-prev').disabled=userPage===0;$('users-next').disabled=userPage===pages-1;
   }
@@ -77,7 +78,7 @@
     const turn=++usersTurn;
     try{
       const body=await request('./api/admin/users');if(turn!==usersTurn)return;directory=body;
-      for(const [id,key] of [['stat-users','registered'],['stat-enabled','enabled'],['stat-admins','admins'],['stat-participants','reviewers']])$(id).textContent=body.stats[key];
+      for(const [id,key] of [['stat-users','registered'],['stat-enabled','enabled'],['stat-admins','admins'],['stat-participants','reviewers'],['users-reviewed','reviewed_count'],['users-current','current_count'],['users-history','history_count']])$(id).textContent=body.stats[key];
       const previousDetail=$('detail-dataset').value;
       const options=body.datasets.map(item=>`<option value="${escape(item.id)}">${escape(item.repository_name)} · ${escape(item.source_commit.slice(0,9))}</option>`).join('');
       for(const id of ['summary-dataset','detail-dataset'])$(id).innerHTML=options;
@@ -99,7 +100,7 @@
     const params=new URLSearchParams({reviewer:userId,dataset:$('detail-dataset').value,cursor:String(cursor)});
     try{
       const body=await request('./api/admin/user?'+params);if(turn!==detailTurn)return;detail=body;
-      $('detail-message').textContent='';$('detail-count').textContent=`当前版本有效 ${body.current_count} 份 · 此仓库历史保存 ${body.history_count} 条`;
+      $('detail-message').textContent='';$('detail-count').textContent=`当前版本已审条目 ${body.reviewed_count} 个 · 当前有效意见 ${body.current_count} 份 · 此仓库历史提交 ${body.history_count} 次`;
       const states={current:'当前有效',superseded:'已被后续判断替代',stale:'依据已变化或条目已移除',historical:'旧版本审阅 · 未计入当前有效'};
       $('user-reviews').innerHTML=body.reviews.map(row=>`<tr><td>${row.card_available?`<a href="${reviewLink(body.dataset.id,row.current_card_id||row.card_id)}">${escape(row.title)}</a>`:escape(row.title)}<small>${escape(row.card_id)}</small>${row.rationale?`<p>${escape(row.rationale)}</p>`:''}${row.source_version?`<small>记录版本 ${escape(row.source_version.slice(0,9))}</small>`:''}${row.inherited_from_dataset?`<small>沿用来源 ${escape(row.inherited_from_dataset)}</small>`:''}</td><td>${badge(row.verdict)}</td><td>${states[row.status]}</td><td>${escape(date(row.created_at))}</td></tr>`).join('');
       $('detail-empty').hidden=body.reviews.length>0;$('detail-prev').disabled=cursor===0;$('detail-next').disabled=body.next_cursor===null;

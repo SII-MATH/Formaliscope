@@ -7,9 +7,9 @@ const response=(body,status=200)=>({ok:status>=200&&status<300,status,json:async
 const alpha={id:'alpha@new',repository_id:'alpha',repository_name:'Alpha',source_commit:'a'.repeat(40)};
 const beta={id:'beta@new',repository_id:'beta',repository_name:'Beta',source_commit:'b'.repeat(40)};
 const users=[
-  {reviewer:'u_admin',display_name:'管理员',is_admin:true,disabled:false,current_count:0,history_count:0},
-  {reviewer:'u_first',display_name:'同名 <script>bad()</script>',is_admin:false,disabled:false,current_count:1,history_count:2},
-  {reviewer:'u_second',display_name:'同名',is_admin:false,disabled:false,current_count:0,history_count:0},
+  {reviewer:'u_admin',display_name:'管理员',is_admin:true,disabled:false,reviewed_count:0,current_count:0,history_count:0},
+  {reviewer:'u_first',display_name:'同名 <script>bad()</script>',is_admin:false,disabled:false,reviewed_count:1,current_count:1,history_count:2},
+  {reviewer:'u_second',display_name:'同名',is_admin:false,disabled:false,reviewed_count:0,current_count:0,history_count:0},
 ];
 function fixture({global=true,hook=()=>null}={}){
   const elements=new Map(),calls=[];let href='http://review.example/admin?dataset=alpha@old';
@@ -26,13 +26,13 @@ function fixture({global=true,hook=()=>null}={}){
     async fetch(url,options){
       calls.push({url,options});const pending=hook(url,options);if(pending)return pending;
       if(url.startsWith('./api/auth/me'))return response({is_admin:true,can_view_users:global,auth_mode:'name',user_id:'u_admin'});
-      if(url==='./api/admin/users')return response({users,datasets:[alpha,beta],stats:{registered:3,enabled:3,admins:1,reviewers:1}});
+      if(url==='./api/admin/users')return response({users,datasets:[alpha,beta],stats:{registered:3,enabled:3,admins:1,reviewers:1,reviewed_count:1,current_count:1,history_count:2}});
       if(url.startsWith('./api/admin/user?')){
         const params=new URL(url,'http://review.example').searchParams,user=users.find(item=>item.reviewer===params.get('reviewer'));
-        return response({user,dataset:params.get('dataset')===beta.id?beta:alpha,current_count:1,history_count:26,next_cursor:params.get('cursor')==='0'?25:null,
+        return response({user,dataset:params.get('dataset')===beta.id?beta:alpha,reviewed_count:1,reviewed_count:1,current_count:1,history_count:26,next_cursor:params.get('cursor')==='0'?25:null,
           reviews:[{id:'row',card_id:'statement::alpha::X',title:'<b>条目</b>',rationale:'<img src=x onerror=bad()>',verdict:'aligned',status:'current',card_available:true,created_at:'2026-10-09T00:00:00Z'}]});
       }
-      if(url.startsWith('./api/admin/summary'))return response({dataset:alpha,source_commit:alpha.source_commit,history_count:0,stale_count:0,judgments:[]});
+      if(url.startsWith('./api/admin/summary'))return response({dataset:alpha,source_commit:alpha.source_commit,reviewed_count:0,current_count:0,history_count:0,stale_count:0,judgments:[]});
       if(url==='./api/admin/reset-password')return response({ok:true,message:'密码已重置'});
       throw Error('Unexpected request: '+url);
     }};
@@ -68,11 +68,11 @@ async function staleDetailAndExpiry(){
 }
 async function historicalReviewsAreVisibleAndEscaped(){
   const f=fixture({hook(url){
-    if(url.startsWith('./api/admin/user?'))return response({user:users[1],dataset:alpha,current_count:0,history_count:42,next_cursor:25,
+    if(url.startsWith('./api/admin/user?'))return response({user:users[1],dataset:alpha,reviewed_count:0,current_count:0,history_count:42,next_cursor:25,
       reviews:[{id:'old',card_id:'statement::alpha::X',title:'旧版条目',rationale:'<script>bad()</script>',verdict:'uncertain',status:'historical',card_available:true,source_version:'<img src=x onerror=bad()>',created_at:'2026-10-03T00:00:00Z'}]});
   }});
   await settle();f.open('u_first');await settle();
-  assert.match(f.$('detail-count').textContent,/当前版本有效 0 份 · 此仓库历史保存 42 条/);
+  assert.match(f.$('detail-count').textContent,/当前版本已审条目 0 个 · 当前有效意见 0 份 · 此仓库历史提交 42 次/);
   assert.match(f.$('user-reviews').innerHTML,/旧版本审阅 · 未计入当前有效/);
   assert.match(f.$('user-reviews').innerHTML,/记录版本 &lt;img/);
   assert.doesNotMatch(f.$('user-reviews').innerHTML,/<script>|<img/);
@@ -90,6 +90,33 @@ async function scopedAdminAndSummary(){
   finishOld(response({dataset:alpha,source_commit:alpha.source_commit,history_count:999,stale_count:0,judgments:[]}));await settle();
   assert.doesNotMatch(f.$('summary-note').textContent,/999/);
   assert.equal(new URL(f.url).searchParams.get('dataset'),beta.id);
+}
+async function distinctMetricsAndFilteredSummary(){
+  const judgments=[
+    {card_id:'statement::alpha::X',reviewer:'u_first',display_name:'甲',verdict:'aligned',rationale:'',created_at:'2026-10-14T00:00:00Z'},
+    {card_id:'statement::alpha::X',reviewer:'u_second',display_name:'乙',verdict:'uncertain',rationale:'',created_at:'2026-10-14T00:00:00Z'},
+    {card_id:'statement::alpha::Y',reviewer:'u_first',display_name:'甲',verdict:'aligned',rationale:'',created_at:'2026-10-14T00:00:00Z'},
+  ];
+  const f=fixture({hook(url){
+    if(url.startsWith('./api/admin/summary'))return response({dataset:alpha,source_commit:alpha.source_commit,
+      reviewed_count:2,current_count:3,history_count:55,stale_count:0,judgments});
+  }});
+  await settle();
+  assert.equal(f.$('users-reviewed').textContent,1);
+  assert.equal(f.$('users-current').textContent,1);
+  assert.equal(f.$('users-history').textContent,2);
+  assert.match(f.$('users').innerHTML,/<td>1<\/td><td>1<\/td><td>2<\/td>/);
+  f.$('summary-tab').onclick();await settle();
+  assert.equal(f.$('summary-reviewed').textContent,2);
+  assert.equal(f.$('summary-current').textContent,3);
+  assert.equal(f.$('summary-history').textContent,55);
+  assert.match(f.$('summary-note').textContent,/已审条目 2 个 · 当前有效意见 3 份 · 当前版本历史提交 55 次/);
+  f.$('reviewer').value='u_second';f.$('reviewer').onchange();
+  assert.match(f.$('summary-note').textContent,/已审条目 1 个 · 当前有效意见 1 份/);
+  assert.equal(f.$('summary-reviewed').textContent,2,'Full-version totals are separate from filters');
+  assert.equal(f.$('summary-history').textContent,55,'History is never displayed as completion');
+  f.open('u_first');await settle();
+  assert.match(f.$('detail-count').textContent,/已审条目 1 个 · 当前有效意见 1 份 · 此仓库历史提交 26 次/);
 }
 async function passwordReset(){
   const f=fixture();await settle();f.open('u_first');await settle();
@@ -109,4 +136,4 @@ async function passwordReset(){
   assert.equal(lost.$('users').innerHTML,'');assert.equal(lost.$('users-panel').hidden,true);
   assert.equal(lost.$('reset-admin-password').value,'');
 }
-(async()=>{await directoryAndDetails();await historicalReviewsAreVisibleAndEscaped();await staleDetailAndExpiry();await scopedAdminAndSummary();await passwordReset();console.log('Admin directory, deduplicated historical reviews, reset confirmation, account isolation, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await directoryAndDetails();await distinctMetricsAndFilteredSummary();await historicalReviewsAreVisibleAndEscaped();await staleDetailAndExpiry();await scopedAdminAndSummary();await passwordReset();console.log('Admin directory, deduplicated historical reviews, reset confirmation, account isolation, pagination, role restrictions and stale responses passed.');})().catch(error=>{console.error(error);process.exitCode=1;});
