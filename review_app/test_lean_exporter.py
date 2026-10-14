@@ -39,8 +39,8 @@ class LeanSemanticExporterTests(unittest.TestCase):
                 raise RuntimeError('Lean exporter regressions require the exact Lean 4.32.2 toolchain: '
                                    + version.stdout + version.stderr)
             raise unittest.SkipTest('Exact Lean 4.32.2 toolchain is unavailable')
-        # Lake creates its package manifest on the first build. Establish that
-        # build environment before the index begins its strict source binding.
+        # Establish the compiled fixture before the index begins its strict
+        # source binding. Its empty dependency lock is committed for CI setup.
         build = subprocess.run(['lake', 'build'], cwd=cls.repo, capture_output=True,
                                text=True, timeout=180)
         if build.returncode:
