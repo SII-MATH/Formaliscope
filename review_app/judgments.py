@@ -17,7 +17,8 @@ from pathlib import Path
 
 from .auth import normalize_email
 from .name_auth import valid_name, valid_reviewer_id
-from .build import CURRENT_FINGERPRINT_SCHEME, LEGACY_FINGERPRINT_SCHEME
+from .build import (CURRENT_FINGERPRINT_SCHEME, LEGACY_FINGERPRINT_SCHEME,
+                    STATEMENT_REVIEW_SCHEME, statement_review_fingerprint)
 from .database import connect
 from .repositories import dataset_id, datasets, dataset_info
 
@@ -26,13 +27,28 @@ WRITE_LOCK = threading.Lock()
 
 
 def backfill_review_basis(db_path: Path, snapshot: dict) -> int:
-    """Attach v2 content fingerprints to judgments made against a v1 snapshot."""
+    """Attach verified review bases while the original evidence is available.
+
+    Promote only records matching this snapshot; stale records must not be
+    rebound to newer Lean. Preserve original fingerprints and provenance.
+    """
     changed = 0
     with closing(connect(db_path)) as db:
         db.execute("BEGIN IMMEDIATE")
         try:
             for source in datasets(snapshot):
                 for card in source["cards"]:
+                    statement_basis = statement_review_fingerprint(card)
+                    if statement_basis:
+                        for table in ('judgments', 'review_drafts'):
+                            rows = db.execute(f'SELECT * FROM {table} WHERE card_id=? AND dataset_id=?',
+                                              (card['id'], dataset_id(source))).fetchall()
+                            for row in rows:
+                                if row['review_basis_scheme'] != STATEMENT_REVIEW_SCHEME and _judgment_matches(card, row):
+                                    changed += db.execute(f'UPDATE {table} SET review_basis_scheme=?, '
+                                                          'review_basis_fingerprint=? WHERE id=?',
+                                                          (STATEMENT_REVIEW_SCHEME, statement_basis, row['id'])).rowcount
+                        continue
                     basis = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
                     if not basis:
                         continue
@@ -51,15 +67,21 @@ def backfill_review_basis(db_path: Path, snapshot: dict) -> int:
 
 
 def _card_fingerprints(card: dict) -> dict[str, str]:
-    return card.get("fingerprints") or {
+    values = dict(card.get("fingerprints") or {
         card.get("fingerprint_scheme", LEGACY_FINGERPRINT_SCHEME): card["fingerprint"]
-    }
+    })
+    basis = statement_review_fingerprint(card)
+    if basis:
+        values[STATEMENT_REVIEW_SCHEME] = basis
+    return values
 
 
 def _judgment_matches(card: dict, judgment: sqlite3.Row | dict) -> bool:
     keys = judgment.keys()
     basis = judgment["review_basis_fingerprint"] if "review_basis_fingerprint" in keys else None
     basis_scheme = judgment["review_basis_scheme"] if "review_basis_scheme" in keys else None
+    if basis_scheme == STATEMENT_REVIEW_SCHEME:
+        return bool(basis) and _card_fingerprints(card).get(basis_scheme) == basis
     if basis and _card_fingerprints(card).get(basis_scheme) == basis:
         return True
     scheme = judgment["fingerprint_scheme"]
@@ -149,9 +171,12 @@ def _current(db: sqlite3.Connection, card: dict, reviewer: str, dataset: str = '
 
 
 def _draft(db: sqlite3.Connection, card: dict, reviewer: str, dataset: str = '') -> sqlite3.Row | None:
-    return db.execute("""SELECT * FROM review_drafts
-        WHERE reviewer=? AND card_id=? AND fingerprint=? AND dataset_id=?""",
-        (reviewer, card["id"], card["fingerprint"], dataset)).fetchone()
+    for row in db.execute("""SELECT * FROM review_drafts
+        WHERE reviewer=? AND card_id=? AND dataset_id=? ORDER BY created_at DESC, rowid DESC""",
+        (reviewer, card["id"], dataset)):
+        if _judgment_matches(card, row):
+            return row
+    return None
 
 
 def review_state(snapshot: dict, db_path: Path, card_id: str, reviewer: str) -> dict:
@@ -229,8 +254,11 @@ def _validate(snapshot: dict, reviewer: str, payload: dict, *, draft: bool = Fal
 
 def _record(snapshot: dict, card: dict, reviewer: str, payload: dict) -> dict:
     fingerprint_scheme = card.get("fingerprint_scheme", LEGACY_FINGERPRINT_SCHEME)
-    review_basis_fingerprint = _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
-    review_basis_scheme = CURRENT_FINGERPRINT_SCHEME if review_basis_fingerprint else fingerprint_scheme
+    review_basis_fingerprint = statement_review_fingerprint(card)
+    review_basis_scheme = STATEMENT_REVIEW_SCHEME if review_basis_fingerprint else CURRENT_FINGERPRINT_SCHEME
+    review_basis_fingerprint = review_basis_fingerprint or _card_fingerprints(card).get(CURRENT_FINGERPRINT_SCHEME)
+    if not review_basis_fingerprint:
+        review_basis_scheme = fingerprint_scheme
     review_basis_fingerprint = review_basis_fingerprint or card["fingerprint"]
     return {
         "id": str(uuid.uuid4()), "request_id": payload["request_id"], "card_id": card["id"],
@@ -265,6 +293,9 @@ def save_draft(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> t
             return 409, {"error": "草稿已在其他页面更新，请保留当前输入并重新打开条目"}
         record["id"] = old["id"] if old else record["id"]
         record["revision"] = revision + 1
+        if old and old['fingerprint'] != card['fingerprint']:
+            db.execute('UPDATE review_drafts SET fingerprint=?, fingerprint_scheme=? WHERE id=?',
+                       (card['fingerprint'], record['fingerprint_scheme'], old['id']))
         db.execute("""INSERT INTO review_drafts
             (id, request_id, card_id, fingerprint, reviewer, verdict, rationale, created_at,
              fingerprint_scheme, review_basis_scheme, review_basis_fingerprint, source_commit,
@@ -275,7 +306,9 @@ def save_draft(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> t
             ON CONFLICT(dataset_id, reviewer, card_id, fingerprint) DO UPDATE SET
              request_id=excluded.request_id, verdict=excluded.verdict, rationale=excluded.rationale,
              created_at=excluded.created_at, source_commit=excluded.source_commit,
-             snapshot_digest=excluded.snapshot_digest, revision=excluded.revision""", record)
+             snapshot_digest=excluded.snapshot_digest, revision=excluded.revision,
+             review_basis_scheme=excluded.review_basis_scheme,
+             review_basis_fingerprint=excluded.review_basis_fingerprint""", record)
         db.execute("COMMIT")
     return 200, {"draft": record, "replayed": False}
 
@@ -315,7 +348,7 @@ def submit(snapshot: dict, db_path: Path, reviewer: str, payload: dict) -> tuple
                 if not draft or draft["revision"] != revision or (draft["verdict"], draft["rationale"]) != (verdict, rationale):
                     return 409, {"error": "草稿已更新，请保留当前输入并重新打开条目"}
                 current = _current(db, card, reviewer, dataset_id(snapshot))
-                if current and current["fingerprint"] == card["fingerprint"] and (current["verdict"], current["rationale"]) == (verdict, rationale):
+                if current and (current["verdict"], current["rationale"]) == (verdict, rationale):
                     db.execute("""UPDATE review_drafts SET completed_revision=revision,
                         completion_request_id=?, judgment_id=? WHERE id=?""",
                         (request_id, current["id"], draft["id"]))

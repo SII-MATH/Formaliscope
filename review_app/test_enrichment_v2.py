@@ -176,7 +176,7 @@ class EnrichmentV2Tests(unittest.TestCase):
         self.assertEqual(self.snapshot['cards'][0]['lean'], original['cards'][0]['lean'])
         self.assertEqual(result['enrichment_topics'], DEFAULT_TOPICS)
 
-    def test_bilingual_readback_is_public_and_changes_review_basis(self):
+    def test_bilingual_readback_is_public_and_changes_content_fingerprint(self):
         chinese = enrich_snapshot(self.snapshot, self.document)
         for row in (self.document['annotations'][0], self.document['originals'][self.identity]):
             row['readback']['text_en'] = '[TEST] An English mathematical statement.'

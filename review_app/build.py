@@ -39,6 +39,7 @@ SNAPSHOT_SCHEMA = "kip126-review-snapshot.v2"
 LEGACY_SNAPSHOT_SCHEMA = "kip126-review-snapshot.v1"
 CURRENT_FINGERPRINT_SCHEME = "kip126-review-content.v1"
 LEGACY_FINGERPRINT_SCHEME = "kip126-review-legacy.v1"
+STATEMENT_REVIEW_SCHEME = "formaliscope-statement-review.v1"
 
 
 def lean_references(body: str) -> list[str]:
@@ -234,6 +235,22 @@ def _content_fingerprint(card: dict, dependency_lock_digest: str | None) -> tupl
         "lean_digest": lean_digest,
     })
     return nl_digest, lean_digest, fingerprint
+
+
+def statement_review_fingerprint(card: dict) -> str | None:
+    """Bind Statement decisions to frozen Lean and references, excluding readbacks.
+
+    Keep the full content fingerprint for cache invalidation and stale-page
+    writes. This separate basis can be derived from historical snapshots.
+    """
+    if (not card.get('id', '').startswith('statement::') or
+            not card.get('lean_digest') or not (card.get('lean') or {}).get('source')):
+        return None
+    from .blueprint import card_references
+    return _digest({'scheme': STATEMENT_REVIEW_SCHEME,
+                    'lean_digest': card['lean_digest'],
+                    'references': [{key: ref[key] for key in ('title', 'statement', 'declarations')}
+                                   for ref in card_references(card)]})
 
 
 def normalize_snapshot(snapshot: dict) -> dict:

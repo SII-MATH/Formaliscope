@@ -87,6 +87,22 @@ class ReuseTests(unittest.TestCase):
         self.install(self.old)
         self.assertEqual(len(reviewer_export(self.old, self.db, self.reviewer)['judgments']), 2)
 
+    def test_fresh_readback_keeps_inherited_human_decision_when_context_is_unchanged(self):
+        self.install(self.old)
+        original = self.judge(self.old)
+        document = fixture_document(self.new)
+        for row in (document['annotations'][0], document['originals'][self.card_id]):
+            row['readback'].update(text_zh='新的中文回译', text_en='Fresh English readback')
+        fresh = enrich_snapshot(self.new, document)
+        candidate = reuse_snapshot(fresh, self.old)
+        self.assertNotEqual(candidate['cards'][0]['fingerprint'], self.old['cards'][0]['fingerprint'])
+        self.assertEqual(candidate['cards'][0]['enrichment'], fresh['cards'][0]['enrichment'])
+        _, report = self.install(candidate)
+        self.assertEqual(report['inherited_judgments'], 1)
+        current = review_state(candidate, self.db, self.card_id, self.reviewer)['current']
+        self.assertEqual(current['inherited_from_id'], original['id'])
+        self.assertEqual(current['snapshot_digest'], original['snapshot_digest'])
+
     def test_does_not_override_target_reviews_or_cross_repository_boundaries(self):
         candidate = reuse_snapshot(self.new, self.old)
         initialize(self.db)

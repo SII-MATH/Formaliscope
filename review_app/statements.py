@@ -135,6 +135,8 @@ def review_evidence(card: dict, snapshot: dict) -> dict:
     """Add display metadata on recall without rewriting installed evidence."""
     if snapshot.get('review_mode') != 'statement':
         return card
+    from .judgments import _card_fingerprints
+    card = {**card, 'fingerprints': _card_fingerprints(card)}
     visibility = card.get('visibility')
     if visibility not in ('private', 'public'):
         if card.get('private') is True:

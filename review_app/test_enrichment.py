@@ -79,7 +79,7 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(result['comparison']['unchanged'], 1)
         self.assertNotEqual(result['digest'], self.snapshot['digest'])
 
-    def test_readback_changes_review_basis_without_old_matching_aliases(self):
+    def test_readback_changes_content_fingerprint_without_old_matching_aliases(self):
         self.annotation['readback'].update(status='draft', text_zh='[TEST] 对应 Lean 的回译夹具。', evidence_ids=['source'])
         result = enrich_snapshot(self.snapshot, self.document)
         self.assertEqual(result['cards'][0]['statement_origin'], 'backtranslation')

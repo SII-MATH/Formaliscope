@@ -125,7 +125,7 @@ class ReviewDraftTests(unittest.TestCase):
         full = reviewer_export(self.snapshot, self.db, self.reviewer, mode='history')
         self.assertEqual([row['id'] for row in latest['judgments']], [second['id']])
         self.assertEqual([row['id'] for row in full['judgments']], [first['id'], second['id']])
-        changed_card = {**self.card, 'fingerprint': 'd' * 64,
+        changed_card = {**self.card, 'fingerprint': 'd' * 64, 'lean_digest': 'e' * 64,
                         'fingerprints': {self.card['fingerprint_scheme']: 'd' * 64}}
         changed = {**self.snapshot, 'cards': [changed_card]}
         self.assertIsNone(self.state(snapshot=changed)['draft'])
